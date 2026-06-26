@@ -16,6 +16,8 @@ services:
       - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
+      - PYTHONIOENCODING=utf-8
+      - LANG=C.UTF-8
       - USB_BACKUP_DEST=/app/USB_Backups
       - DISPLAY=${DISPLAY:-:0}
       - QT_X11_NO_MITSHM=1
