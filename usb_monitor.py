@@ -75,10 +75,26 @@ def _init_db():
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             serial      TEXT UNIQUE NOT NULL,
             label       TEXT DEFAULT '',
+            person      TEXT DEFAULT '',
             first_seen  TEXT NOT NULL,
             last_seen   TEXT NOT NULL
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS backups (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id   INTEGER NOT NULL REFERENCES devices(id),
+            dest_path   TEXT NOT NULL,
+            total_files INTEGER DEFAULT 0,
+            total_bytes INTEGER DEFAULT 0,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT NOT NULL
+        )
+    """)
+    try:
+        conn.execute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''")
+    except Exception:
+        pass
     conn.commit()
     return conn
 
@@ -403,7 +419,7 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
     return copied_files, copied_bytes
 
 
-def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, conn=None):
+def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, conn=None, progress_queue=None):
     is_linux = platform.system() != "Windows"
     label = _get_drive_label_linux(mountpoint) if is_linux else get_drive_label_windows(drive_path.replace(":\\", ""))
 
@@ -414,20 +430,31 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
     device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
     display_id = f"Device{device_id}"
+    started_at = datetime.now()
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = started_at.strftime("%Y%m%d_%H%M%S")
     dest = os.path.join(DEST_BASE, f"{display_id}_{ts}")
     os.makedirs(dest, exist_ok=True)
+
+    def _emit(state, current=0, total=0, msg=""):
+        if progress_queue is not None:
+            try:
+                progress_queue.put_nowait((device_id, display_id, state, current, total, msg))
+            except Exception:
+                pass
+
+    _emit("scanning", 0, 0, f"Scanning {display_id}...")
 
     if USE_RICH and progress_obj:
         progress_obj.update(task_id, description=f"[cyan]Scanning {display_id}...")
     else:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Scanning {display_id} ({label or 'no label'})...", flush=True)
+        print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {display_id} ({label or 'no label'})...", flush=True)
 
     total_files, total_bytes = _scan_drive(mountpoint)
 
     if total_files == 0:
         msg = f"Empty: {display_id}"
+        _emit("done", 0, 0, msg)
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
         else:
@@ -435,6 +462,8 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         if should_unmount:
             _unmount(mountpoint)
         return device_id, 0, 0
+
+    _emit("copying", 0, total_bytes, f"Copying {display_id}...")
 
     if USE_RICH and progress_obj:
         progress_obj.update(task_id, description=f"[green]{display_id} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
@@ -447,21 +476,33 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     if should_unmount:
         _unmount(mountpoint)
 
+    finished_at = datetime.now()
+    _emit("done", copied_bytes, total_bytes, f"Done: {display_id}")
+
     msg = f"Done: {display_id} ({copied_files} files, {_format_size(copied_bytes)})"
     if USE_RICH and progress_obj:
         progress_obj.update(task_id, description=f"[green]{msg}")
     else:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
+        print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
+
+    try:
+        conn.execute(
+            "INSERT INTO backups (device_id, dest_path, total_files, total_bytes, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (device_id, dest, copied_files, copied_bytes, started_at.isoformat(), finished_at.isoformat()),
+        )
+        conn.commit()
+    except Exception:
+        pass
 
     return device_id, copied_files, copied_bytes
 
 
-def copy_task_windows(drive_letter, progress_obj, task_id, conn):
+def copy_task_windows(drive_letter, progress_obj, task_id, conn, progress_queue=None):
     drive_path = f"{drive_letter}:\\"
-    return copy_task(drive_path, drive_path, drive_letter, progress_obj, task_id, conn=conn)
+    return copy_task(drive_path, drive_path, drive_letter, progress_obj, task_id, conn=conn, progress_queue=progress_queue)
 
 
-def copy_task_linux(device_path, progress_obj, task_id, conn):
+def copy_task_linux(device_path, progress_obj, task_id, conn, progress_queue=None):
     should_unmount = False
     mountpoint = device_path
     if not os.path.ismount(device_path):
@@ -475,18 +516,18 @@ def copy_task_linux(device_path, progress_obj, task_id, conn):
         mountpoint = mp
         should_unmount = True
     devname = os.path.basename(mountpoint)
-    return copy_task(device_path, mountpoint, devname, progress_obj, task_id, should_unmount, conn)
+    return copy_task(device_path, mountpoint, devname, progress_obj, task_id, should_unmount, conn, progress_queue)
 
 
-def _make_submit_fn(conn):
+def _make_submit_fn(conn, progress_queue=None):
     def _submit(executor, dev, progress_obj, task_id):
         if platform.system() == "Windows":
-            return executor.submit(copy_task_windows, dev, progress_obj, task_id, conn)
-        return executor.submit(copy_task_linux, dev, progress_obj, task_id, conn)
+            return executor.submit(copy_task_windows, dev, progress_obj, task_id, conn, progress_queue)
+        return executor.submit(copy_task_linux, dev, progress_obj, task_id, conn, progress_queue)
     return _submit
 
 
-def monitor_usb(interval=2):
+def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     sys.stdout.reconfigure(line_buffering=True)
     system = platform.system()
     is_linux = system != "Windows"
@@ -497,7 +538,7 @@ def monitor_usb(interval=2):
 
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     active = set()
-    submit = _make_submit_fn(conn)
+    submit = _make_submit_fn(conn, progress_queue)
 
     if is_linux:
         os.makedirs(MOUNT_BASE, exist_ok=True)
@@ -511,6 +552,8 @@ def monitor_usb(interval=2):
 
     try:
         while True:
+            if stop_event and stop_event.is_set():
+                break
             time.sleep(interval)
 
             done = {f for f in active if f.done()}
