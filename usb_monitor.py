@@ -445,7 +445,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     def _emit(state, current=0, total=0, msg=""):
         if progress_queue is not None:
             try:
-                progress_queue.put_nowait((device_id, display_id, state, current, total, msg))
+                progress_queue.put_nowait((device_id, display_id, state, current, total, msg, devname))
             except Exception:
                 pass
 
@@ -546,7 +546,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     print("Waiting for USB devices... (Ctrl+C to stop)", flush=True)
 
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
-    active = set()
+    active = {}  # dev → future
     submit = _make_submit_fn(conn, progress_queue)
 
     if is_linux:
@@ -557,7 +557,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
     for dev in sorted(known):
         print(f"  Connected: {dev}", flush=True)
-        active.add(submit(executor, dev, None, None))
+        active[dev] = submit(executor, dev, None, None)
 
     try:
         while True:
@@ -565,21 +565,31 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                 break
             time.sleep(interval)
 
-            done = {f for f in active if f.done()}
-            for f in done:
-                active.discard(f)
+            done = [dev for dev, f in active.items() if f.done()]
+            for dev in done:
+                fut = active.pop(dev)
                 try:
-                    f.result()
+                    fut.result()
                 except Exception:
                     pass
 
             current = set(_get_linux_partitions()) if is_linux else get_removable_drives()
+            removed = known - current
             new_devices = sorted(current - known)
             known = current
 
+            for dev in removed:
+                active.pop(dev, None)
+                dn = os.path.basename(dev)
+                if progress_queue is not None:
+                    try:
+                        progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
+                    except Exception:
+                        pass
+
             for dev in new_devices:
                 print(f"  New USB: {dev}", flush=True)
-                active.add(submit(executor, dev, None, None))
+                active[dev] = submit(executor, dev, None, None)
 
     except KeyboardInterrupt:
         print("\nStopped.")

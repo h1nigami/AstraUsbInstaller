@@ -389,7 +389,16 @@ class App:
     def _poll_queue(self):
         try:
             while True:
-                device_id, display_id, state, current, total, msg = self.progress_queue.get_nowait()
+                raw = self.progress_queue.get_nowait()
+                device_id, display_id, state, current, total, msg = raw[:6]
+                devname = raw[6] if len(raw) > 6 else ""
+
+                if device_id == "_removed_":
+                    for did, data in list(self.workers_data.items()):
+                        if data.get("devname") == display_id:
+                            self.workers_data.pop(did, None)
+                    self._refresh_workers()
+                    continue
 
                 if device_id == "_status_":
                     self.mon_status.set(msg)
@@ -408,6 +417,7 @@ class App:
                     "files": str(current) if state == "copying" else "",
                     "size": self._fmt_size(total),
                     "message": msg,
+                    "devname": devname,
                 }
                 self._refresh_workers()
         except queue.Empty:
