@@ -200,13 +200,13 @@ class App:
         ttk.Label(dlg, textvariable=err_var, foreground="red").pack()
 
         def submit():
-            if old_var.get() != old:
+            if old_var.get().strip() != old:
                 err_var.set("Неверный старый пароль")
                 return
-            if not new_var.get():
+            if not new_var.get().strip():
                 err_var.set("Новый пароль не может быть пустым")
                 return
-            _set_exit_password(new_var.get())
+            _set_exit_password(new_var.get().strip())
             self._refresh_pw_status()
             dlg.destroy()
             messagebox.showinfo("Готово", "Пароль изменён")
@@ -225,20 +225,23 @@ class App:
         pw_var = tk.StringVar()
         pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*", width=25)
         pw_entry.pack(pady=5)
-        pw_entry.focus()
+        pw_entry.focus_set()
 
         err_var = tk.StringVar()
         ttk.Label(dlg, textvariable=err_var, foreground="red").pack()
 
         def confirm():
-            if pw_var.get() == _get_exit_password():
+            pw_in = pw_var.get().strip()
+            expected = _get_exit_password()
+            if pw_in == expected:
+                dlg.destroy()
                 self.stop_event.set()
                 self.root.destroy()
-                dlg.destroy()
             else:
                 err_var.set("Неверный пароль")
 
         ttk.Button(dlg, text="Выйти", command=confirm).pack(pady=10)
+        pw_entry.bind("<Return>", lambda e: confirm())
         dlg.bind("<Return>", lambda e: confirm())
 
     def _get_db(self):
