@@ -65,9 +65,9 @@ class App:
     def _build_ui(self):
         nb = ttk.Notebook(self.root)
         nb.pack(fill="both", expand=True)
+        self._build_workers_tab(nb)
         self._build_search_tab(nb)
         self._build_devices_tab(nb)
-        self._build_workers_tab(nb)
         self._build_settings_tab(nb)
 
     def _build_search_tab(self, nb):
