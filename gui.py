@@ -22,7 +22,8 @@ class App:
         self.monitor_thread = None
         self.workers_data = {}
 
-        _init_db()
+        conn = _init_db()
+        conn.close()
 
         self._build_ui()
         self._poll_queue()

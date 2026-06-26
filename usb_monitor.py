@@ -69,7 +69,7 @@ def _docker_progress(dev_id, copied_files, total_files, copied_bytes, total_byte
 
 
 def _init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS devices (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -400,6 +400,8 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
         dest_dir = os.path.join(dest_root, rel_path) if rel_path else dest_root
         os.makedirs(dest_dir, exist_ok=True)
         for file_name in files:
+            if file_name == DEVICE_ID_FILE:
+                continue
             src_file = os.path.join(root, file_name)
             dst_file = os.path.join(dest_dir, file_name)
             try:
