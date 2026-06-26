@@ -1,0 +1,3 @@
+rich>=13.0.0
+
+# Linux host packages needed: util-linux (lsblk), udev, mount

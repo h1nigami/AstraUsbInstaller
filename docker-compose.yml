@@ -1,0 +1,22 @@
+services:
+  usb-monitor:
+    build: .
+    container_name: astra-usb-monitor
+    privileged: true
+    network_mode: host
+    pid: host
+    volumes:
+      - /dev:/dev
+      - /dev/bus/usb:/dev/bus/usb
+      - /sys:/sys
+      - /proc:/proc
+      - /run/udev:/run/udev:ro
+      - ./USB_Backups:/app/USB_Backups
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - USB_BACKUP_DEST=/app/USB_Backups
+    security_opt:
+      - apparmor:unconfined
+      - seccomp:unconfined
+    restart: unless-stopped

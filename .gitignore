@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.idea/
+USB_Backups/
+data/
+*.db
