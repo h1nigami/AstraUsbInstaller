@@ -406,6 +406,10 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
             dst_file = os.path.join(dest_dir, file_name)
             try:
                 if os.path.exists(dst_file):
+                    src_stat = os.stat(src_file)
+                    dst_stat = os.stat(dst_file)
+                    if src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1:
+                        continue
                     base, ext = os.path.splitext(file_name)
                     dst_file = os.path.join(dest_dir, f"{base}_{timestamp}{ext}")
                 file_size = os.path.getsize(src_file)
@@ -435,7 +439,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     started_at = datetime.now()
 
     ts = started_at.strftime("%Y%m%d_%H%M%S")
-    dest = os.path.join(DEST_BASE, f"{display_id}_{ts}")
+    dest = os.path.join(DEST_BASE, display_id)
     os.makedirs(dest, exist_ok=True)
 
     def _emit(state, current=0, total=0, msg=""):
@@ -530,7 +534,10 @@ def _make_submit_fn(conn, progress_queue=None):
 
 
 def monitor_usb(interval=2, stop_event=None, progress_queue=None):
-    sys.stdout.reconfigure(line_buffering=True)
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     system = platform.system()
     is_linux = system != "Windows"
 
