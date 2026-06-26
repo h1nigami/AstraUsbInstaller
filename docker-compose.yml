@@ -17,7 +17,7 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - USB_BACKUP_DEST=/app/USB_Backups
-      - DISPLAY=${DISPLAY:-}
+      - DISPLAY=${DISPLAY:-:0}
       - QT_X11_NO_MITSHM=1
     security_opt:
       - apparmor:unconfined

@@ -109,8 +109,11 @@ class App:
         f = ttk.Frame(nb)
         nb.add(f, text="Загрузка")
 
+        self.mon_status = tk.StringVar(value="Мониторинг: запуск...")
+        ttk.Label(f, textvariable=self.mon_status, foreground="gray").pack(anchor="w", padx=5, pady=(5, 0))
+
         cols = ("device", "state", "progress", "files", "size", "message")
-        self.work_tree = ttk.Treeview(f, columns=cols, show="headings", height=18)
+        self.work_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
         headings = {"device": "Устройство", "state": "Статус", "progress": "Прогресс",
                     "files": "Файлы", "size": "Размер", "message": "Сообщение"}
         for c in cols:
@@ -231,17 +234,28 @@ class App:
 
     def _start_monitor(self):
         self.stop_event.clear()
-        self.monitor_thread = threading.Thread(
-            target=monitor_usb,
-            args=(2, self.stop_event, self.progress_queue),
-            daemon=True,
-        )
+        self.mon_status.set("Мониторинг: запуск...")
+
+        def _run():
+            try:
+                self.progress_queue.put(("_status_", "", "info", 0, 0, "Мониторинг USB запущен"))
+                monitor_usb(2, self.stop_event, self.progress_queue)
+            except Exception as e:
+                self.progress_queue.put(("_status_", "", "error", 0, 0, f"Ошибка: {e}"))
+
+        self.monitor_thread = threading.Thread(target=_run, daemon=True)
         self.monitor_thread.start()
 
     def _poll_queue(self):
         try:
             while True:
                 device_id, display_id, state, current, total, msg = self.progress_queue.get_nowait()
+
+                if device_id == "_status_":
+                    self.mon_status.set(msg)
+                    self._refresh_workers()
+                    continue
+
                 if total and total > 0:
                     pct = int(current / total * 100)
                 else:
