@@ -1,26 +1,25 @@
 #!/bin/bash
-# Установка USB Backup Manager на Astra Linux (рабочая станция с GUI)
-
+# Установка USB Backup Manager на Astra Linux (Docker + GUI)
 set -e
 
 APP_DIR="$HOME/astra-usb-installer"
 AUTOSTART_DIR="$HOME/.config/autostart"
-PYTHON=$(command -v python3 || command -v python)
 
 echo "=== Установка USB Backup Manager ==="
 
 if [ ! -d "$APP_DIR" ]; then
-    mkdir -p "$APP_DIR"
-    cp -r "$(dirname "$0")"/* "$APP_DIR/"
+    git clone https://github.com/your-repo/astra-usb-installer.git "$APP_DIR"
 fi
 
 cd "$APP_DIR"
 
-echo "Установка зависимостей..."
+echo "Установка Docker..."
 sudo apt-get update
-sudo apt-get install -y python3 python3-pip python3-tk
+sudo apt-get install -y docker.io docker-compose-v2
+sudo usermod -aG docker $USER
 
-$PYTHON -m pip install --user -r requirements.txt
+echo "Сборка и запуск контейнера..."
+docker compose up -d --build
 
 mkdir -p "$AUTOSTART_DIR"
 
@@ -29,16 +28,14 @@ cat > "$AUTOSTART_DIR/usb-backup-manager.desktop" << EOF
 Type=Application
 Name=USB Backup Manager
 Comment=USB device backup with device tracking
-Exec=$PYTHON $APP_DIR/main.py
+Exec=docker compose -f $APP_DIR/docker-compose.yml up -d --build
 Terminal=false
 X-GNOME-Autostart-enabled=true
 EOF
 
 echo ""
 echo "=== Готово ==="
+echo "Контейнер запущен. При перезагрузке GUI появится автоматически."
 echo ""
-echo "Запуск:  $PYTHON $APP_DIR/main.py"
-echo "Автозапуск добавлен в $AUTOSTART_DIR"
-echo "После перезагрузки GUI запустится автоматически."
-echo ""
-echo "Запустить сейчас:  $PYTHON $APP_DIR/main.py &"
+echo "Логи:  docker compose logs -f"
+echo "Стоп:  docker compose down"

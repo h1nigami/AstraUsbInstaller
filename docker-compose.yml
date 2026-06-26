@@ -11,11 +11,14 @@ services:
       - /sys:/sys
       - /proc:/proc
       - /run/udev:/run/udev:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./USB_Backups:/app/USB_Backups
       - ./data:/app/data
     environment:
       - PYTHONUNBUFFERED=1
       - USB_BACKUP_DEST=/app/USB_Backups
+      - DISPLAY=${DISPLAY:-}
+      - QT_X11_NO_MITSHM=1
     security_opt:
       - apparmor:unconfined
       - seccomp:unconfined
