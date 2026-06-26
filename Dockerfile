@@ -16,6 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY usb_monitor.py .
+COPY gui.py .
 COPY main.py .
 
 VOLUME ["/app/USB_Backups"]
