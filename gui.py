@@ -147,15 +147,33 @@ class App:
         self.mon_status = tk.StringVar(value="Мониторинг: запуск...")
         ttk.Label(f, textvariable=self.mon_status, foreground="gray").pack(anchor="w", padx=5, pady=(5, 0))
 
-        cols = ("device", "state", "progress", "files", "size", "message")
-        self.work_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
-        headings = {"device": "Устройство", "state": "Статус", "progress": "Прогресс",
-                    "files": "Файлы", "size": "Размер", "message": "Сообщение"}
-        for c in cols:
-            self.work_tree.heading(c, text=headings[c])
-            self.work_tree.column(c, width=120)
-        self.work_tree.column("message", width=250)
-        self.work_tree.pack(fill="both", expand=True, padx=5, pady=5)
+        self.ports = []
+        self.port_assignment = {}
+        self.next_port = 0
+
+        grid = ttk.Frame(f)
+        grid.pack(fill="both", expand=True, padx=10, pady=10)
+
+        rows, cols = 3, 4
+        for i in range(rows * cols):
+            r, c = divmod(i, cols)
+            cell = ttk.Frame(grid, relief="solid", borderwidth=2)
+            cell.grid(row=r, column=c, padx=6, pady=6, sticky="nsew")
+            grid.columnconfigure(c, weight=1, uniform="port")
+            grid.rowconfigure(r, weight=1, uniform="port")
+
+            preview = tk.Label(cell, text="Простой", font=("Segoe UI", 14, "bold"),
+                               fg="white", bg="#2563eb")
+            preview.pack(fill="both", expand=True)
+
+            status = tk.Label(cell, text="Нет передачи данных", font=("Segoe UI", 10),
+                              fg="#444", bg="white")
+            status.pack(fill="x", ipady=4)
+
+            self.ports.append({"frame": cell, "preview": preview, "status": status, "device_id": None})
+
+        for i in range(10, rows * cols):
+            self.ports[i]["frame"].grid_remove()
 
     def _build_settings_tab(self, nb):
         f = ttk.Frame(nb)
@@ -397,12 +415,50 @@ class App:
         self.root.after(POLL_MS, self._poll_queue)
 
     def _refresh_workers(self):
-        for row in self.work_tree.get_children():
-            self.work_tree.delete(row)
-        for d in sorted(self.workers_data.values(), key=lambda x: x["device"]):
-            self.work_tree.insert("", "end", values=(
-                d["device"], d["state"], d["progress"], d["files"], d["size"], d["message"],
-            ))
+        tracked = set()
+        for dev_id, data in self.workers_data.items():
+            tracked.add(dev_id)
+            state = data["state"]
+            if dev_id in self.port_assignment:
+                pi = self.port_assignment[dev_id]
+            else:
+                pi = self.next_port % 10
+                self.next_port = (self.next_port + 1) % 10
+                self.port_assignment[dev_id] = pi
+            port = self.ports[pi]
+            port["device_id"] = dev_id
+
+            if state == "Сканирование":
+                bg = "#2563eb"
+                preview_text = data["device"]
+                status_text = f"Сканирование... {data.get('message', '')}"
+            elif state == "Копирование":
+                bg = "#d97706"
+                preview_text = data["device"]
+                status_text = data.get("progress", "Копирование...")
+            elif state == "Готово":
+                bg = "#16a34a"
+                preview_text = data["device"]
+                status_text = data.get("message", "Готово")
+            else:
+                bg = "#6b7280"
+                preview_text = data["device"]
+                status_text = data.get("message", state)
+
+            port["preview"].configure(text=preview_text, bg=bg)
+            port["status"].configure(text=status_text)
+
+        for pi, port in enumerate(self.ports):
+            did = port["device_id"]
+            if did is not None and did not in tracked:
+                port["device_id"] = None
+                self.port_assignment.pop(did, None)
+                port["preview"].configure(text="Простой", bg="#2563eb")
+                port["status"].configure(text="Нет передачи данных")
+
+        done_ids = [did for did, d in self.workers_data.items() if d["state"] == "Готово"]
+        for did in done_ids:
+            self.workers_data.pop(did, None)
 
     def _fmt_size(self, b):
         for unit in ("B", "KB", "MB", "GB", "TB"):
