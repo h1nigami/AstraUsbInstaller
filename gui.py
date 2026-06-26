@@ -1,21 +1,54 @@
 import os
+import json
 import queue
 import sqlite3
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 
 from usb_monitor import monitor_usb, DB_PATH, _init_db
 
 POLL_MS = 200
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
+
+
+def _load_config():
+    try:
+        with open(CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_config(cfg):
+    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(cfg, f)
+
+
+def _get_exit_password():
+    cfg = _load_config()
+    pw = cfg.get("exit_password")
+    if pw:
+        return pw
+    default = os.environ.get("APP_EXIT_PASSWORD", "exit")
+    _save_config({**cfg, "exit_password": default})
+    return default
+
+
+def _set_exit_password(new_pw):
+    cfg = _load_config()
+    cfg["exit_password"] = new_pw
+    _save_config(cfg)
 
 
 class App:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("USB Backup Manager")
-        self.root.geometry("900x500")
+        self.root.attributes("-fullscreen", True)
+        self.root.bind("<Escape>", lambda e: None)
 
         self.progress_queue = queue.Queue()
         self.stop_event = threading.Event()
@@ -35,6 +68,7 @@ class App:
         self._build_search_tab(nb)
         self._build_devices_tab(nb)
         self._build_workers_tab(nb)
+        self._build_settings_tab(nb)
 
     def _build_search_tab(self, nb):
         f = ttk.Frame(nb)
@@ -122,6 +156,90 @@ class App:
             self.work_tree.column(c, width=120)
         self.work_tree.column("message", width=250)
         self.work_tree.pack(fill="both", expand=True, padx=5, pady=5)
+
+    def _build_settings_tab(self, nb):
+        f = ttk.Frame(nb)
+        nb.add(f, text="Настройки")
+
+        frame = ttk.LabelFrame(f, text="Защита выхода", padding=10)
+        frame.pack(fill="x", padx=10, pady=10)
+
+        ttk.Label(frame, text="Выход из программы защищён паролем.").pack(anchor="w")
+        self.pw_status = tk.StringVar()
+        ttk.Label(frame, textvariable=self.pw_status, foreground="gray").pack(anchor="w", pady=(0, 10))
+
+        ttk.Button(frame, text="Сменить пароль", command=self._change_password).pack(anchor="w")
+
+        self._refresh_pw_status()
+
+    def _refresh_pw_status(self):
+        pw = _get_exit_password()
+        self.pw_status.set(f"Текущий пароль: {'*' * len(pw)} (длина {len(pw)} симв.)")
+
+    def _change_password(self):
+        old = _get_exit_password()
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Смена пароля")
+        dlg.geometry("350x200")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="Старый пароль:").pack(pady=(10, 0))
+        old_var = tk.StringVar()
+        old_entry = ttk.Entry(dlg, textvariable=old_var, show="*", width=30)
+        old_entry.pack(pady=5)
+        old_entry.focus()
+
+        ttk.Label(dlg, text="Новый пароль:").pack(pady=(5, 0))
+        new_var = tk.StringVar()
+        new_entry = ttk.Entry(dlg, textvariable=new_var, show="*", width=30)
+        new_entry.pack(pady=5)
+
+        err_var = tk.StringVar()
+        ttk.Label(dlg, textvariable=err_var, foreground="red").pack()
+
+        def submit():
+            if old_var.get() != old:
+                err_var.set("Неверный старый пароль")
+                return
+            if not new_var.get():
+                err_var.set("Новый пароль не может быть пустым")
+                return
+            _set_exit_password(new_var.get())
+            self._refresh_pw_status()
+            dlg.destroy()
+            messagebox.showinfo("Готово", "Пароль изменён")
+
+        ttk.Button(dlg, text="Сохранить", command=submit).pack(pady=10)
+
+    def _on_close(self):
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Подтверждение выхода")
+        dlg.geometry("300x150")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="Введите пароль для выхода:").pack(pady=(15, 5))
+        pw_var = tk.StringVar()
+        pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*", width=25)
+        pw_entry.pack(pady=5)
+        pw_entry.focus()
+
+        err_var = tk.StringVar()
+        ttk.Label(dlg, textvariable=err_var, foreground="red").pack()
+
+        def confirm():
+            if pw_var.get() == _get_exit_password():
+                self.stop_event.set()
+                self.root.destroy()
+                dlg.destroy()
+            else:
+                err_var.set("Неверный пароль")
+
+        ttk.Button(dlg, text="Выйти", command=confirm).pack(pady=10)
+        dlg.bind("<Return>", lambda e: confirm())
 
     def _get_db(self):
         return sqlite3.connect(DB_PATH)
@@ -293,10 +411,6 @@ class App:
     def run(self):
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()
-
-    def _on_close(self):
-        self.stop_event.set()
-        self.root.destroy()
 
 
 def launch():
