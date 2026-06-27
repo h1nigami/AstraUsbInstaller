@@ -280,24 +280,28 @@ class App:
         dlg = tk.Toplevel(self.root)
         dlg.title("Доступ к разделу")
         dlg.configure(bg=C["bg_panel"])
-        w, h = 380, 200
-        rx = self.root.winfo_x() + (self.root.winfo_width() - w) // 2
-        ry = self.root.winfo_y() + (self.root.winfo_height() - h) // 2
-        dlg.geometry(f"{w}x{h}+{rx}+{ry}")
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w, h = sw // 2, sh // 2
+        x, y = (sw - w) // 2, (sh - h) // 2
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
 
-        tk.Label(dlg, text="Доступ к разделу защищён.", font=("Segoe UI", 12, "bold"),
-                 fg=C["fg_main"], bg=C["bg_panel"]).pack(pady=(20, 4))
-        tk.Label(dlg, text="Введите пароль:", font=("Segoe UI", 11),
+        tk.Label(dlg, text="Доступ к разделу защищён.",
+                 font=("Segoe UI", 20, "bold"),
+                 fg=C["fg_main"], bg=C["bg_panel"]).pack(pady=(h // 6, 8))
+        tk.Label(dlg, text="Введите пароль:",
+                 font=("Segoe UI", 14),
                  fg=C["fg_muted"], bg=C["bg_panel"]).pack()
         pw_var = tk.StringVar()
-        pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*", width=28)
-        pw_entry.pack(pady=8)
+        pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*",
+                             width=w // 14, font=("Segoe UI", 14))
+        pw_entry.pack(pady=16, ipadx=8, ipady=6)
         pw_entry.focus_set()
         err_var = tk.StringVar()
-        tk.Label(dlg, textvariable=err_var, font=("Segoe UI", 10),
+        tk.Label(dlg, textvariable=err_var, font=("Segoe UI", 12),
                  fg="#f87171", bg=C["bg_panel"]).pack()
 
         def confirm():
@@ -307,7 +311,7 @@ class App:
             else:
                 err_var.set("Неверный пароль")
 
-        ttk.Button(dlg, text="Войти", command=confirm).pack(pady=10)
+        ttk.Button(dlg, text="Войти", command=confirm).pack(pady=20)
         pw_entry.bind("<Return>", lambda e: confirm())
         dlg.bind("<Escape>", lambda e: dlg.destroy())
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
