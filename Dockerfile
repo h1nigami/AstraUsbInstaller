@@ -27,7 +27,7 @@ COPY usb_monitor.py .
 COPY gui.py .
 COPY main.py .
 COPY start.sh .
-RUN chmod +x start.sh
+RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 VOLUME ["/app/USB_Backups"]
 
