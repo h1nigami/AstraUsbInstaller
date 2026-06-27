@@ -2,6 +2,7 @@ import os
 import json
 import queue
 import sqlite3
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
@@ -45,6 +46,32 @@ def _set_exit_password(new_pw):
     _save_config(cfg)
 
 
+_NANOSUIT_LINES = [
+    "Nanosuit online.",
+    "Maximum Armor engaged.",
+    "All systems nominal.",
+    "Welcome back, Prophet.",
+]
+
+
+def _nanosuit_greeting():
+    # Try espeak-ng then espeak — both available on Debian/Astra Linux.
+    # Parameters: very low pitch (-p 8), slow deliberate speech (-s 82),
+    # loud amplitude (-a 200), male voice variant — gives the Crysis robotic tone.
+    args_base = ["-v", "en-us+m3", "-s", "82", "-p", "8", "-a", "200"]
+    for binary in ("espeak-ng", "espeak"):
+        try:
+            subprocess.run([binary, "--version"], capture_output=True, timeout=3, check=True)
+        except Exception:
+            continue
+        for line in _NANOSUIT_LINES:
+            try:
+                subprocess.run([binary, *args_base, line], capture_output=True, timeout=10)
+            except Exception:
+                pass
+        return
+
+
 class App:
     def __init__(self):
         self.root = tk.Tk()
@@ -60,6 +87,7 @@ class App:
         conn = _init_db()
         conn.close()
 
+        threading.Thread(target=_nanosuit_greeting, daemon=True).start()
         self._build_ui()
         self._poll_queue()
         self._start_monitor()
