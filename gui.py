@@ -2,14 +2,17 @@ import os
 import json
 import queue
 import sqlite3
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE
 
 POLL_MS = 200
+VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
+              ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
@@ -43,6 +46,29 @@ def _set_exit_password(new_pw):
     _save_config(cfg)
 
 
+_NANOSUIT_LINES = [
+    "С возвращением, Пророк.",
+]
+
+
+def _nanosuit_greeting():
+    # Try espeak-ng then espeak — both available on Debian/Astra Linux.
+    # Parameters: very low pitch (-p 8), slow deliberate speech (-s 82),
+    # loud amplitude (-a 200), male voice variant — gives the Crysis robotic tone.
+    args_base = ["-v", "ru+m3", "-s", "82", "-p", "8", "-a", "200"]
+    for binary in ("espeak-ng", "espeak"):
+        try:
+            subprocess.run([binary, "--version"], capture_output=True, timeout=3, check=True)
+        except Exception:
+            continue
+        for line in _NANOSUIT_LINES:
+            try:
+                subprocess.run([binary, *args_base, line], capture_output=True, timeout=10)
+            except Exception:
+                pass
+        return
+
+
 class App:
     def __init__(self):
         self.root = tk.Tk()
@@ -58,6 +84,7 @@ class App:
         conn = _init_db()
         conn.close()
 
+        threading.Thread(target=_nanosuit_greeting, daemon=True).start()
         self._build_ui()
         self._poll_queue()
         self._start_monitor()
@@ -135,6 +162,7 @@ class App:
         self.edit_person = ttk.Entry(edit_frame, width=20)
         self.edit_person.pack(side="left", padx=2)
         ttk.Button(edit_frame, text="Назначить", command=self._assign_person).pack(side="left", padx=4)
+        ttk.Button(edit_frame, text="Очистить видео", command=self._clean_device_videos).pack(side="left", padx=4)
         ttk.Button(edit_frame, text="Обновить список", command=self._refresh_devices).pack(side="right", padx=4)
 
         self.dev_tree.bind("<<TreeviewSelect>>", self._on_device_select)
@@ -371,6 +399,62 @@ class App:
             messagebox.showerror("Ошибка", str(e))
         finally:
             conn.close()
+
+    def _clean_device_videos(self):
+        dev_id = self.edit_dev_id.get().strip()
+        if not dev_id:
+            messagebox.showwarning("Ошибка", "Выберите устройство из списка")
+            return
+        if not dev_id.isdigit():
+            messagebox.showwarning("Ошибка", "Некорректный Device ID")
+            return
+
+        dev_dir = os.path.join(DEST_BASE, f"Device{dev_id}")
+        if not os.path.isdir(dev_dir):
+            messagebox.showinfo("Нет данных", f"Папка устройства Device{dev_id} не найдена")
+            return
+
+        videos = []
+        total_size = 0
+        for root, _dirs, files in os.walk(dev_dir):
+            for name in files:
+                if os.path.splitext(name)[1].lower() in VIDEO_EXTS:
+                    fp = os.path.join(root, name)
+                    try:
+                        total_size += os.path.getsize(fp)
+                    except OSError:
+                        pass
+                    videos.append(fp)
+
+        if not videos:
+            messagebox.showinfo("Нет видео", f"В Device{dev_id} нет видеофайлов")
+            return
+
+        size_mb = total_size / (1024 * 1024)
+        if not messagebox.askyesno(
+            "Подтверждение",
+            f"Удалить {len(videos)} видеофайлов "
+            f"({size_mb:.1f} МБ) из папки Device{dev_id}?\n\n"
+            f"Это действие необратимо."
+        ):
+            return
+
+        deleted = 0
+        errors = []
+        for fp in videos:
+            try:
+                os.remove(fp)
+                deleted += 1
+            except OSError as e:
+                errors.append(f"{os.path.basename(fp)}: {e}")
+
+        msg = f"Удалено видеофайлов: {deleted} из {len(videos)}"
+        if errors:
+            shown = "\n".join(errors[:5])
+            more = f"\n...и ещё {len(errors) - 5}" if len(errors) > 5 else ""
+            messagebox.showwarning("Завершено с ошибками", f"{msg}\n\nОшибки:\n{shown}{more}")
+        else:
+            messagebox.showinfo("Готово", msg)
 
     def _start_monitor(self):
         self.stop_event.clear()
