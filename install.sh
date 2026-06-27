@@ -6,9 +6,9 @@ cd "$(dirname "$0")"
 
 echo "=== Установка USB Backup Manager ==="
 
-echo "Установка Docker..."
+echo "Установка зависимостей..."
 sudo apt-get update
-sudo apt-get install -y docker.io docker-compose-v2
+sudo apt-get install -y docker.io docker-compose-v2 espeak-ng espeak-ng-data sox libsox-fmt-all
 sudo usermod -aG docker $USER
 
 echo "Разрешаем X11 подключения из контейнера..."
