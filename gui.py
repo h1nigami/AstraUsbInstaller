@@ -59,14 +59,17 @@ def _nanosuit_greeting():
     for binary in ("espeak-ng", "espeak"):
         try:
             subprocess.run([binary, "--version"], capture_output=True, timeout=3, check=True)
+        except FileNotFoundError:
+            continue
         except Exception:
             continue
         for line in _NANOSUIT_LINES:
             try:
                 subprocess.run([binary, *args_base, line], capture_output=True, timeout=10)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"[nanosuit] speech error: {e}", flush=True)
         return
+    print("[nanosuit] espeak-ng/espeak not found — install: sudo apt install espeak-ng espeak-ng-data", flush=True)
 
 
 class App:
