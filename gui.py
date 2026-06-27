@@ -81,25 +81,64 @@ def _nanosuit_greeting_windows():
         print(f"[nanosuit] Windows TTS error: {e}", flush=True)
 
 
-def _nanosuit_greeting_linux():
-    # Try espeak-ng then espeak — both available on Debian/Astra Linux.
-    # Parameters: very low pitch (-p 8), slow deliberate speech (-s 82),
-    # loud amplitude (-a 200), male voice variant — gives the Crysis robotic tone.
-    args_base = ["-v", "ru+m3", "-s", "82", "-p", "8", "-a", "200"]
-    for binary in ("espeak-ng", "espeak"):
+def _has_bin(*names):
+    for name in names:
         try:
-            subprocess.run([binary, "--version"], capture_output=True, timeout=3, check=True)
+            subprocess.run([name, "--version"], capture_output=True, timeout=3, check=True)
+            return name
         except FileNotFoundError:
             continue
         except Exception:
-            continue
-        for line in _NANOSUIT_LINES:
-            try:
-                subprocess.run([binary, *args_base, line], capture_output=True, timeout=10)
-            except Exception as e:
-                print(f"[nanosuit] speech error: {e}", flush=True)
+            return name
+    return None
+
+
+def _nanosuit_greeting_linux():
+    binary = _has_bin("espeak-ng", "espeak")
+    if not binary:
+        print("[nanosuit] espeak-ng/espeak not found — install: sudo apt install espeak-ng espeak-ng-data sox", flush=True)
         return
-    print("[nanosuit] espeak-ng/espeak not found — install: sudo apt install espeak-ng espeak-ng-data", flush=True)
+
+    use_sox = _has_bin("sox") is not None
+
+    # espeak params: higher base pitch (-p 40) so sox pitch-shift sounds natural
+    esp_args = ["-v", "ru+m3", "-s", "78", "-p", "40", "-a", "200", "--stdout"]
+
+    # Sox chain that recreates the Crysis nanosuit timbre:
+    #   pitch -350  — shift down ~3.5 semitones (heavy electronic bass)
+    #   echo x2     — two-layer metallic resonance (close + far reflection inside armor)
+    #   reverb 35   — small enclosed-space reverb (inside the suit)
+    #   bass +7     — reinforce low-end punch
+    #   treble -4   — cut harshness, keep it dark and cold
+    sox_chain = [
+        "pitch", "-350",
+        "echo", "0.8", "0.7", "18", "0.55",
+        "echo", "0.6", "0.6", "55", "0.30",
+        "reverb", "35",
+        "bass", "+7",
+        "treble", "-4",
+    ]
+
+    for line in _NANOSUIT_LINES:
+        try:
+            if use_sox:
+                proc = subprocess.Popen(
+                    [binary, *esp_args, line],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                )
+                subprocess.run(
+                    ["sox", "-t", "wav", "-", "-d", *sox_chain],
+                    stdin=proc.stdout, capture_output=True, timeout=20,
+                )
+                proc.wait(timeout=5)
+            else:
+                # Fallback without sox: just low pitch
+                subprocess.run(
+                    [binary, "-v", "ru+m3", "-s", "78", "-p", "8", "-a", "200", line],
+                    capture_output=True, timeout=10,
+                )
+        except Exception as e:
+            print(f"[nanosuit] speech error: {e}", flush=True)
 
 
 class App:
