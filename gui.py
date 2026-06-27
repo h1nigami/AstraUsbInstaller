@@ -1,5 +1,6 @@
 import os
 import json
+import platform
 import queue
 import sqlite3
 import subprocess
@@ -52,6 +53,35 @@ _NANOSUIT_LINES = [
 
 
 def _nanosuit_greeting():
+    if platform.system() == "Windows":
+        _nanosuit_greeting_windows()
+    else:
+        _nanosuit_greeting_linux()
+
+
+def _nanosuit_greeting_windows():
+    text = " ".join(_NANOSUIT_LINES)
+    # PowerShell SAPI — встроен в Windows, ничего не нужно устанавливать.
+    # Rate: -10 (медленно) до 10 (быстро); -4 даёт медленную роботизированную речь.
+    # Пытаемся выбрать русский голос если установлен, иначе говорит дефолтным.
+    ps_script = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        "$ru = $s.GetInstalledVoices() | "
+        "Where-Object { $_.VoiceInfo.Culture.Name -like 'ru*' }; "
+        "if ($ru) { $s.SelectVoice($ru[0].VoiceInfo.Name) }; "
+        f"$s.Rate = -4; $s.Speak('{text}')"
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+            timeout=30, capture_output=True,
+        )
+    except Exception as e:
+        print(f"[nanosuit] Windows TTS error: {e}", flush=True)
+
+
+def _nanosuit_greeting_linux():
     # Try espeak-ng then espeak — both available on Debian/Astra Linux.
     # Parameters: very low pitch (-p 8), slow deliberate speech (-s 82),
     # loud amplitude (-a 200), male voice variant — gives the Crysis robotic tone.
