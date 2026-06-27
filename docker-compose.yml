@@ -22,6 +22,8 @@ services:
       - DISPLAY=${DISPLAY:-:0}
       - QT_X11_NO_MITSHM=1
       - ALSA_CARD=0
+    devices:
+      - /dev/snd
     security_opt:
       - apparmor:unconfined
       - seccomp:unconfined

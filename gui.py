@@ -84,6 +84,18 @@ def _has_bin(*names):
 # Shared espeak args — output to stdout as WAV for Python DSP pipeline.
 _ESP_ARGS = ["-v", "ru+m3", "-s", "78", "-p", "40", "-a", "200", "--stdout"]
 
+# DSP effect parameters for nanosuit voice
+_PITCH_CENTS    = -350.0   # pitch shift in cents (negative = lower)
+_ECHO1_DELAY_MS =   18.0
+_ECHO1_DECAY    =    0.55
+_ECHO2_DELAY_MS =   55.0
+_ECHO2_DECAY    =    0.30
+_REVERB_AMOUNT  =   35.0
+_BASS_GAIN_DB   =   +7.0
+_BASS_FREQ_HZ   =  100.0
+_TREBLE_GAIN_DB =   -4.0
+_TREBLE_FREQ_HZ = 3000.0
+
 
 def _echo(x, sr, in_gain, out_gain, delays_ms, decays):
     out = x * in_gain
@@ -150,20 +162,26 @@ def _wav_bytes_to_float(wav_bytes):
 
 
 def _nanosuit_fx(audio, sr):
+    """Apply DSP chain. Returns (processed_float32, write_sr).
+
+    Pitch shift is achieved by writing the WAV at a lower framerate so that
+    playback at the standard rate sounds lower and slightly slower — identical
+    on all platforms without resampling the audio array.
+    """
     x = audio.astype(np.float64)
-    ratio = 2.0 ** (-350.0 / 1200.0)
-    n_orig = len(x)
-    n_stretch = max(1, int(round(n_orig / ratio)))
-    x = _scipy_signal.resample(_scipy_signal.resample(x, n_stretch), n_orig)
-    x = _echo(x, sr, in_gain=0.8, out_gain=0.7, delays_ms=[18.0], decays=[0.55])
-    x = _echo(x, sr, in_gain=0.6, out_gain=0.6, delays_ms=[55.0], decays=[0.30])
-    x = _reverb(x, sr, reverberance=35.0)
-    x = _shelf(x, sr, gain_db=+7.0, freq=100.0, kind="low")
-    x = _shelf(x, sr, gain_db=-4.0, freq=3000.0, kind="high")
+    x = _echo(x, sr, in_gain=0.8, out_gain=0.7,
+               delays_ms=[_ECHO1_DELAY_MS], decays=[_ECHO1_DECAY])
+    x = _echo(x, sr, in_gain=0.6, out_gain=0.6,
+               delays_ms=[_ECHO2_DELAY_MS], decays=[_ECHO2_DECAY])
+    x = _reverb(x, sr, reverberance=_REVERB_AMOUNT)
+    x = _shelf(x, sr, gain_db=_BASS_GAIN_DB, freq=_BASS_FREQ_HZ, kind="low")
+    x = _shelf(x, sr, gain_db=_TREBLE_GAIN_DB, freq=_TREBLE_FREQ_HZ, kind="high")
     peak = np.max(np.abs(x))
     if peak > 1.0:
         x = x / peak
-    return x.astype(np.float32)
+    ratio = 2.0 ** (_PITCH_CENTS / 1200.0)
+    write_sr = max(1, int(round(sr * ratio)))
+    return x.astype(np.float32), write_sr
 
 
 def _play_processed_wav(audio, sr):
@@ -180,7 +198,10 @@ def _play_processed_wav(audio, sr):
             import winsound
             winsound.PlaySound(path, winsound.SND_FILENAME)
         else:
-            subprocess.run(["aplay", "-q", path], capture_output=True, timeout=20)
+            res = subprocess.run(["aplay", "-q", path], capture_output=True, timeout=20)
+            if res.returncode != 0:
+                err = res.stderr.decode(errors="replace").strip()
+                print(f"[nanosuit] aplay error (rc={res.returncode}): {err}", flush=True)
     finally:
         try:
             os.remove(path)
@@ -191,7 +212,7 @@ def _play_processed_wav(audio, sr):
 def _play_with_python_fx(binary):
     if not _HAVE_DSP:
         return False
-    ok = False
+    all_ok = True
     for line in _NANOSUIT_LINES:
         try:
             proc = subprocess.run(
@@ -201,12 +222,12 @@ def _play_with_python_fx(binary):
             if proc.returncode != 0 or not proc.stdout:
                 raise RuntimeError("espeak produced no audio")
             audio, sr = _wav_bytes_to_float(proc.stdout)
-            audio = _nanosuit_fx(audio, sr)
-            _play_processed_wav(audio, sr)
-            ok = True
+            audio, write_sr = _nanosuit_fx(audio, sr)
+            _play_processed_wav(audio, write_sr)
         except Exception as e:
             print(f"[nanosuit] DSP error: {e}", flush=True)
-    return ok
+            all_ok = False
+    return all_ok
 
 
 def _play_plain_espeak(binary):
