@@ -1,0 +1,3 @@
+# Always LF for shell scripts — prevents CRLF corruption on Windows clones
+*.sh    text eol=lf
+*.py    text eol=lf
