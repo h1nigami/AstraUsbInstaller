@@ -47,10 +47,10 @@ def _set_exit_password(new_pw):
 
 
 _NANOSUIT_LINES = [
-    "Nanosuit online.",
-    "Maximum Armor engaged.",
-    "All systems nominal.",
-    "Welcome back, Prophet.",
+    "Нанокостюм активирован.",
+    "Максимальная броня включена.",
+    "Все системы в норме.",
+    "С возвращением, Пророк.",
 ]
 
 
@@ -58,7 +58,7 @@ def _nanosuit_greeting():
     # Try espeak-ng then espeak — both available on Debian/Astra Linux.
     # Parameters: very low pitch (-p 8), slow deliberate speech (-s 82),
     # loud amplitude (-a 200), male voice variant — gives the Crysis robotic tone.
-    args_base = ["-v", "en-us+m3", "-s", "82", "-p", "8", "-a", "200"]
+    args_base = ["-v", "ru+m3", "-s", "82", "-p", "8", "-a", "200"]
     for binary in ("espeak-ng", "espeak"):
         try:
             subprocess.run([binary, "--version"], capture_output=True, timeout=3, check=True)
