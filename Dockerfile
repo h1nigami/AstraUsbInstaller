@@ -13,8 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-tk \
     espeak-ng \
     espeak-ng-data \
-    sox \
-    libsox-fmt-all \
+    alsa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

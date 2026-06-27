@@ -4,12 +4,22 @@ import platform
 import queue
 import sqlite3
 import subprocess
+import io
+import tempfile
+import wave
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 
 from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE
+
+try:
+    import numpy as np
+    from scipy import signal as _scipy_signal
+    _HAVE_DSP = True
+except Exception:
+    _HAVE_DSP = False
 
 POLL_MS = 200
 VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
@@ -71,36 +81,135 @@ def _has_bin(*names):
     return None
 
 
-# Shared espeak + sox pipeline — identical on Linux and Windows.
-# espeak -p 40 so the base pitch isn't too extreme before sox shifts it further.
+# Shared espeak args — output to stdout as WAV for Python DSP pipeline.
 _ESP_ARGS = ["-v", "ru+m3", "-s", "78", "-p", "40", "-a", "200", "--stdout"]
-_SOX_CHAIN = [
-    "pitch", "-350",               # 3.5 semitones down — electronic bass
-    "echo", "0.8", "0.7", "18", "0.55",   # close metallic echo (armor resonance)
-    "echo", "0.6", "0.6", "55", "0.30",   # far echo (inside suit cavity)
-    "reverb", "35",                # enclosed-space reverb
-    "bass", "+7",                  # heavy low-end punch
-    "treble", "-4",                # cut harshness → dark cold timbre
-]
 
 
-def _play_with_sox(binary):
+def _echo(x, sr, in_gain, out_gain, delays_ms, decays):
+    out = x * in_gain
+    for d_ms, decay in zip(delays_ms, decays):
+        d = int(round(sr * d_ms / 1000.0))
+        delayed = np.zeros_like(x)
+        if d < len(x):
+            delayed[d:] = x[:-d] * decay
+        out = out + delayed
+    return out * out_gain
+
+
+def _reverb(x, sr, reverberance):
+    tail_s = 0.01 + (reverberance / 100.0) * 0.9
+    n = int(sr * tail_s)
+    t = np.arange(n)
+    decay = np.exp(-3.0 * t / n)
+    ir = decay * np.random.RandomState(0).randn(n)
+    ir[0] = 1.0
+    wet = _scipy_signal.fftconvolve(x, ir)[:len(x)]
+    mix = reverberance / 100.0 * 0.5
+    return (1.0 - mix) * x + mix * (wet / (np.max(np.abs(wet)) + 1e-9))
+
+
+def _shelf(x, sr, gain_db, freq, kind):
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * freq / sr
+    cosw = np.cos(w0)
+    sinw = np.sin(w0)
+    alpha = sinw / 2.0 * np.sqrt((A + 1.0 / A) * (1.0 / 1.0 - 1.0) + 2.0)
+    sa = 2.0 * np.sqrt(A) * alpha
+    if kind == "low":
+        b0 =     A * ((A + 1) - (A - 1) * cosw + sa)
+        b1 = 2 * A * ((A - 1) - (A + 1) * cosw)
+        b2 =     A * ((A + 1) - (A - 1) * cosw - sa)
+        a0 =          (A + 1) + (A - 1) * cosw + sa
+        a1 =    -2 * ((A - 1) + (A + 1) * cosw)
+        a2 =          (A + 1) + (A - 1) * cosw - sa
+    else:
+        b0 =     A * ((A + 1) + (A - 1) * cosw + sa)
+        b1 = -2 * A * ((A - 1) + (A + 1) * cosw)
+        b2 =     A * ((A + 1) + (A - 1) * cosw - sa)
+        a0 =          (A + 1) - (A - 1) * cosw + sa
+        a1 =     2 * ((A - 1) - (A + 1) * cosw)
+        a2 =          (A + 1) - (A - 1) * cosw - sa
+    b = np.array([b0, b1, b2]) / a0
+    a = np.array([1.0, a1 / a0, a2 / a0])
+    return _scipy_signal.lfilter(b, a, x)
+
+
+def _wav_bytes_to_float(wav_bytes):
+    with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+        sr = w.getframerate()
+        n = w.getnframes()
+        ch = w.getnchannels()
+        sw = w.getsampwidth()
+        raw = w.readframes(n)
+    if sw != 2:
+        raise ValueError(f"unexpected sample width {sw}")
+    audio = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if ch > 1:
+        audio = audio.reshape(-1, ch).mean(axis=1)
+    return audio, sr
+
+
+def _nanosuit_fx(audio, sr):
+    x = audio.astype(np.float64)
+    ratio = 2.0 ** (-350.0 / 1200.0)
+    n_orig = len(x)
+    n_stretch = max(1, int(round(n_orig / ratio)))
+    x = _scipy_signal.resample(_scipy_signal.resample(x, n_stretch), n_orig)
+    x = _echo(x, sr, in_gain=0.8, out_gain=0.7, delays_ms=[18.0], decays=[0.55])
+    x = _echo(x, sr, in_gain=0.6, out_gain=0.6, delays_ms=[55.0], decays=[0.30])
+    x = _reverb(x, sr, reverberance=35.0)
+    x = _shelf(x, sr, gain_db=+7.0, freq=100.0, kind="low")
+    x = _shelf(x, sr, gain_db=-4.0, freq=3000.0, kind="high")
+    peak = np.max(np.abs(x))
+    if peak > 1.0:
+        x = x / peak
+    return x.astype(np.float32)
+
+
+def _play_processed_wav(audio, sr):
+    pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+    fd, path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        with wave.open(path, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes(pcm.tobytes())
+        if platform.system() == "Windows":
+            import winsound
+            winsound.PlaySound(path, winsound.SND_FILENAME)
+        else:
+            subprocess.run(["aplay", "-q", path], capture_output=True, timeout=20)
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _play_with_python_fx(binary):
+    if not _HAVE_DSP:
+        return False
+    ok = False
     for line in _NANOSUIT_LINES:
         try:
-            proc = subprocess.Popen(
+            proc = subprocess.run(
                 [binary, *_ESP_ARGS, line],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                capture_output=True, timeout=20,
             )
-            subprocess.run(
-                ["sox", "-t", "wav", "-", "-d", *_SOX_CHAIN],
-                stdin=proc.stdout, capture_output=True, timeout=20,
-            )
-            proc.wait(timeout=5)
+            if proc.returncode != 0 or not proc.stdout:
+                raise RuntimeError("espeak produced no audio")
+            audio, sr = _wav_bytes_to_float(proc.stdout)
+            audio = _nanosuit_fx(audio, sr)
+            _play_processed_wav(audio, sr)
+            ok = True
         except Exception as e:
-            print(f"[nanosuit] speech error: {e}", flush=True)
+            print(f"[nanosuit] DSP error: {e}", flush=True)
+    return ok
 
 
-def _play_plain(binary):
+def _play_plain_espeak(binary):
     for line in _NANOSUIT_LINES:
         try:
             subprocess.run(
@@ -113,20 +222,12 @@ def _play_plain(binary):
 
 def _nanosuit_greeting_windows():
     binary = _has_bin("espeak-ng", "espeak")
-    use_sox = _has_bin("sox") is not None
-
-    if binary and use_sox:
-        # Full Crysis effect — espeak-ng + sox, same as Linux
-        _play_with_sox(binary)
+    if binary and _play_with_python_fx(binary):
         return
-
     if binary:
-        # espeak without sox — at least the right language and low pitch
-        _play_plain(binary)
-        print("[nanosuit] install sox for Windows for full Crysis sound", flush=True)
+        _play_plain_espeak(binary)
+        print("[nanosuit] install numpy+scipy for full Crysis sound: pip install numpy scipy", flush=True)
         return
-
-    # Nothing installed — PowerShell SAPI built-in fallback
     text = " ".join(_NANOSUIT_LINES)
     ps_script = (
         "Add-Type -AssemblyName System.Speech; "
@@ -143,20 +244,18 @@ def _nanosuit_greeting_windows():
         )
     except Exception as e:
         print(f"[nanosuit] Windows TTS error: {e}", flush=True)
-    print("[nanosuit] for Crysis sound install espeak-ng + sox for Windows", flush=True)
+    print("[nanosuit] for Crysis sound install espeak-ng + pip install numpy scipy", flush=True)
 
 
 def _nanosuit_greeting_linux():
     binary = _has_bin("espeak-ng", "espeak")
     if not binary:
-        print("[nanosuit] espeak-ng not found — install: sudo apt install espeak-ng espeak-ng-data sox", flush=True)
+        print("[nanosuit] espeak-ng not found — install: sudo apt install espeak-ng espeak-ng-data alsa-utils", flush=True)
         return
-
-    if _has_bin("sox"):
-        _play_with_sox(binary)
-    else:
-        _play_plain(binary)
-        print("[nanosuit] sox not found — install: sudo apt install sox (for full Crysis effect)", flush=True)
+    if _play_with_python_fx(binary):
+        return
+    _play_plain_espeak(binary)
+    print("[nanosuit] install numpy+scipy for full Crysis sound: pip install numpy scipy", flush=True)
 
 
 class App:
