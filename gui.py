@@ -162,9 +162,29 @@ def _nanosuit_greeting_linux():
 class App:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("USB Backup Manager")
+        self.root.title("BestElectronics USB Backup Manager")
         self.root.attributes("-fullscreen", True)
         self.root.bind("<Escape>", lambda e: None)
+        self.root.configure(bg="#0f172a")
+
+        self.C = {
+            "bg_app":      "#0f172a",
+            "bg_panel":    "#1e293b",
+            "bg_surface":  "#334155",
+            "fg_main":     "#f1f5f9",
+            "fg_muted":    "#94a3b8",
+            "accent":      "#2563eb",
+            "accent_warn": "#d97706",
+            "accent_ok":   "#16a34a",
+            "border":      "#475569",
+            "brand":       "#38bdf8",
+        }
+        self.tabs_unlocked = False
+        self._unlock_in_progress = False
+        self._last_tab = 0
+        self.public_tab_index = 0
+
+        self.mon_status = tk.StringVar(value="Мониторинг: запуск...")
 
         self.progress_queue = queue.Queue()
         self.stop_event = threading.Event()
@@ -179,13 +199,141 @@ class App:
         self._poll_queue()
         self._start_monitor()
 
+    def _setup_styles(self):
+        C = self.C
+        s = ttk.Style(self.root)
+        s.theme_use("clam")
+        s.configure("TNotebook", background=C["bg_app"], borderwidth=0)
+        s.configure("TNotebook.Tab", font=("Segoe UI", 13, "bold"), padding=[22, 10],
+                    background=C["bg_panel"], foreground=C["fg_muted"], borderwidth=0)
+        s.map("TNotebook.Tab",
+              background=[("selected", C["accent"])],
+              foreground=[("selected", "#ffffff")])
+        s.configure("TFrame", background=C["bg_app"])
+        s.configure("TLabel", background=C["bg_app"], foreground=C["fg_main"], font=("Segoe UI", 11))
+        s.configure("TLabelframe", background=C["bg_panel"], foreground=C["brand"],
+                    bordercolor=C["border"], font=("Segoe UI", 12, "bold"))
+        s.configure("TLabelframe.Label", background=C["bg_panel"], foreground=C["brand"])
+        s.configure("TButton", font=("Segoe UI", 11, "bold"), padding=[14, 8],
+                    background=C["accent"], foreground="#ffffff", borderwidth=0)
+        s.map("TButton", background=[("active", "#1d4ed8"), ("pressed", "#1e40af")])
+        s.configure("Danger.TButton", font=("Segoe UI", 11, "bold"), padding=[14, 8],
+                    background="#dc2626", foreground="#ffffff", borderwidth=0)
+        s.map("Danger.TButton", background=[("active", "#b91c1c"), ("pressed", "#991b1b")])
+        s.configure("Treeview", font=("Segoe UI", 11), rowheight=30,
+                    background=C["bg_surface"], fieldbackground=C["bg_surface"],
+                    foreground=C["fg_main"], borderwidth=0)
+        s.configure("Treeview.Heading", font=("Segoe UI", 11, "bold"),
+                    background=C["bg_panel"], foreground=C["brand"], padding=[6, 8])
+        s.map("Treeview", background=[("selected", C["accent"])], foreground=[("selected", "#ffffff")])
+        s.configure("TEntry", fieldbackground=C["bg_surface"], foreground=C["fg_main"],
+                    bordercolor=C["border"], insertcolor=C["fg_main"], padding=4)
+        s.configure("TCombobox", fieldbackground=C["bg_surface"], background=C["bg_surface"],
+                    foreground=C["fg_main"], arrowcolor=C["fg_main"], padding=4)
+
+    def _build_header(self):
+        C = self.C
+        hdr = tk.Frame(self.root, bg=C["bg_panel"], height=80)
+        hdr.pack(fill="x", side="top")
+        hdr.pack_propagate(False)
+
+        logo = tk.Label(hdr, text="[LOGO]", width=7, height=3,
+                        font=("Segoe UI", 12, "bold"),
+                        fg=C["brand"], bg=C["bg_app"],
+                        relief="solid", bd=1)
+        logo.pack(side="left", padx=16, pady=10)
+
+        box = tk.Frame(hdr, bg=C["bg_panel"])
+        box.pack(side="left", padx=10)
+        tk.Label(box, text="BestElectronics", font=("Segoe UI", 20, "bold"),
+                 fg=C["brand"], bg=C["bg_panel"]).pack(anchor="w")
+        tk.Label(box, text="USB Backup Manager", font=("Segoe UI", 12),
+                 fg=C["fg_muted"], bg=C["bg_panel"]).pack(anchor="w")
+
+        tk.Frame(self.root, bg=C["brand"], height=2).pack(fill="x")
+
+    def _build_statusbar(self):
+        C = self.C
+        bar = tk.Frame(self.root, bg=C["bg_panel"], height=28)
+        bar.pack(fill="x", side="bottom")
+        bar.pack_propagate(False)
+        tk.Label(bar, text="© BestElectronics", font=("Segoe UI", 10),
+                 fg=C["fg_muted"], bg=C["bg_panel"]).pack(side="left", padx=12)
+        tk.Label(bar, textvariable=self.mon_status, font=("Segoe UI", 10),
+                 fg=C["brand"], bg=C["bg_panel"]).pack(side="right", padx=12)
+
     def _build_ui(self):
-        nb = ttk.Notebook(self.root)
-        nb.pack(fill="both", expand=True)
-        self._build_workers_tab(nb)
-        self._build_search_tab(nb)
-        self._build_devices_tab(nb)
-        self._build_settings_tab(nb)
+        self._setup_styles()
+        self._build_header()
+        self._build_statusbar()
+        self.nb = ttk.Notebook(self.root)
+        self.nb.pack(fill="both", expand=True)
+        self._build_workers_tab(self.nb)
+        self._build_search_tab(self.nb)
+        self._build_devices_tab(self.nb)
+        self._build_settings_tab(self.nb)
+        self.nb.bind("<<NotebookTabChanged>>", self._on_tab_changed)
+
+    def _prompt_unlock(self):
+        result = {"ok": False}
+        C = self.C
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Доступ к разделу")
+        dlg.configure(bg=C["bg_panel"])
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w, h = sw // 2, sh // 2
+        x, y = (sw - w) // 2, (sh - h) // 2
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        tk.Label(dlg, text="Доступ к разделу защищён.",
+                 font=("Segoe UI", 20, "bold"),
+                 fg=C["fg_main"], bg=C["bg_panel"]).pack(pady=(h // 6, 8))
+        tk.Label(dlg, text="Введите пароль:",
+                 font=("Segoe UI", 14),
+                 fg=C["fg_muted"], bg=C["bg_panel"]).pack()
+        pw_var = tk.StringVar()
+        pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*",
+                             width=w // 14, font=("Segoe UI", 14))
+        pw_entry.pack(pady=16, ipadx=8, ipady=6)
+        pw_entry.focus_set()
+        err_var = tk.StringVar()
+        tk.Label(dlg, textvariable=err_var, font=("Segoe UI", 12),
+                 fg="#f87171", bg=C["bg_panel"]).pack()
+
+        def confirm():
+            if pw_var.get().strip() == _get_exit_password():
+                result["ok"] = True
+                dlg.destroy()
+            else:
+                err_var.set("Неверный пароль")
+
+        ttk.Button(dlg, text="Войти", command=confirm).pack(pady=20)
+        pw_entry.bind("<Return>", lambda e: confirm())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
+        dlg.wait_window()
+        return result["ok"]
+
+    def _on_tab_changed(self, _event):
+        if self._unlock_in_progress:
+            return
+        idx = self.nb.index(self.nb.select())
+        if idx == self.public_tab_index or self.tabs_unlocked:
+            self._last_tab = idx
+            return
+        self._unlock_in_progress = True
+        try:
+            self.nb.select(self._last_tab)
+            if self._prompt_unlock():
+                self.tabs_unlocked = True
+                self.nb.select(idx)
+                self._last_tab = idx
+        finally:
+            self._unlock_in_progress = False
 
     def _build_search_tab(self, nb):
         f = ttk.Frame(nb)
@@ -218,10 +366,11 @@ class App:
         self.search_tree = ttk.Treeview(f, columns=cols, show="headings", height=18)
         headings = {"datetime": "Дата/время", "device": "Устройство", "label": "Метка",
                     "person": "Человек", "files": "Файлы", "size": "Размер", "path": "Путь"}
+        col_widths = {"datetime": 150, "device": 90, "label": 140, "person": 140,
+                      "files": 70, "size": 90, "path": 280}
         for c in cols:
             self.search_tree.heading(c, text=headings[c])
-            self.search_tree.column(c, width=100)
-        self.search_tree.column("path", width=200)
+            self.search_tree.column(c, width=col_widths[c])
         vsb = ttk.Scrollbar(f, orient="vertical", command=self.search_tree.yview)
         self.search_tree.configure(yscrollcommand=vsb.set)
         self.search_tree.pack(fill="both", expand=True, padx=5, pady=(0, 5), side="left")
@@ -237,10 +386,11 @@ class App:
         self.dev_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
         headings = {"id": "ID", "serial": "Серийный", "label": "Метка",
                     "person": "Человек", "first_seen": "Впервые", "last_seen": "Последний раз"}
+        dev_col_widths = {"id": 50, "serial": 200, "label": 150, "person": 150,
+                          "first_seen": 160, "last_seen": 160}
         for c in cols:
             self.dev_tree.heading(c, text=headings[c])
-            self.dev_tree.column(c, width=120)
-        self.dev_tree.column("serial", width=180)
+            self.dev_tree.column(c, width=dev_col_widths[c])
         self.dev_tree.pack(fill="both", expand=True, padx=5, pady=5)
 
         edit_frame = ttk.Frame(f)
@@ -252,7 +402,7 @@ class App:
         self.edit_person = ttk.Entry(edit_frame, width=20)
         self.edit_person.pack(side="left", padx=2)
         ttk.Button(edit_frame, text="Назначить", command=self._assign_person).pack(side="left", padx=4)
-        ttk.Button(edit_frame, text="Очистить видео", command=self._clean_device_videos).pack(side="left", padx=4)
+        ttk.Button(edit_frame, text="Очистить видео", command=self._clean_device_videos, style="Danger.TButton").pack(side="left", padx=4)
         ttk.Button(edit_frame, text="Обновить список", command=self._refresh_devices).pack(side="right", padx=4)
 
         self.dev_tree.bind("<<TreeviewSelect>>", self._on_device_select)
@@ -261,9 +411,6 @@ class App:
     def _build_workers_tab(self, nb):
         f = ttk.Frame(nb)
         nb.add(f, text="Загрузка")
-
-        self.mon_status = tk.StringVar(value="Мониторинг: запуск...")
-        ttk.Label(f, textvariable=self.mon_status, foreground="gray").pack(anchor="w", padx=5, pady=(5, 0))
 
         self.ports = []
         self.port_assignment = {}
@@ -275,18 +422,21 @@ class App:
         rows, cols = 3, 4
         for i in range(rows * cols):
             r, c = divmod(i, cols)
-            cell = ttk.Frame(grid, relief="solid", borderwidth=2)
-            cell.grid(row=r, column=c, padx=6, pady=6, sticky="nsew")
+            cell = tk.Frame(grid, bg=self.C["border"], bd=0)
+            cell.grid(row=r, column=c, padx=10, pady=10, sticky="nsew")
             grid.columnconfigure(c, weight=1, uniform="port")
             grid.rowconfigure(r, weight=1, uniform="port")
 
-            preview = tk.Label(cell, text="Простой", font=("Segoe UI", 14, "bold"),
-                               fg="white", bg="#2563eb")
+            inner = tk.Frame(cell, bg=self.C["bg_panel"], bd=0)
+            inner.pack(fill="both", expand=True, padx=1, pady=1)
+
+            preview = tk.Label(inner, text="Простой", font=("Segoe UI", 18, "bold"),
+                               fg="white", bg=self.C["accent"])
             preview.pack(fill="both", expand=True)
 
-            status = tk.Label(cell, text="Нет передачи данных", font=("Segoe UI", 10),
-                              fg="#444", bg="white")
-            status.pack(fill="x", ipady=4)
+            status = tk.Label(inner, text="Нет передачи данных", font=("Segoe UI", 11),
+                              fg=self.C["fg_main"], bg=self.C["bg_panel"])
+            status.pack(fill="x", ipady=8)
 
             self.ports.append({"frame": cell, "preview": preview, "status": status, "device_id": None})
 
@@ -307,6 +457,11 @@ class App:
         ttk.Button(frame, text="Сменить пароль", command=self._change_password).pack(anchor="w")
 
         self._refresh_pw_status()
+
+        about = ttk.LabelFrame(f, text="О программе", padding=16)
+        about.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Label(about, text="BestElectronics USB Backup Manager").pack(anchor="w")
+        ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
 
     def _refresh_pw_status(self):
         pw = _get_exit_password()
@@ -613,19 +768,19 @@ class App:
             port["device_id"] = dev_id
 
             if state == "Сканирование":
-                bg = "#2563eb"
+                bg = self.C["accent"]
                 preview_text = data["device"]
                 status_text = f"Сканирование... {data.get('message', '')}"
             elif state == "Копирование":
-                bg = "#d97706"
+                bg = self.C["accent_warn"]
                 preview_text = data["device"]
                 status_text = data.get("progress", "Копирование...")
             elif state == "Готово":
-                bg = "#16a34a"
+                bg = self.C["accent_ok"]
                 preview_text = data["device"]
                 status_text = data.get("message", "Готово")
             else:
-                bg = "#6b7280"
+                bg = self.C["bg_surface"]
                 preview_text = data["device"]
                 status_text = data.get("message", state)
 
@@ -637,7 +792,7 @@ class App:
             if did is not None and did not in tracked:
                 port["device_id"] = None
                 self.port_assignment.pop(did, None)
-                port["preview"].configure(text="Простой", bg="#2563eb")
+                port["preview"].configure(text="Простой", bg=self.C["accent"])
                 port["status"].configure(text="Нет передачи данных")
 
         done_ids = [did for did, d in self.workers_data.items() if d["state"] == "Готово"]
