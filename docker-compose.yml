@@ -1,6 +1,12 @@
 services:
   usb-monitor:
-    build: .
+    build:
+      context: .
+      args:
+        # Set to 1 to bake the nanosuit voice stack (torch + coqui-tts, ~3 GB)
+        # into the image. Default 0 keeps the image lean; the app still runs and
+        # the greeting falls back to espeak. Enable: INSTALL_VOICE=1 docker compose build
+        INSTALL_VOICE: ${INSTALL_VOICE:-0}
     container_name: astra-usb-monitor
     privileged: true
     network_mode: host

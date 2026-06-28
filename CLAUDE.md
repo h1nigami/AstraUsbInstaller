@@ -78,8 +78,14 @@ Pitch shift is done by writing the WAV with a lower framerate (`write_sr = int(s
 
 Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. Audio via ALSA (`/dev/snd` device, `audio` group). GUI via X11 socket passthrough (`/tmp/.X11-unix`). `start.sh` auto-detects `$DISPLAY`; `.gitattributes` enforces LF endings to prevent CRLF corruption in the container.
 
-CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build the image using `docker/build-push-action` with `type=gha` layer cache.
+The image installs only the lean base `requirements.txt`. The heavy voice stack (`requirements-voice.txt`: torch + coqui-tts, ~3 GB) is gated behind the `INSTALL_VOICE` build arg (default `0`) — `INSTALL_VOICE=1 docker compose build`, or `docker build --build-arg INSTALL_VOICE=1 .`. Compose passes it through `build.args` from the `INSTALL_VOICE` env var.
+
+CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build the image using `docker/build-push-action` with `type=gha` layer cache. They build with the default `INSTALL_VOICE=0`, so CI stays fast and small.
+
+## Voice dependency pins (`requirements-voice.txt`)
+
+XTTS v2 (coqui-tts) is version-sensitive. The file pins a known-good CPU set: `torch`/`torchaudio` from the pytorch CPU index (must match each other), `coqui-tts>=0.25`, and crucially `transformers>=4.57,<5` — transformers 5.x removed `isin_mps_friendly`, which coqui-tts imports, so transformers≥5 breaks XTTS with `cannot import name 'isin_mps_friendly'`. `torchaudio` is a hard runtime dep of coqui-tts. XTTS runs on CPU/CUDA only (no Apple MPS; the code falls back to CPU).
 
 ## Development branch
 
-Active feature branch: `claude/nanosuit-voice-additive-layers`. Base: `master`.
+Active feature branch: `claude/voice-deps-fix-dockerfiles`. Base: `master`.

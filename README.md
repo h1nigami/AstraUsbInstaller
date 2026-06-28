@@ -105,6 +105,29 @@ python gui.py --voice-test
 Например, `NANOSUIT_VOICE=clone python gui.py --voice-test` заставит запускаться
 только клонирование и покажет реальную ошибку, если оно падает.
 
+#### Частые ошибки клонирования
+
+- **`No module named 'torchaudio'`** — `torchaudio` обязателен для coqui-tts.
+  Он уже прописан в `requirements-voice.txt`; переустановите:
+  `pip install -r requirements-voice.txt`.
+- **`cannot import name 'isin_mps_friendly'`** — установлен `transformers` 5.x,
+  где эта функция удалена, а coqui-tts её импортирует. Файл
+  `requirements-voice.txt` фиксирует `transformers>=4.57,<5`. Почините так:
+  `pip install "transformers>=4.57,<5"` (или переустановите весь файл).
+- **XTTS требует Python 3.10–3.12.** На 3.13+ колёса coqui-tts могут не
+  встать — используйте поддерживаемую версию Python.
+
+### Голос в Docker
+
+По умолчанию образ собирается **без** голосового стека (чтобы не раздувать его
+на ~3 ГБ) — приветствие в контейнере откатывается на espeak. Чтобы вшить полный
+голос (torch + coqui-tts) в образ:
+
+```bash
+INSTALL_VOICE=1 docker compose build
+# или: docker build --build-arg INSTALL_VOICE=1 -t astra-usb .
+```
+
 ## Переменные окружения
 
 | Переменная | По умолчанию | Описание |

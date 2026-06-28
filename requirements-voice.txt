@@ -2,14 +2,28 @@
 # Install with:  pip install -r requirements-voice.txt
 # Cross-platform (Arch Linux + Windows). All of this is optional — without it
 # the app still runs and the greeting falls back to espeak + DSP.
+#
+# These versions are a known-good set for XTTS v2 voice cloning on CPU. Do not
+# loosen them blindly:
+#   * torchaudio is REQUIRED by coqui-tts (XTTS reads/writes audio through it).
+#   * transformers must stay < 5: transformers 5.x removed `isin_mps_friendly`,
+#     which coqui-tts imports — installing transformers>=5 breaks XTTS with
+#     "cannot import name 'isin_mps_friendly' from 'transformers.pytorch_utils'".
 
-# CPU-only torch (no CUDA) keeps the download small. Powers both voice paths.
+# CPU-only torch/torchaudio (no CUDA) keeps the download small and matched.
+# torchaudio must match torch's version; the cpu index ships an aligned pair.
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
+torchaudio>=2.2.0
+
+# Pinned below transformers 5 (see note above).
+transformers>=4.57,<5
 
 # Exact copy: XTTS v2 voice cloning. Reproduces the EXACT nanosuit voice from a
 # reference clip at data/nanosuit_ref.wav (see README). Prebuilt wheels for
 # Linux and Windows. First run downloads the ~1.8 GB model.
+# Note: XTTS v2 runs on CPU/CUDA only — Apple-Silicon MPS is unsupported, the
+# code already falls back to CPU there.
 coqui-tts>=0.25.0
 
 # Fallback neural voice: Silero (real Russian male voice + nanosuit DSP), used

@@ -18,8 +18,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Base (lean) dependencies — always installed.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Optional nanosuit voice stack (torch + coqui-tts, ~3 GB). Off by default to
+# keep the image small; enable with:  docker build --build-arg INSTALL_VOICE=1
+# or set it in docker-compose.yml under build.args.
+ARG INSTALL_VOICE=0
+COPY requirements-voice.txt .
+RUN if [ "$INSTALL_VOICE" = "1" ] || [ "$INSTALL_VOICE" = "true" ]; then \
+        pip install --no-cache-dir -r requirements-voice.txt; \
+    fi
 
 COPY usb_monitor.py .
 COPY gui.py .
