@@ -84,62 +84,87 @@ def _has_bin(*names):
 # espeak: m7 = deepest robotic male variant; p=5 = maximum base pitch lowering
 _ESP_ARGS = ["-v", "ru+m7", "-s", "90", "-p", "5", "-a", "200", "-g", "2", "--stdout"]
 
-# DSP effect parameters for nanosuit voice
-_PITCH_CENTS    = -700.0   # ~7 semitones down — brutal deep bass
-_ECHO1_DELAY_MS =   12.0   # short metallic armor echo
-_ECHO1_DECAY    =    0.40
-_REVERB_AMOUNT  =   18.0   # small helmet reverb, not a room
-_BASS_GAIN_DB   =   +8.0   # heavy bass boost to reinforce masculinity
-_BASS_FREQ_HZ   =  120.0
-_TREBLE_GAIN_DB =   -3.0
-_TREBLE_FREQ_HZ = 3500.0
-# Ring modulator — the key "electronic buzz" of the nanosuit
-_RING_FREQ_HZ   =   55.0   # lower frequency = deeper metallic buzz
-_RING_MIX       =    0.22  # reduced mix so bass stays dominant
-# Bandpass: low cut at 80Hz preserves male fundamental frequencies (85–180Hz)
-_BP_LO_HZ       =   80.0
-_BP_HI_HZ       = 3400.0
-# Resonant peak adds metallic "rasp" formant
-_PEAK_GAIN_DB   =   +6.0
-_PEAK_FREQ_HZ   = 1500.0
-_PEAK_Q         =    1.2
-# Comb filter — armor resonance (short recursive delay)
-_COMB_DELAY_MS  =    3.0
-_COMB_FEEDBACK  =    0.45
-_COMB_MIX       =    0.35
-# Flanger — synthetic movement of an electronic voice
-_FLANGE_RATE_HZ =    0.25
-_FLANGE_DEPTH_MS=    2.0
-_FLANGE_BASE_MS =    1.0
-_FLANGE_MIX     =    0.30
+# Vocoder — the primary effect that makes nanosuit sound synthetic
+# Confirmed by Crysis sound designer: narrow-band vocoder + ring mod + comb filters
+_VOC_BANDS       = 10      # fewer bands = more robotic
+_VOC_CARRIER_HZ  = 85.0   # sawtooth carrier pitch (deep male ~85-100 Hz)
+_VOC_F_LO        = 80.0
+_VOC_F_HI        = 3500.0
+_VOC_ATTACK_MS   = 5.0
+_VOC_RELEASE_MS  = 80.0
+# Diode ring modulator (IRCAM model) — adds electronic harmonics, not plain multiply
+_RING_FREQ_HZ    = 120.0   # 100-150 Hz = metallic electronic buzz
+_RING_MIX        =   0.18
+# Comb filter — armor resonance
+_COMB_DELAY_MS   =   3.0
+_COMB_FEEDBACK   =   0.45
+_COMB_MIX        =   0.30
+# Reverb — short metallic helmet space
+_REVERB_AMOUNT   =  15.0
+# EQ
+_BASS_GAIN_DB    =  +6.0
+_BASS_FREQ_HZ    = 100.0
+_TREBLE_GAIN_DB  =  -4.0
+_TREBLE_FREQ_HZ  = 4000.0
+# Subtle pitch shift — vocoder controls pitch, this adds slight heaviness
+_PITCH_CENTS     = -180.0
 
 
-def _ring_mod(x, sr, freq, mix):
-    t = np.arange(len(x)) / sr
-    carrier = np.sin(2.0 * np.pi * freq * t)
-    return (1.0 - mix) * x + mix * (x * carrier)
+def _sawtooth(n, freq, sr):
+    t = np.arange(n) / sr
+    return 2.0 * (t * freq - np.floor(t * freq + 0.5))
 
 
-def _bandpass(x, sr, lo, hi, order=2):
+def _channel_vocoder(modulator, sr):
+    """Channel vocoder: replace voice harmonics with sawtooth carrier.
+
+    The confirmed primary effect in the Crysis nanosuit voice.
+    10 log-spaced bands, asymmetric envelope follower, sawtooth carrier.
+    """
+    n = len(modulator)
+    carrier = _sawtooth(n, _VOC_CARRIER_HZ, sr)
+    edges = np.logspace(np.log10(_VOC_F_LO), np.log10(_VOC_F_HI), _VOC_BANDS + 1)
     nyq = sr / 2.0
-    lo_n = min(lo / nyq, 0.99)
-    hi_n = min(hi / nyq, 0.99)
-    if lo_n >= hi_n:
-        return x
-    b, a = _scipy_signal.butter(order, [lo_n, hi_n], btype="band")
-    return _scipy_signal.lfilter(b, a, x)
+    a_att = np.exp(-1.0 / (sr * _VOC_ATTACK_MS  / 1000.0))
+    a_rel = np.exp(-1.0 / (sr * _VOC_RELEASE_MS / 1000.0))
+    output = np.zeros(n)
+    for i in range(_VOC_BANDS):
+        lo = np.clip(edges[i]     / nyq, 1e-6, 0.999)
+        hi = np.clip(edges[i + 1] / nyq, 1e-6, 0.999)
+        if lo >= hi:
+            continue
+        b, a = _scipy_signal.butter(2, [lo, hi], btype="band")
+        mod_band = _scipy_signal.lfilter(b, a, modulator)
+        car_band = _scipy_signal.lfilter(b, a, carrier)
+        # Asymmetric envelope follower
+        env = np.zeros(n)
+        abs_mod = np.abs(mod_band)
+        for j in range(1, n):
+            c = a_att if abs_mod[j] > env[j - 1] else a_rel
+            env[j] = c * env[j - 1] + (1.0 - c) * abs_mod[j]
+        output += car_band * env
+    return output
 
 
-def _peak(x, sr, gain_db, freq, q):
-    A = 10.0 ** (gain_db / 40.0)
-    w0 = 2.0 * np.pi * freq / sr
-    cosw, sinw = np.cos(w0), np.sin(w0)
-    alpha = sinw / (2.0 * q)
-    b0 = 1 + alpha * A;  b1 = -2 * cosw;  b2 = 1 - alpha * A
-    a0 = 1 + alpha / A;  a1 = -2 * cosw;  a2 = 1 - alpha / A
-    b = np.array([b0, b1, b2]) / a0
-    a = np.array([1.0, a1 / a0, a2 / a0])
-    return _scipy_signal.lfilter(b, a, x)
+# Diode constants from IRCAM model (github.com/nrlakin/robot_voice)
+_DIODE_VB = 0.2
+_DIODE_VL = 0.4
+_DIODE_H  = 4.0
+
+
+def _diode(x):
+    return np.where(x <= -_DIODE_VL, -_DIODE_VL,
+           np.where(x <=  _DIODE_VB,  0.0,
+           np.where(x <=  _DIODE_VL,  _DIODE_H * (x - _DIODE_VB) ** 2,
+                    x - _DIODE_VL + _DIODE_H * (_DIODE_VL - _DIODE_VB) ** 2)))
+
+
+def _ring_mod_diode(x, sr, freq, mix):
+    """Ring modulator with diode waveshaper — richer harmonics than plain multiply."""
+    t = np.arange(len(x)) / sr
+    c = np.sin(2.0 * np.pi * freq * t)
+    wet = _diode(x + c) - _diode(x - c) - _diode(c) + _diode(-c)
+    return (1.0 - mix) * x + mix * wet
 
 
 def _comb_fast(x, sr, delay_ms, feedback, mix):
@@ -147,20 +172,6 @@ def _comb_fast(x, sr, delay_ms, feedback, mix):
     a_coef = np.zeros(d + 1); a_coef[0] = 1.0; a_coef[d] = -feedback
     y = _scipy_signal.lfilter([1.0], a_coef, x)
     return (1.0 - mix) * x + mix * y
-
-
-def _flanger(x, sr, rate_hz, depth_ms, base_ms, mix):
-    t = np.arange(len(x)) / sr
-    base = base_ms / 1000.0 * sr
-    depth = depth_ms / 1000.0 * sr
-    delay = base + depth * (0.5 + 0.5 * np.sin(2 * np.pi * rate_hz * t))
-    idx = np.arange(len(x)) - delay
-    i0 = np.floor(idx).astype(int)
-    frac = idx - i0
-    i0 = np.clip(i0, 0, len(x) - 1)
-    i1 = np.clip(i0 + 1, 0, len(x) - 1)
-    wet = (1 - frac) * x[i0] + frac * x[i1]
-    return (1.0 - mix) * x + mix * wet
 
 
 def _echo(x, sr, in_gain, out_gain, delays_ms, decays):
@@ -230,29 +241,25 @@ def _wav_bytes_to_float(wav_bytes):
 def _nanosuit_fx(audio, sr):
     """Apply Crysis nanosuit DSP chain. Returns (processed_float32, write_sr).
 
-    Pitch shift: write WAV at lower framerate — playback at standard rate
-    sounds lower and slightly slower, no resampling needed.
+    Chain: channel vocoder → diode ring mod → comb (armor resonance) →
+           reverb → EQ → normalize → pitch via write_sr framerate trick.
     """
     x = audio.astype(np.float64)
-    # Ring modulation first — creates the electronic metallic buzz
-    x = _ring_mod(x, sr, freq=_RING_FREQ_HZ, mix=_RING_MIX)
-    # Bandpass + resonant peak — "speaker inside a helmet" timbral shaping
-    x = _bandpass(x, sr, lo=_BP_LO_HZ, hi=_BP_HI_HZ)
-    x = _peak(x, sr, gain_db=_PEAK_GAIN_DB, freq=_PEAK_FREQ_HZ, q=_PEAK_Q)
-    # Armor resonance + synthetic electronic movement
+    # Channel vocoder: replaces voice with sawtooth carrier — primary Crysis effect
+    x = _channel_vocoder(x, sr)
+    # Diode ring mod adds electronic harmonics on top of vocoder output
+    x = _ring_mod_diode(x, sr, freq=_RING_FREQ_HZ, mix=_RING_MIX)
+    # Comb filter — armor resonance
     x = _comb_fast(x, sr, _COMB_DELAY_MS, _COMB_FEEDBACK, _COMB_MIX)
-    x = _flanger(x, sr, _FLANGE_RATE_HZ, _FLANGE_DEPTH_MS, _FLANGE_BASE_MS, _FLANGE_MIX)
-    # Short metallic echo (armor reflection, not room echo)
-    x = _echo(x, sr, in_gain=0.85, out_gain=0.75,
-               delays_ms=[_ECHO1_DELAY_MS], decays=[_ECHO1_DECAY])
-    # Light reverb — enclosed helmet space
+    # Short metallic reverb — enclosed helmet space
     x = _reverb(x, sr, reverberance=_REVERB_AMOUNT)
     # EQ
     x = _shelf(x, sr, gain_db=_BASS_GAIN_DB, freq=_BASS_FREQ_HZ, kind="low")
     x = _shelf(x, sr, gain_db=_TREBLE_GAIN_DB, freq=_TREBLE_FREQ_HZ, kind="high")
-    # Normalize always to stable level
+    # Normalize
     peak = np.max(np.abs(x)) + 1e-9
     x = x / peak * 0.95
+    # Pitch shift via framerate trick — vocoder sets perceived pitch, this adds heaviness
     ratio = 2.0 ** (_PITCH_CENTS / 1200.0)
     write_sr = max(1, int(round(sr * ratio)))
     return x.astype(np.float32), write_sr
