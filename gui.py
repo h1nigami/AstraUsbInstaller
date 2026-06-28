@@ -81,20 +81,86 @@ def _has_bin(*names):
     return None
 
 
-# Shared espeak args — output to stdout as WAV for Python DSP pipeline.
-_ESP_ARGS = ["-v", "ru+m3", "-s", "78", "-p", "40", "-a", "200", "--stdout"]
+# espeak args: lower base pitch, slightly faster for robotic crispness
+_ESP_ARGS = ["-v", "ru+m3", "-s", "95", "-p", "25", "-a", "200", "-g", "2", "--stdout"]
 
 # DSP effect parameters for nanosuit voice
-_PITCH_CENTS    = -350.0   # pitch shift in cents (negative = lower)
-_ECHO1_DELAY_MS =   18.0
-_ECHO1_DECAY    =    0.55
-_ECHO2_DELAY_MS =   55.0
-_ECHO2_DECAY    =    0.30
-_REVERB_AMOUNT  =   35.0
-_BASS_GAIN_DB   =   +7.0
-_BASS_FREQ_HZ   =  100.0
-_TREBLE_GAIN_DB =   -4.0
-_TREBLE_FREQ_HZ = 3000.0
+_PITCH_CENTS    = -550.0   # deeper than before — full robotic bass
+_ECHO1_DELAY_MS =   12.0   # short metallic armor echo
+_ECHO1_DECAY    =    0.40
+_REVERB_AMOUNT  =   18.0   # small helmet reverb, not a room
+_BASS_GAIN_DB   =   +5.0
+_BASS_FREQ_HZ   =  140.0
+_TREBLE_GAIN_DB =   -3.0
+_TREBLE_FREQ_HZ = 3500.0
+# Ring modulator — the key "electronic buzz" of the nanosuit
+_RING_FREQ_HZ   =   62.0
+_RING_MIX       =    0.30
+# Bandpass simulates speaker inside a helmet
+_BP_LO_HZ       =  250.0
+_BP_HI_HZ       = 3400.0
+# Resonant peak adds metallic "rasp" formant
+_PEAK_GAIN_DB   =   +6.0
+_PEAK_FREQ_HZ   = 1500.0
+_PEAK_Q         =    1.2
+# Comb filter — armor resonance (short recursive delay)
+_COMB_DELAY_MS  =    3.0
+_COMB_FEEDBACK  =    0.45
+_COMB_MIX       =    0.35
+# Flanger — synthetic movement of an electronic voice
+_FLANGE_RATE_HZ =    0.25
+_FLANGE_DEPTH_MS=    2.0
+_FLANGE_BASE_MS =    1.0
+_FLANGE_MIX     =    0.30
+
+
+def _ring_mod(x, sr, freq, mix):
+    t = np.arange(len(x)) / sr
+    carrier = np.sin(2.0 * np.pi * freq * t)
+    return (1.0 - mix) * x + mix * (x * carrier)
+
+
+def _bandpass(x, sr, lo, hi, order=2):
+    nyq = sr / 2.0
+    lo_n = min(lo / nyq, 0.99)
+    hi_n = min(hi / nyq, 0.99)
+    if lo_n >= hi_n:
+        return x
+    b, a = _scipy_signal.butter(order, [lo_n, hi_n], btype="band")
+    return _scipy_signal.lfilter(b, a, x)
+
+
+def _peak(x, sr, gain_db, freq, q):
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * freq / sr
+    cosw, sinw = np.cos(w0), np.sin(w0)
+    alpha = sinw / (2.0 * q)
+    b0 = 1 + alpha * A;  b1 = -2 * cosw;  b2 = 1 - alpha * A
+    a0 = 1 + alpha / A;  a1 = -2 * cosw;  a2 = 1 - alpha / A
+    b = np.array([b0, b1, b2]) / a0
+    a = np.array([1.0, a1 / a0, a2 / a0])
+    return _scipy_signal.lfilter(b, a, x)
+
+
+def _comb_fast(x, sr, delay_ms, feedback, mix):
+    d = max(1, int(round(sr * delay_ms / 1000.0)))
+    a_coef = np.zeros(d + 1); a_coef[0] = 1.0; a_coef[d] = -feedback
+    y = _scipy_signal.lfilter([1.0], a_coef, x)
+    return (1.0 - mix) * x + mix * y
+
+
+def _flanger(x, sr, rate_hz, depth_ms, base_ms, mix):
+    t = np.arange(len(x)) / sr
+    base = base_ms / 1000.0 * sr
+    depth = depth_ms / 1000.0 * sr
+    delay = base + depth * (0.5 + 0.5 * np.sin(2 * np.pi * rate_hz * t))
+    idx = np.arange(len(x)) - delay
+    i0 = np.floor(idx).astype(int)
+    frac = idx - i0
+    i0 = np.clip(i0, 0, len(x) - 1)
+    i1 = np.clip(i0 + 1, 0, len(x) - 1)
+    wet = (1 - frac) * x[i0] + frac * x[i1]
+    return (1.0 - mix) * x + mix * wet
 
 
 def _echo(x, sr, in_gain, out_gain, delays_ms, decays):
@@ -162,23 +228,31 @@ def _wav_bytes_to_float(wav_bytes):
 
 
 def _nanosuit_fx(audio, sr):
-    """Apply DSP chain. Returns (processed_float32, write_sr).
+    """Apply Crysis nanosuit DSP chain. Returns (processed_float32, write_sr).
 
-    Pitch shift is achieved by writing the WAV at a lower framerate so that
-    playback at the standard rate sounds lower and slightly slower — identical
-    on all platforms without resampling the audio array.
+    Pitch shift: write WAV at lower framerate — playback at standard rate
+    sounds lower and slightly slower, no resampling needed.
     """
     x = audio.astype(np.float64)
-    x = _echo(x, sr, in_gain=0.8, out_gain=0.7,
+    # Ring modulation first — creates the electronic metallic buzz
+    x = _ring_mod(x, sr, freq=_RING_FREQ_HZ, mix=_RING_MIX)
+    # Bandpass + resonant peak — "speaker inside a helmet" timbral shaping
+    x = _bandpass(x, sr, lo=_BP_LO_HZ, hi=_BP_HI_HZ)
+    x = _peak(x, sr, gain_db=_PEAK_GAIN_DB, freq=_PEAK_FREQ_HZ, q=_PEAK_Q)
+    # Armor resonance + synthetic electronic movement
+    x = _comb_fast(x, sr, _COMB_DELAY_MS, _COMB_FEEDBACK, _COMB_MIX)
+    x = _flanger(x, sr, _FLANGE_RATE_HZ, _FLANGE_DEPTH_MS, _FLANGE_BASE_MS, _FLANGE_MIX)
+    # Short metallic echo (armor reflection, not room echo)
+    x = _echo(x, sr, in_gain=0.85, out_gain=0.75,
                delays_ms=[_ECHO1_DELAY_MS], decays=[_ECHO1_DECAY])
-    x = _echo(x, sr, in_gain=0.6, out_gain=0.6,
-               delays_ms=[_ECHO2_DELAY_MS], decays=[_ECHO2_DECAY])
+    # Light reverb — enclosed helmet space
     x = _reverb(x, sr, reverberance=_REVERB_AMOUNT)
+    # EQ
     x = _shelf(x, sr, gain_db=_BASS_GAIN_DB, freq=_BASS_FREQ_HZ, kind="low")
     x = _shelf(x, sr, gain_db=_TREBLE_GAIN_DB, freq=_TREBLE_FREQ_HZ, kind="high")
-    peak = np.max(np.abs(x))
-    if peak > 1.0:
-        x = x / peak
+    # Normalize always to stable level
+    peak = np.max(np.abs(x)) + 1e-9
+    x = x / peak * 0.95
     ratio = 2.0 ** (_PITCH_CENTS / 1200.0)
     write_sr = max(1, int(round(sr * ratio)))
     return x.astype(np.float32), write_sr
@@ -241,15 +315,63 @@ def _play_plain_espeak(binary):
             print(f"[nanosuit] speech error: {e}", flush=True)
 
 
+def _sapi_to_wav_and_play(text):
+    """Render text via Windows SAPI to a WAV file, then apply nanosuit DSP."""
+    if not _HAVE_DSP:
+        return False
+    fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        # Escape single quotes for PowerShell string
+        safe_text = text.replace("'", "''")
+        ps_script = (
+            "Add-Type -AssemblyName System.Speech; "
+            "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            "$ru = $s.GetInstalledVoices() | "
+            "Where-Object { $_.VoiceInfo.Culture.Name -like 'ru*' }; "
+            "if ($ru) { $s.SelectVoice($ru[0].VoiceInfo.Name) }; "
+            "$s.Rate = -2; "
+            f"$s.SetOutputToWaveFile('{wav_path}'); "
+            f"$s.Speak('{safe_text}'); "
+            "$s.Dispose()"
+        )
+        res = subprocess.run(
+            ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
+            timeout=30, capture_output=True,
+        )
+        if res.returncode != 0 or not os.path.exists(wav_path):
+            return False
+        with open(wav_path, "rb") as f:
+            wav_bytes = f.read()
+        audio, sr = _wav_bytes_to_float(wav_bytes)
+        audio, write_sr = _nanosuit_fx(audio, sr)
+        _play_processed_wav(audio, write_sr)
+        return True
+    except Exception as e:
+        print(f"[nanosuit] SAPI DSP error: {e}", flush=True)
+        return False
+    finally:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
 def _nanosuit_greeting_windows():
     binary = _has_bin("espeak-ng", "espeak")
+    # espeak + DSP: best quality (robotic synth voice + full chain)
     if binary and _play_with_python_fx(binary):
         return
+    # SAPI → WAV → DSP: no espeak, but same nanosuit chain applied
+    text = " ".join(_NANOSUIT_LINES)
+    if _sapi_to_wav_and_play(text):
+        return
+    # Plain espeak without DSP
     if binary:
         _play_plain_espeak(binary)
         print("[nanosuit] install numpy+scipy for full Crysis sound: pip install numpy scipy", flush=True)
         return
-    text = " ".join(_NANOSUIT_LINES)
+    # Last resort: plain SAPI, no DSP
     ps_script = (
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -265,7 +387,6 @@ def _nanosuit_greeting_windows():
         )
     except Exception as e:
         print(f"[nanosuit] Windows TTS error: {e}", flush=True)
-    print("[nanosuit] for Crysis sound install espeak-ng + pip install numpy scipy", flush=True)
 
 
 def _nanosuit_greeting_linux():
@@ -625,21 +746,35 @@ class App:
         ttk.Button(dlg, text="Сохранить", command=submit).pack(pady=10)
 
     def _on_close(self):
+        C = self.C
         dlg = tk.Toplevel(self.root)
         dlg.title("Подтверждение выхода")
-        dlg.geometry("300x150")
+        dlg.configure(bg=C["bg_panel"])
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        w, h = sw // 2, sh // 2
+        x, y = (sw - w) // 2, (sh - h) // 2
+        dlg.geometry(f"{w}x{h}+{x}+{y}")
         dlg.resizable(False, False)
         dlg.transient(self.root)
         dlg.grab_set()
 
-        ttk.Label(dlg, text="Введите пароль для выхода:").pack(pady=(15, 5))
+        tk.Label(dlg, text="Выход из приложения",
+                 font=("Segoe UI", 20, "bold"),
+                 fg=C["fg_main"], bg=C["bg_panel"]).pack(pady=(h // 6, 8))
+        tk.Label(dlg, text="Введите пароль для выхода:",
+                 font=("Segoe UI", 14),
+                 fg=C["fg_muted"], bg=C["bg_panel"]).pack()
+
         pw_var = tk.StringVar()
-        pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*", width=25)
-        pw_entry.pack(pady=5)
+        pw_entry = ttk.Entry(dlg, textvariable=pw_var, show="*",
+                             width=w // 14, font=("Segoe UI", 14))
+        pw_entry.pack(pady=16, ipadx=8, ipady=6)
         pw_entry.focus_set()
 
         err_var = tk.StringVar()
-        ttk.Label(dlg, textvariable=err_var, foreground="red").pack()
+        tk.Label(dlg, textvariable=err_var, font=("Segoe UI", 12),
+                 fg="#f87171", bg=C["bg_panel"]).pack()
 
         def confirm():
             pw_in = pw_var.get().strip()
@@ -651,9 +786,11 @@ class App:
             else:
                 err_var.set("Неверный пароль")
 
-        ttk.Button(dlg, text="Выйти", command=confirm).pack(pady=10)
+        ttk.Button(dlg, text="Выйти", style="Danger.TButton", command=confirm).pack(pady=20)
         pw_entry.bind("<Return>", lambda e: confirm())
         dlg.bind("<Return>", lambda e: confirm())
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
+        dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
     def _get_db(self):
         return sqlite3.connect(DB_PATH)
