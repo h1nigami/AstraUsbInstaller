@@ -62,13 +62,6 @@ _NANOSUIT_LINES = [
 ]
 
 
-def _nanosuit_greeting():
-    if platform.system() == "Windows":
-        _nanosuit_greeting_windows()
-    else:
-        _nanosuit_greeting_linux()
-
-
 def _has_bin(*names):
     for name in names:
         try:
@@ -113,6 +106,15 @@ _CLONE_REF_PATH    = os.environ.get(
 )
 _CLONE_LANG        = "ru"
 _xtts_model        = None       # lazy-loaded singleton
+
+# Debugging knobs:
+#   NANOSUIT_VOICE=clone|silero|espeak|sapi|espeak-plain|sapi-plain
+#     force a single engine (and see exactly why it fails instead of silently
+#     falling back). Default: try all in quality order.
+#   NANOSUIT_CLONE_FX=1  layer the metallic nanosuit DSP on top of the clone
+#     (default off — the cloned reference already carries the suit timbre).
+_VOICE_FORCE = os.environ.get("NANOSUIT_VOICE", "").strip().lower()
+_CLONE_FX    = os.environ.get("NANOSUIT_CLONE_FX", "0").strip().lower() not in ("", "0", "false", "no")
 
 # ── Crysis nanosuit DSP ────────────────────────────────────────────────────
 # The nanosuit voice is the ORIGINAL human voice kept fully intelligible, with
@@ -354,7 +356,12 @@ def _clone_synthesize_to_file(text, out_path):
         # Accept the XTTS (CPML) model license non-interactively for the daemon
         os.environ.setdefault("COQUI_TOS_AGREED", "1")
         from TTS.api import TTS
-    except Exception:
+    except Exception as e:
+        # Do NOT swallow this — a silent fall-through to Silero is exactly why
+        # "the voice is the same with and without the reference".
+        print(f"[nanosuit] coqui-tts unavailable ({type(e).__name__}: {e}) — "
+              "the exact-copy clone is OFF. Install it with: "
+              "pip install -r requirements-voice.txt", flush=True)
         return False
     try:
         if _xtts_model is None:
@@ -363,16 +370,27 @@ def _clone_synthesize_to_file(text, out_path):
                 device = "cuda" if torch.cuda.is_available() else "cpu"
             except Exception:
                 device = "cpu"
-            print("[nanosuit] loading XTTS v2 voice-clone model "
-                  "(first run downloads ~1.8 GB)…", flush=True)
+            print(f"[nanosuit] loading XTTS v2 clone model on {device} "
+                  f"(first run downloads ~1.8 GB), ref={_CLONE_REF_PATH}…", flush=True)
             _xtts_model = TTS(_XTTS_MODEL).to(device)
         _xtts_model.tts_to_file(
             text=text, speaker_wav=_CLONE_REF_PATH,
             language=_CLONE_LANG, file_path=out_path,
         )
+        if _CLONE_FX and _HAVE_DSP and os.path.exists(out_path):
+            try:
+                with open(out_path, "rb") as f:
+                    audio, sr = _wav_bytes_to_float(f.read())
+                audio, write_sr = _nanosuit_fx(audio, sr)
+                pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+                with wave.open(out_path, "wb") as w:
+                    w.setnchannels(1); w.setsampwidth(2); w.setframerate(write_sr)
+                    w.writeframes(pcm.tobytes())
+            except Exception as e:
+                print(f"[nanosuit] clone FX skipped ({e})", flush=True)
         return os.path.exists(out_path)
     except Exception as e:
-        print(f"[nanosuit] voice-clone error: {e}", flush=True)
+        print(f"[nanosuit] voice-clone error ({type(e).__name__}: {e})", flush=True)
         return False
 
 
@@ -529,27 +547,9 @@ def _sapi_to_wav_and_play(text):
             pass
 
 
-def _nanosuit_greeting_windows():
-    # Exact voice clone (XTTS v2) of data/nanosuit_ref.wav — the real game voice
-    if _play_clone_voice():
-        return
-    # Silero neural voice + DSP: real human voice with the nanosuit FX on top
-    if _play_silero_fx():
-        return
-    binary = _has_bin("espeak-ng", "espeak")
-    # espeak + DSP: robotic synth fallback when Silero/torch unavailable
-    if binary and _play_with_python_fx(binary):
-        return
-    # SAPI → WAV → DSP: no espeak, but same nanosuit chain applied
+def _play_plain_sapi():
+    """Last-resort Windows SAPI, no DSP. Returns True if it ran."""
     text = " ".join(_NANOSUIT_LINES)
-    if _sapi_to_wav_and_play(text):
-        return
-    # Plain espeak without DSP
-    if binary:
-        _play_plain_espeak(binary)
-        print("[nanosuit] install numpy+scipy for full Crysis sound: pip install numpy scipy", flush=True)
-        return
-    # Last resort: plain SAPI, no DSP
     ps_script = (
         "Add-Type -AssemblyName System.Speech; "
         "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
@@ -563,26 +563,60 @@ def _nanosuit_greeting_windows():
             ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps_script],
             timeout=30, capture_output=True,
         )
+        return True
     except Exception as e:
         print(f"[nanosuit] Windows TTS error: {e}", flush=True)
+        return False
 
 
-def _nanosuit_greeting_linux():
-    # Exact voice clone (XTTS v2) of data/nanosuit_ref.wav — the real game voice
-    if _play_clone_voice():
-        return
-    # Silero neural voice + DSP: real human voice with the nanosuit FX on top
-    if _play_silero_fx():
-        return
+def _voice_engines():
+    """Ordered (key, label, callable→bool) greeting engines, best first."""
+    engines = [
+        ("clone",  "XTTS v2 exact-copy clone",    _play_clone_voice),
+        ("silero", "Silero neural + nanosuit FX", _play_silero_fx),
+    ]
     binary = _has_bin("espeak-ng", "espeak")
-    if not binary:
-        print("[nanosuit] espeak-ng not found — install: sudo apt install espeak-ng espeak-ng-data alsa-utils", flush=True)
-        print("[nanosuit] for the exact/neural nanosuit voice: pip install -r requirements-voice.txt", flush=True)
-        return
-    if _play_with_python_fx(binary):
-        return
-    _play_plain_espeak(binary)
-    print("[nanosuit] for the exact/neural nanosuit voice: pip install -r requirements-voice.txt", flush=True)
+    if binary:
+        engines.append(("espeak", "espeak + nanosuit FX",
+                        lambda: _play_with_python_fx(binary)))
+    if platform.system() == "Windows":
+        engines.append(("sapi", "Windows SAPI + nanosuit FX",
+                        lambda: _sapi_to_wav_and_play(" ".join(_NANOSUIT_LINES))))
+    if binary:
+        engines.append(("espeak-plain", "espeak (no FX)",
+                        lambda: (_play_plain_espeak(binary) or True)))
+    if platform.system() == "Windows":
+        engines.append(("sapi-plain", "Windows SAPI (no FX)", _play_plain_sapi))
+    return engines
+
+
+def _nanosuit_greeting():
+    """Try voice engines in quality order, logging which one actually spoke.
+
+    NANOSUIT_VOICE=<key> forces a single engine so failures are visible
+    instead of silently falling through to the next one. Returns the key
+    of the engine that produced audio, or None.
+    """
+    engines = _voice_engines()
+    if _VOICE_FORCE:
+        forced = [e for e in engines if e[0] == _VOICE_FORCE]
+        if forced:
+            print(f"[nanosuit] NANOSUIT_VOICE={_VOICE_FORCE} — forcing this engine only", flush=True)
+            engines = forced
+        else:
+            have = ", ".join(e[0] for e in engines)
+            print(f"[nanosuit] NANOSUIT_VOICE={_VOICE_FORCE!r} unknown "
+                  f"(available: {have}) — using default order", flush=True)
+    for key, label, fn in engines:
+        try:
+            if fn():
+                print(f"[nanosuit] ✓ voice engine used: {label}", flush=True)
+                return key
+        except Exception as e:
+            print(f"[nanosuit] ✗ engine '{key}' failed ({type(e).__name__}: {e})", flush=True)
+    print("[nanosuit] no voice engine produced audio — "
+          "for the exact/neural voice: pip install -r requirements-voice.txt", flush=True)
+    return None
 
 
 class App:
@@ -1258,4 +1292,16 @@ def launch():
 
 
 if __name__ == "__main__":
-    launch()
+    import sys
+    if "--voice-test" in sys.argv:
+        # Diagnose the greeting voice from a console (prints which engine runs
+        # and why others are skipped). Run: python gui.py --voice-test
+        print("[nanosuit] voice diagnostic — trying engines in quality order…", flush=True)
+        print(f"[nanosuit] reference clip: {_CLONE_REF_PATH} "
+              f"(exists={os.path.exists(_CLONE_REF_PATH)})", flush=True)
+        print(f"[nanosuit] NANOSUIT_VOICE={_VOICE_FORCE or '(auto)'} "
+              f"NANOSUIT_CLONE_FX={int(_CLONE_FX)}", flush=True)
+        used = _nanosuit_greeting()
+        print(f"[nanosuit] engine that produced audio: {used or 'none'}", flush=True)
+    else:
+        launch()
