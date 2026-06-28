@@ -1,0 +1,17 @@
+# Optional dependencies for the nanosuit startup voice.
+# Install with:  pip install -r requirements-voice.txt
+# Cross-platform (Arch Linux + Windows). All of this is optional — without it
+# the app still runs and the greeting falls back to espeak + DSP.
+
+# CPU-only torch (no CUDA) keeps the download small. Powers both voice paths.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2.0
+
+# Exact copy: XTTS v2 voice cloning. Reproduces the EXACT nanosuit voice from a
+# reference clip at data/nanosuit_ref.wav (see README). Prebuilt wheels for
+# Linux and Windows. First run downloads the ~1.8 GB model.
+coqui-tts>=0.25.0
+
+# Fallback neural voice: Silero (real Russian male voice + nanosuit DSP), used
+# when no reference clip is present. Only needs torch above; the ~60 MB model
+# downloads at first run into data/.
