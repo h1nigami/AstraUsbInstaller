@@ -48,9 +48,13 @@ Three layers:
 
 `_HAVE_DSP` guards all numpy/scipy usage — app works without them (falls back to plain espeak).
 
-**Source voice:** Silero neural TTS (`_silero_synthesize`, speaker `eugene`, 48 kHz) is the primary source — a real Russian male voice, because espeak is a formant-synth robot that no DSP can humanize. `torch` is imported lazily and is optional: if absent, the greeting falls back to espeak+DSP → SAPI+DSP → plain espeak. The Silero model (~60 MB) downloads once to `data/silero_v3_1_ru.pt` via `torch.hub.download_url_to_file`, then loads offline with `torch.package.PackageImporter(...).load_pickle("tts_models", "model")`.
+**Source voice (in priority order):**
 
-Greeting fallback order (both OS): `_play_silero_fx` → `_play_with_python_fx` (espeak+DSP) → [Windows: `_sapi_to_wav_and_play`] → plain espeak/SAPI.
+1. **Exact copy via voice cloning — XTTS v2** (`_clone_synthesize_to_file`, `_play_clone_voice`). The only way to reproduce the EXACT localized nanosuit voice on arbitrary text: clone it from a real sample. The user drops a 6–15 s clip at `data/nanosuit_ref.wav` (override: `NANOSUIT_REF_WAV`); `TTS.api.TTS("tts_models/multilingual/multi-dataset/xtts_v2").tts_to_file(text=, speaker_wav=ref, language="ru", file_path=)` renders the line in that voice. The reference already carries the suit timbre, so **no nanosuit DSP is applied** to the clone. `coqui-tts` is imported lazily; `COQUI_TOS_AGREED=1` is set to accept the CPML license non-interactively. Model (~1.8 GB) downloads once. If `coqui-tts` or the reference clip are missing, falls through to Silero.
+2. **Silero neural TTS** (`_silero_synthesize`, speaker `eugene`, 48 kHz) — a real Russian male voice + the additive nanosuit FX, used when there is no reference clip. `torch` lazy/optional. Model (~60 MB) → `data/silero_v3_1_ru.pt` via `torch.hub.download_url_to_file`, loaded with `torch.package.PackageImporter(...).load_pickle("tts_models", "model")`.
+3. **espeak / SAPI + DSP** — final fallbacks (formant-synth robot; no DSP can humanize it).
+
+Greeting fallback order (both OS): `_play_clone_voice` → `_play_silero_fx` → `_play_with_python_fx` (espeak+DSP) → [Windows: `_sapi_to_wav_and_play`] → plain espeak/SAPI.
 
 Pipeline: source WAV/tensor → (`_wav_bytes_to_float()` for espeak) → `_nanosuit_fx()` → `_play_processed_wav()`
 

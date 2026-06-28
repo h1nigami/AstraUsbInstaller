@@ -4,9 +4,6 @@ rich>=13.0.0
 numpy>=1.24.0
 scipy>=1.10.0
 
-# Silero neural TTS — the human-quality nanosuit source voice.
-# CPU-only torch (no CUDA) keeps the install small. The voice model (~60 MB)
-# is downloaded at first run into data/. If torch is absent the app still
-# runs and falls back to espeak.
---extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.0.0
+# The nanosuit startup voice has optional, heavier dependencies (torch,
+# coqui-tts) kept out of this base file so the Docker image stays lean.
+# For the exact-copy / neural voice: pip install -r requirements-voice.txt

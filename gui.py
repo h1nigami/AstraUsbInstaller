@@ -97,6 +97,23 @@ _SILERO_SPEAKER    = "eugene"   # deep, calm male — closest to the suit delive
 _SILERO_SR         = 48000      # Silero supports 8000 / 24000 / 48000
 _silero_model      = None       # lazy-loaded singleton
 
+# ── Voice cloning (the EXACT copy) — XTTS v2 ───────────────────────────────
+# A TTS voice is a DIFFERENT voice; no effect turns it into the nanosuit actor.
+# The only way to reproduce the EXACT localized nanosuit voice on arbitrary
+# text is to CLONE it from a real sample of that voice. Drop a 6–15 s clip of
+# the nanosuit voice (from the game's Russian localization) at
+# data/nanosuit_ref.wav — XTTS v2 then speaks the greeting in that exact voice.
+# The reference already carries the suit timbre, so NO extra DSP is applied.
+# Heavy (~1.8 GB model, pulls torch) and imported lazily; if coqui-tts or the
+# reference clip are missing, the app falls back to Silero → espeak.
+_XTTS_MODEL        = "tts_models/multilingual/multi-dataset/xtts_v2"
+_CLONE_REF_PATH    = os.environ.get(
+    "NANOSUIT_REF_WAV",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "nanosuit_ref.wav"),
+)
+_CLONE_LANG        = "ru"
+_xtts_model        = None       # lazy-loaded singleton
+
 # ── Crysis nanosuit DSP ────────────────────────────────────────────────────
 # The nanosuit voice is the ORIGINAL human voice kept fully intelligible, with
 # character ADDED on top — it is NOT a voice replaced by a synthetic carrier.
@@ -291,6 +308,18 @@ def _nanosuit_fx(audio, sr):
     return x.astype(np.float32), write_sr
 
 
+def _play_wav_file(path):
+    """Play a WAV file at its native sample rate (winsound / aplay)."""
+    if platform.system() == "Windows":
+        import winsound
+        winsound.PlaySound(path, winsound.SND_FILENAME)
+    else:
+        res = subprocess.run(["aplay", "-q", path], capture_output=True, timeout=30)
+        if res.returncode != 0:
+            err = res.stderr.decode(errors="replace").strip()
+            print(f"[nanosuit] aplay error (rc={res.returncode}): {err}", flush=True)
+
+
 def _play_processed_wav(audio, sr):
     pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
     fd, path = tempfile.mkstemp(suffix=".wav")
@@ -301,19 +330,70 @@ def _play_processed_wav(audio, sr):
             w.setsampwidth(2)
             w.setframerate(sr)
             w.writeframes(pcm.tobytes())
-        if platform.system() == "Windows":
-            import winsound
-            winsound.PlaySound(path, winsound.SND_FILENAME)
-        else:
-            res = subprocess.run(["aplay", "-q", path], capture_output=True, timeout=20)
-            if res.returncode != 0:
-                err = res.stderr.decode(errors="replace").strip()
-                print(f"[nanosuit] aplay error (rc={res.returncode}): {err}", flush=True)
+        _play_wav_file(path)
     finally:
         try:
             os.remove(path)
         except OSError:
             pass
+
+
+def _clone_synthesize_to_file(text, out_path):
+    """Clone the reference voice with XTTS v2 and render `text` to out_path.
+
+    Returns True on success, False if coqui-tts or the reference clip are
+    missing. This is the EXACT-copy path: the output IS the nanosuit voice
+    (cloned from data/nanosuit_ref.wav), so no extra nanosuit DSP is applied.
+    """
+    global _xtts_model
+    if not os.path.exists(_CLONE_REF_PATH):
+        print(f"[nanosuit] no voice-clone reference at {_CLONE_REF_PATH} — "
+              "drop a 6-15s clip of the nanosuit voice there for an exact copy", flush=True)
+        return False
+    try:
+        # Accept the XTTS (CPML) model license non-interactively for the daemon
+        os.environ.setdefault("COQUI_TOS_AGREED", "1")
+        from TTS.api import TTS
+    except Exception:
+        return False
+    try:
+        if _xtts_model is None:
+            try:
+                import torch
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                device = "cpu"
+            print("[nanosuit] loading XTTS v2 voice-clone model "
+                  "(first run downloads ~1.8 GB)…", flush=True)
+            _xtts_model = TTS(_XTTS_MODEL).to(device)
+        _xtts_model.tts_to_file(
+            text=text, speaker_wav=_CLONE_REF_PATH,
+            language=_CLONE_LANG, file_path=out_path,
+        )
+        return os.path.exists(out_path)
+    except Exception as e:
+        print(f"[nanosuit] voice-clone error: {e}", flush=True)
+        return False
+
+
+def _play_clone_voice():
+    """Best path: exact voice clone (XTTS v2) of data/nanosuit_ref.wav.
+    The reference already carries the nanosuit timbre — play it raw."""
+    spoke = False
+    for line in _NANOSUIT_LINES:
+        fd, path = tempfile.mkstemp(suffix=".wav")
+        os.close(fd)
+        try:
+            if not _clone_synthesize_to_file(line, path):
+                return False
+            _play_wav_file(path)
+            spoke = True
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    return spoke
 
 
 def _silero_synthesize(text):
@@ -450,7 +530,10 @@ def _sapi_to_wav_and_play(text):
 
 
 def _nanosuit_greeting_windows():
-    # Silero neural voice + DSP: real human voice → closest to the game
+    # Exact voice clone (XTTS v2) of data/nanosuit_ref.wav — the real game voice
+    if _play_clone_voice():
+        return
+    # Silero neural voice + DSP: real human voice with the nanosuit FX on top
     if _play_silero_fx():
         return
     binary = _has_bin("espeak-ng", "espeak")
@@ -485,18 +568,21 @@ def _nanosuit_greeting_windows():
 
 
 def _nanosuit_greeting_linux():
-    # Silero neural voice + DSP: real human voice → closest to the game
+    # Exact voice clone (XTTS v2) of data/nanosuit_ref.wav — the real game voice
+    if _play_clone_voice():
+        return
+    # Silero neural voice + DSP: real human voice with the nanosuit FX on top
     if _play_silero_fx():
         return
     binary = _has_bin("espeak-ng", "espeak")
     if not binary:
         print("[nanosuit] espeak-ng not found — install: sudo apt install espeak-ng espeak-ng-data alsa-utils", flush=True)
-        print("[nanosuit] for the neural nanosuit voice: pip install torch numpy scipy", flush=True)
+        print("[nanosuit] for the exact/neural nanosuit voice: pip install -r requirements-voice.txt", flush=True)
         return
     if _play_with_python_fx(binary):
         return
     _play_plain_espeak(binary)
-    print("[nanosuit] for the neural nanosuit voice: pip install torch numpy scipy", flush=True)
+    print("[nanosuit] for the exact/neural nanosuit voice: pip install -r requirements-voice.txt", flush=True)
 
 
 class App:
