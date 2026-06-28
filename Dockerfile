@@ -37,8 +37,12 @@ COPY main.py .
 COPY start.sh .
 RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
-VOLUME ["/app/USB_Backups"]
+VOLUME ["/app/USB_Backups", "/app/data"]
 
 ENV USB_DEBUG=1
+# Accept the XTTS (CPML) model license non-interactively, and keep the large
+# voice models in the mounted /app/data volume so they download only once.
+ENV COQUI_TOS_AGREED=1
+ENV TTS_HOME=/app/data/tts
 
 CMD ["/bin/bash", "start.sh"]

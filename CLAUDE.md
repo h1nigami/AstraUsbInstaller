@@ -78,9 +78,9 @@ Pitch shift is done by writing the WAV with a lower framerate (`write_sr = int(s
 
 Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. Audio via ALSA (`/dev/snd` device, `audio` group). GUI via X11 socket passthrough (`/tmp/.X11-unix`). `start.sh` auto-detects `$DISPLAY`; `.gitattributes` enforces LF endings to prevent CRLF corruption in the container.
 
-The image installs only the lean base `requirements.txt`. The heavy voice stack (`requirements-voice.txt`: torch + coqui-tts, ~3 GB) is gated behind the `INSTALL_VOICE` build arg (default `0`) — `INSTALL_VOICE=1 docker compose build`, or `docker build --build-arg INSTALL_VOICE=1 .`. Compose passes it through `build.args` from the `INSTALL_VOICE` env var.
+The heavy voice stack (`requirements-voice.txt`: torch + coqui-tts, ~3 GB) is gated behind the `INSTALL_VOICE` build arg. The **Dockerfile default is `0`** (lean), but **`docker-compose.yml` defaults it to `1`** so `docker compose up` works with the neural/clone voice out of the box; opt out with `INSTALL_VOICE=0 docker compose build`. The Dockerfile also sets `COQUI_TOS_AGREED=1` (accept XTTS CPML license non-interactively) and `TTS_HOME=/app/data/tts`, and declares `/app/data` a volume, so the large voice models download once into the mounted `./data` and persist across container recreation. Exact-copy clone still needs a `data/nanosuit_ref.wav` reference clip; without it the greeting uses Silero.
 
-CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build the image using `docker/build-push-action` with `type=gha` layer cache. They build with the default `INSTALL_VOICE=0`, so CI stays fast and small.
+CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build via `docker/build-push-action` (the Dockerfile directly, not compose) with `type=gha` cache, so they use the Dockerfile's default `INSTALL_VOICE=0` and stay fast and small.
 
 ## Voice dependency pins (`requirements-voice.txt`)
 
