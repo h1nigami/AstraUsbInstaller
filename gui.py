@@ -86,12 +86,7 @@ _ESP_ARGS = ["-v", "ru+m7", "-s", "90", "-p", "5", "-a", "200", "-g", "2", "--st
 
 # Vocoder — the primary effect that makes nanosuit sound synthetic
 # Confirmed by Crysis sound designer: narrow-band vocoder + ring mod + comb filters
-_VOC_BANDS       = 10      # fewer bands = more robotic
-_VOC_CARRIER_HZ  = 85.0   # sawtooth carrier pitch (deep male ~85-100 Hz)
-_VOC_F_LO        = 80.0
-_VOC_F_HI        = 3500.0
-_VOC_ATTACK_MS   = 5.0
-_VOC_RELEASE_MS  = 80.0
+_VOC_CARRIER_HZ  = 85.0   # sawtooth carrier pitch (deep male ~85 Hz)
 # Diode ring modulator (IRCAM model) — adds electronic harmonics, not plain multiply
 _RING_FREQ_HZ    = 120.0   # 100-150 Hz = metallic electronic buzz
 _RING_MIX        =   0.18
@@ -116,34 +111,26 @@ def _sawtooth(n, freq, sr):
 
 
 def _channel_vocoder(modulator, sr):
-    """Channel vocoder: replace voice harmonics with sawtooth carrier.
+    """STFT robot-voice vocoder: speech magnitude × sawtooth-carrier phase.
 
-    The confirmed primary effect in the Crysis nanosuit voice.
-    10 log-spaced bands, asymmetric envelope follower, sawtooth carrier.
+    Standard algorithm (same as Audacity Robot effect): take the magnitude
+    envelope of the speech, replace the phase with that of a periodic sawtooth
+    carrier. Result: synthetic but fully intelligible robot voice.
+    Sawtooth at _VOC_CARRIER_HZ sets perceived pitch.
     """
     n = len(modulator)
+    nperseg = 512
+    noverlap = nperseg * 3 // 4
+
+    _, _, Zm = _scipy_signal.stft(modulator, sr, nperseg=nperseg, noverlap=noverlap)
+
     carrier = _sawtooth(n, _VOC_CARRIER_HZ, sr)
-    edges = np.logspace(np.log10(_VOC_F_LO), np.log10(_VOC_F_HI), _VOC_BANDS + 1)
-    nyq = sr / 2.0
-    a_att = np.exp(-1.0 / (sr * _VOC_ATTACK_MS  / 1000.0))
-    a_rel = np.exp(-1.0 / (sr * _VOC_RELEASE_MS / 1000.0))
-    output = np.zeros(n)
-    for i in range(_VOC_BANDS):
-        lo = np.clip(edges[i]     / nyq, 1e-6, 0.999)
-        hi = np.clip(edges[i + 1] / nyq, 1e-6, 0.999)
-        if lo >= hi:
-            continue
-        b, a = _scipy_signal.butter(2, [lo, hi], btype="band")
-        mod_band = _scipy_signal.lfilter(b, a, modulator)
-        car_band = _scipy_signal.lfilter(b, a, carrier)
-        # Asymmetric envelope follower
-        env = np.zeros(n)
-        abs_mod = np.abs(mod_band)
-        for j in range(1, n):
-            c = a_att if abs_mod[j] > env[j - 1] else a_rel
-            env[j] = c * env[j - 1] + (1.0 - c) * abs_mod[j]
-        output += car_band * env
-    return output
+    _, _, Zc = _scipy_signal.stft(carrier, sr, nperseg=nperseg, noverlap=noverlap)
+
+    Z_out = np.abs(Zm) * np.exp(1j * np.angle(Zc))
+
+    _, y = _scipy_signal.istft(Z_out, sr, nperseg=nperseg, noverlap=noverlap)
+    return y[:n].astype(np.float64)
 
 
 # Diode constants from IRCAM model (github.com/nrlakin/robot_voice)
