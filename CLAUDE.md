@@ -48,9 +48,13 @@ Three layers:
 
 `_HAVE_DSP` guards all numpy/scipy usage — app works without them (falls back to plain espeak).
 
-Pipeline: espeak-ng stdout WAV → `_wav_bytes_to_float()` → `_nanosuit_fx()` → `_play_processed_wav()`
+**Source voice:** Silero neural TTS (`_silero_synthesize`, speaker `eugene`, 48 kHz) is the primary source — a real Russian male voice, because espeak is a formant-synth robot that no DSP can humanize. `torch` is imported lazily and is optional: if absent, the greeting falls back to espeak+DSP → SAPI+DSP → plain espeak. The Silero model (~60 MB) downloads once to `data/silero_v3_1_ru.pt` via `torch.hub.download_url_to_file`, then loads offline with `torch.package.PackageImporter(...).load_pickle("tts_models", "model")`.
 
-**Nanosuit voice design principle:** the original voice stays fully intelligible; character is ADDED in parallel layers. Do NOT replace the voice with a synthetic carrier (vocoder / ring-mod / sawtooth) — that produces robotic noise, not the Crysis nanosuit sound. The game voice is the original voice + 5 additive components: grit/vocal-fry, breathy highs, bass body, presence, and a metallic "detuned-double" robotic echo.
+Greeting fallback order (both OS): `_play_silero_fx` → `_play_with_python_fx` (espeak+DSP) → [Windows: `_sapi_to_wav_and_play`] → plain espeak/SAPI.
+
+Pipeline: source WAV/tensor → (`_wav_bytes_to_float()` for espeak) → `_nanosuit_fx()` → `_play_processed_wav()`
+
+**Nanosuit FX design principle:** the source voice stays fully intelligible; character is ADDED in parallel layers. Do NOT replace the voice with a synthetic carrier (vocoder / ring-mod / sawtooth) — that produces robotic noise, not the Crysis nanosuit sound. The game voice is the original voice + 5 additive components: grit/vocal-fry, breathy highs, bass body, presence, and a metallic "detuned-double" robotic echo.
 
 `_nanosuit_fx` order: normalize → `_grit` (parallel soft-clip) → `_detuned_double` (two LFO-modulated short delays = the metallic two-voices signature) → `_comb_fast` → `_shelf`/`_peak` EQ (bass, mud scoop, presence, air) → `_reverb` → normalize → pitch via framerate.
 

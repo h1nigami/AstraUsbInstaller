@@ -82,7 +82,20 @@ def _has_bin(*names):
 
 
 # espeak: m7 = deepest robotic male variant; p=5 = maximum base pitch lowering
+# Used only as a fallback when Silero (neural voice) is unavailable.
 _ESP_ARGS = ["-v", "ru+m7", "-s", "90", "-p", "5", "-a", "200", "-g", "2", "--stdout"]
+
+# ── Silero neural TTS — the human-quality source voice for the nanosuit ─────
+# espeak is a formant-synth robot; no DSP can make it sound like a real actor.
+# Silero gives a real Russian male voice; the nanosuit FX then go on top.
+# torch is heavy and imported lazily — the app still runs (falls back to
+# espeak) if torch/model are missing. The model is downloaded once into data/.
+_SILERO_MODEL_URL  = "https://models.silero.ai/models/tts/ru/v3_1_ru.pt"
+_SILERO_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "data", "silero_v3_1_ru.pt")
+_SILERO_SPEAKER    = "eugene"   # deep, calm male — closest to the suit delivery
+_SILERO_SR         = 48000      # Silero supports 8000 / 24000 / 48000
+_silero_model      = None       # lazy-loaded singleton
 
 # ── Crysis nanosuit DSP ────────────────────────────────────────────────────
 # The nanosuit voice is the ORIGINAL human voice kept fully intelligible, with
@@ -303,6 +316,57 @@ def _play_processed_wav(audio, sr):
             pass
 
 
+def _silero_synthesize(text):
+    """Render text with Silero neural TTS → (float32 mono, sample_rate).
+
+    Returns None if torch or the model is unavailable. The model file is
+    downloaded once to data/ and then loaded locally (offline afterward).
+    API: torch.package.PackageImporter(...).load_pickle("tts_models", "model")
+    then model.apply_tts(text=, speaker=, sample_rate=) → torch tensor.
+    """
+    global _silero_model
+    if not _HAVE_DSP:
+        return None
+    try:
+        import torch
+    except Exception:
+        return None
+    try:
+        if _silero_model is None:
+            if not os.path.exists(_SILERO_MODEL_PATH):
+                os.makedirs(os.path.dirname(_SILERO_MODEL_PATH), exist_ok=True)
+                print("[nanosuit] downloading Silero voice model (~60 MB, one time)…", flush=True)
+                torch.hub.download_url_to_file(_SILERO_MODEL_URL, _SILERO_MODEL_PATH)
+            imp = torch.package.PackageImporter(_SILERO_MODEL_PATH)
+            _silero_model = imp.load_pickle("tts_models", "model")
+            _silero_model.to(torch.device("cpu"))
+        torch.set_num_threads(max(1, os.cpu_count() or 1))
+        tensor = _silero_model.apply_tts(
+            text=text, speaker=_SILERO_SPEAKER, sample_rate=_SILERO_SR,
+        )
+        audio = np.asarray(tensor.detach().cpu().numpy(), dtype=np.float32)
+        return audio, _SILERO_SR
+    except Exception as e:
+        print(f"[nanosuit] Silero error: {e}", flush=True)
+        return None
+
+
+def _play_silero_fx():
+    """Best path: Silero neural voice → nanosuit DSP. False if unavailable."""
+    if not _HAVE_DSP:
+        return False
+    spoke = False
+    for line in _NANOSUIT_LINES:
+        res = _silero_synthesize(line)
+        if not res:
+            return False
+        audio, sr = res
+        audio, write_sr = _nanosuit_fx(audio, sr)
+        _play_processed_wav(audio, write_sr)
+        spoke = True
+    return spoke
+
+
 def _play_with_python_fx(binary):
     if not _HAVE_DSP:
         return False
@@ -386,8 +450,11 @@ def _sapi_to_wav_and_play(text):
 
 
 def _nanosuit_greeting_windows():
+    # Silero neural voice + DSP: real human voice → closest to the game
+    if _play_silero_fx():
+        return
     binary = _has_bin("espeak-ng", "espeak")
-    # espeak + DSP: best quality (robotic synth voice + full chain)
+    # espeak + DSP: robotic synth fallback when Silero/torch unavailable
     if binary and _play_with_python_fx(binary):
         return
     # SAPI → WAV → DSP: no espeak, but same nanosuit chain applied
@@ -418,14 +485,18 @@ def _nanosuit_greeting_windows():
 
 
 def _nanosuit_greeting_linux():
+    # Silero neural voice + DSP: real human voice → closest to the game
+    if _play_silero_fx():
+        return
     binary = _has_bin("espeak-ng", "espeak")
     if not binary:
         print("[nanosuit] espeak-ng not found — install: sudo apt install espeak-ng espeak-ng-data alsa-utils", flush=True)
+        print("[nanosuit] for the neural nanosuit voice: pip install torch numpy scipy", flush=True)
         return
     if _play_with_python_fx(binary):
         return
     _play_plain_espeak(binary)
-    print("[nanosuit] install numpy+scipy for full Crysis sound: pip install numpy scipy", flush=True)
+    print("[nanosuit] for the neural nanosuit voice: pip install torch numpy scipy", flush=True)
 
 
 class App:
