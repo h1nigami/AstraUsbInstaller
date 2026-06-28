@@ -84,74 +84,105 @@ def _has_bin(*names):
 # espeak: m7 = deepest robotic male variant; p=5 = maximum base pitch lowering
 _ESP_ARGS = ["-v", "ru+m7", "-s", "90", "-p", "5", "-a", "200", "-g", "2", "--stdout"]
 
-# Vocoder — the primary effect that makes nanosuit sound synthetic
-# Confirmed by Crysis sound designer: narrow-band vocoder + ring mod + comb filters
-_VOC_CARRIER_HZ  = 85.0   # sawtooth carrier pitch (deep male ~85 Hz)
-# Diode ring modulator (IRCAM model) — adds electronic harmonics, not plain multiply
-_RING_FREQ_HZ    = 120.0   # 100-150 Hz = metallic electronic buzz
-_RING_MIX        =   0.18
-# Comb filter — armor resonance
-_COMB_DELAY_MS   =   3.0
-_COMB_FEEDBACK   =   0.45
-_COMB_MIX        =   0.30
-# Reverb — short metallic helmet space
-_REVERB_AMOUNT   =  15.0
-# EQ
-_BASS_GAIN_DB    =  +6.0
-_BASS_FREQ_HZ    = 100.0
-_TREBLE_GAIN_DB  =  -4.0
-_TREBLE_FREQ_HZ  = 4000.0
-# Subtle pitch shift — vocoder controls pitch, this adds slight heaviness
-_PITCH_CENTS     = -180.0
+# ── Crysis nanosuit DSP ────────────────────────────────────────────────────
+# The nanosuit voice is the ORIGINAL human voice kept fully intelligible, with
+# character ADDED on top — it is NOT a voice replaced by a synthetic carrier.
+# Audio analysis of the game voice identifies five additive components:
+#   1. grit / vocal-fry      → parallel soft-clip distortion
+#   2. breathy highs         → air shelf on aspirated consonants
+#   3. bass / low-frequency  → low shelf for body/weight
+#   4. high-frequency        → presence bell boost
+#   5. metallic robotic echo → detuned doubling + comb + short reverb
+# Confirmed fan recreation: keep the voice, duplicate it with short delays,
+# detune, add grit and a metallic echo.
+
+# Detuned doubling — the signature "two voices in the helmet" metallic chorus.
+# Short LFO-modulated delays (<30 ms) detune via Doppler → robotic-echo layer.
+_DBL_DELAY1_MS    = 13.0
+_DBL_DELAY2_MS    = 21.0
+_DBL_DEPTH_MS     =  2.0
+_DBL_RATE1_HZ     =  0.6
+_DBL_RATE2_HZ     =  0.9
+_DBL_MIX          =  0.5     # doubles sit UNDER the dry voice
+
+# Grit / vocal-fry — parallel soft-clip distortion
+_GRIT_DRIVE       =  6.0
+_GRIT_MIX         =  0.22
+
+# Comb filter — light metallic armor resonance
+_COMB_DELAY_MS    =  5.0
+_COMB_FEEDBACK    =  0.35
+_COMB_MIX         =  0.15
+
+# Short metallic reverb — enclosed helmet space
+_REVERB_AMOUNT    = 16.0
+
+# EQ — shapes the bass / mud / presence / air components
+_BASS_GAIN_DB     = +5.0
+_BASS_FREQ_HZ     = 120.0
+_MUD_GAIN_DB      = -3.0     # scoop boxiness for clarity
+_MUD_FREQ_HZ      = 450.0
+_MUD_Q            =  1.2
+_PRESENCE_GAIN_DB = +4.0     # high-frequency consonant component
+_PRESENCE_FREQ_HZ = 3200.0
+_PRESENCE_Q       =  1.0
+_AIR_GAIN_DB      = +3.0     # breathy air on top
+_AIR_FREQ_HZ      = 7000.0
+
+# Overall weight — slight pitch-down via WAV framerate trick
+_PITCH_CENTS      = -90.0
 
 
-def _sawtooth(n, freq, sr):
-    t = np.arange(n) / sr
-    return 2.0 * (t * freq - np.floor(t * freq + 0.5))
+def _frac_delay(x, read_pos):
+    """Read x at fractional sample positions (linear interpolation)."""
+    n = len(x)
+    idx = np.clip(read_pos, 0.0, n - 1.0)
+    return np.interp(idx, np.arange(n), x)
 
 
-def _channel_vocoder(modulator, sr):
-    """STFT robot-voice vocoder: speech magnitude × sawtooth-carrier phase.
-
-    Standard algorithm (same as Audacity Robot effect): take the magnitude
-    envelope of the speech, replace the phase with that of a periodic sawtooth
-    carrier. Result: synthetic but fully intelligible robot voice.
-    Sawtooth at _VOC_CARRIER_HZ sets perceived pitch.
-    """
-    n = len(modulator)
-    nperseg = 512
-    noverlap = nperseg * 3 // 4
-
-    _, _, Zm = _scipy_signal.stft(modulator, sr, nperseg=nperseg, noverlap=noverlap)
-
-    carrier = _sawtooth(n, _VOC_CARRIER_HZ, sr)
-    _, _, Zc = _scipy_signal.stft(carrier, sr, nperseg=nperseg, noverlap=noverlap)
-
-    Z_out = np.abs(Zm) * np.exp(1j * np.angle(Zc))
-
-    _, y = _scipy_signal.istft(Z_out, sr, nperseg=nperseg, noverlap=noverlap)
-    return y[:n].astype(np.float64)
+def _chorus_voice(x, sr, delay_ms, depth_ms, rate_hz):
+    """One detuned copy via LFO-modulated fractional delay (Doppler detune)."""
+    n = len(x)
+    base  = sr * delay_ms / 1000.0
+    depth = sr * depth_ms / 1000.0
+    t = np.arange(n)
+    lfo = depth * np.sin(2.0 * np.pi * rate_hz * t / sr)
+    return _frac_delay(x, t - base - lfo)
 
 
-# Diode constants from IRCAM model (github.com/nrlakin/robot_voice)
-_DIODE_VB = 0.2
-_DIODE_VL = 0.4
-_DIODE_H  = 4.0
+def _detuned_double(x, sr):
+    """Two modulated copies mixed under the dry voice — the nanosuit's
+    'two voices speaking together inside the helmet' metallic signature."""
+    a = _chorus_voice(x, sr, _DBL_DELAY1_MS, _DBL_DEPTH_MS, _DBL_RATE1_HZ)
+    b = _chorus_voice(x, sr, _DBL_DELAY2_MS, _DBL_DEPTH_MS, _DBL_RATE2_HZ)
+    return x + _DBL_MIX * 0.5 * (a + b)
 
 
-def _diode(x):
-    return np.where(x <= -_DIODE_VL, -_DIODE_VL,
-           np.where(x <=  _DIODE_VB,  0.0,
-           np.where(x <=  _DIODE_VL,  _DIODE_H * (x - _DIODE_VB) ** 2,
-                    x - _DIODE_VL + _DIODE_H * (_DIODE_VL - _DIODE_VB) ** 2)))
-
-
-def _ring_mod_diode(x, sr, freq, mix):
-    """Ring modulator with diode waveshaper — richer harmonics than plain multiply."""
-    t = np.arange(len(x)) / sr
-    c = np.sin(2.0 * np.pi * freq * t)
-    wet = _diode(x + c) - _diode(x - c) - _diode(c) + _diode(-c)
+def _grit(x, drive, mix):
+    """Parallel soft-clip distortion — the gritty/vocal-fry component.
+    Level-matched so the mix ratio is meaningful."""
+    wet = np.tanh(drive * x)
+    xr = np.sqrt(np.mean(x * x)) + 1e-9
+    wr = np.sqrt(np.mean(wet * wet)) + 1e-9
+    wet = wet * (xr / wr)
     return (1.0 - mix) * x + mix * wet
+
+
+def _peak(x, sr, gain_db, freq, q):
+    """RBJ peaking (bell) EQ filter."""
+    A = 10.0 ** (gain_db / 40.0)
+    w0 = 2.0 * np.pi * freq / sr
+    alpha = np.sin(w0) / (2.0 * q)
+    cosw = np.cos(w0)
+    b0 = 1.0 + alpha * A
+    b1 = -2.0 * cosw
+    b2 = 1.0 - alpha * A
+    a0 = 1.0 + alpha / A
+    a1 = -2.0 * cosw
+    a2 = 1.0 - alpha / A
+    b = np.array([b0, b1, b2]) / a0
+    a = np.array([1.0, a1 / a0, a2 / a0])
+    return _scipy_signal.lfilter(b, a, x)
 
 
 def _comb_fast(x, sr, delay_ms, feedback, mix):
@@ -159,17 +190,6 @@ def _comb_fast(x, sr, delay_ms, feedback, mix):
     a_coef = np.zeros(d + 1); a_coef[0] = 1.0; a_coef[d] = -feedback
     y = _scipy_signal.lfilter([1.0], a_coef, x)
     return (1.0 - mix) * x + mix * y
-
-
-def _echo(x, sr, in_gain, out_gain, delays_ms, decays):
-    out = x * in_gain
-    for d_ms, decay in zip(delays_ms, decays):
-        d = int(round(sr * d_ms / 1000.0))
-        delayed = np.zeros_like(x)
-        if d < len(x):
-            delayed[d:] = x[:-d] * decay
-        out = out + delayed
-    return out * out_gain
 
 
 def _reverb(x, sr, reverberance):
@@ -228,25 +248,31 @@ def _wav_bytes_to_float(wav_bytes):
 def _nanosuit_fx(audio, sr):
     """Apply Crysis nanosuit DSP chain. Returns (processed_float32, write_sr).
 
-    Chain: channel vocoder → diode ring mod → comb (armor resonance) →
-           reverb → EQ → normalize → pitch via write_sr framerate trick.
+    The voice stays fully intelligible; character is ADDED in parallel layers:
+    grit (vocal-fry) → detuned doubling (metallic robotic echo) → comb →
+    EQ (bass body, scooped mud, presence, air) → short reverb → slight
+    pitch-down via WAV framerate trick.
     """
     x = audio.astype(np.float64)
-    # Channel vocoder: replaces voice with sawtooth carrier — primary Crysis effect
-    x = _channel_vocoder(x, sr)
-    # Diode ring mod adds electronic harmonics on top of vocoder output
-    x = _ring_mod_diode(x, sr, freq=_RING_FREQ_HZ, mix=_RING_MIX)
-    # Comb filter — armor resonance
+    pk = np.max(np.abs(x)) + 1e-9
+    x = x / pk * 0.9                       # normalize input first
+    # Grit / vocal-fry component (parallel soft clip)
+    x = _grit(x, _GRIT_DRIVE, _GRIT_MIX)
+    # Detuned doubling — the metallic "two voices" robotic-echo signature
+    x = _detuned_double(x, sr)
+    # Light metallic comb resonance
     x = _comb_fast(x, sr, _COMB_DELAY_MS, _COMB_FEEDBACK, _COMB_MIX)
+    # EQ — shape bass body, scoop mud, lift presence and air
+    x = _shelf(x, sr, gain_db=_BASS_GAIN_DB, freq=_BASS_FREQ_HZ, kind="low")
+    x = _peak(x, sr, gain_db=_MUD_GAIN_DB, freq=_MUD_FREQ_HZ, q=_MUD_Q)
+    x = _peak(x, sr, gain_db=_PRESENCE_GAIN_DB, freq=_PRESENCE_FREQ_HZ, q=_PRESENCE_Q)
+    x = _shelf(x, sr, gain_db=_AIR_GAIN_DB, freq=_AIR_FREQ_HZ, kind="high")
     # Short metallic reverb — enclosed helmet space
     x = _reverb(x, sr, reverberance=_REVERB_AMOUNT)
-    # EQ
-    x = _shelf(x, sr, gain_db=_BASS_GAIN_DB, freq=_BASS_FREQ_HZ, kind="low")
-    x = _shelf(x, sr, gain_db=_TREBLE_GAIN_DB, freq=_TREBLE_FREQ_HZ, kind="high")
     # Normalize
     peak = np.max(np.abs(x)) + 1e-9
     x = x / peak * 0.95
-    # Pitch shift via framerate trick — vocoder sets perceived pitch, this adds heaviness
+    # Slight overall weight via framerate trick
     ratio = 2.0 ** (_PITCH_CENTS / 1200.0)
     write_sr = max(1, int(round(sr * ratio)))
     return x.astype(np.float32), write_sr

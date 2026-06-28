@@ -50,7 +50,11 @@ Three layers:
 
 Pipeline: espeak-ng stdout WAV → `_wav_bytes_to_float()` → `_nanosuit_fx()` → `_play_processed_wav()`
 
-Pitch shift is done by writing the WAV with a lower framerate (`write_sr = int(sr * 2**(_PITCH_CENTS/1200))`), not by resampling the audio array. DSP constants (`_PITCH_CENTS`, `_ECHO*`, `_REVERB_AMOUNT`, `_BASS_*`, `_TREBLE_*`) are module-level.
+**Nanosuit voice design principle:** the original voice stays fully intelligible; character is ADDED in parallel layers. Do NOT replace the voice with a synthetic carrier (vocoder / ring-mod / sawtooth) — that produces robotic noise, not the Crysis nanosuit sound. The game voice is the original voice + 5 additive components: grit/vocal-fry, breathy highs, bass body, presence, and a metallic "detuned-double" robotic echo.
+
+`_nanosuit_fx` order: normalize → `_grit` (parallel soft-clip) → `_detuned_double` (two LFO-modulated short delays = the metallic two-voices signature) → `_comb_fast` → `_shelf`/`_peak` EQ (bass, mud scoop, presence, air) → `_reverb` → normalize → pitch via framerate.
+
+Pitch shift is done by writing the WAV with a lower framerate (`write_sr = int(sr * 2**(_PITCH_CENTS/1200))`), not by resampling the audio array. DSP constants (`_PITCH_CENTS`, `_DBL_*`, `_GRIT_*`, `_COMB_*`, `_REVERB_AMOUNT`, `_BASS_*`, `_MUD_*`, `_PRESENCE_*`, `_AIR_*`) are module-level.
 
 ## Key environment variables
 
@@ -70,4 +74,4 @@ CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`
 
 ## Development branch
 
-Active feature branch: `claude/device-video-cleanup-button-qwl931`. Base: `master`.
+Active feature branch: `claude/nanosuit-voice-additive-layers`. Base: `master`.
