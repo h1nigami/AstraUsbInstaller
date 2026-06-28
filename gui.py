@@ -340,6 +340,39 @@ def _play_processed_wav(audio, sr):
             pass
 
 
+def _ensure_xtts_model():
+    """Load (import + download + load) the XTTS v2 model singleton on first call.
+
+    Returns the model, or None if coqui-tts is unavailable or the load fails —
+    the import error is logged, never swallowed.
+    """
+    global _xtts_model
+    if _xtts_model is not None:
+        return _xtts_model
+    try:
+        # Accept the XTTS (CPML) model license non-interactively for the daemon
+        os.environ.setdefault("COQUI_TOS_AGREED", "1")
+        from TTS.api import TTS
+    except Exception as e:
+        print(f"[nanosuit] coqui-tts unavailable ({type(e).__name__}: {e}) — "
+              "the exact-copy clone is OFF. Install it with: "
+              "pip install -r requirements-voice.txt", flush=True)
+        return None
+    try:
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
+        print(f"[nanosuit] loading XTTS v2 clone model on {device} "
+              "(first run downloads ~1.8 GB)…", flush=True)
+        _xtts_model = TTS(_XTTS_MODEL).to(device)
+        return _xtts_model
+    except Exception as e:
+        print(f"[nanosuit] XTTS load error ({type(e).__name__}: {e})", flush=True)
+        return None
+
+
 def _clone_synthesize_to_file(text, out_path):
     """Clone the reference voice with XTTS v2 and render `text` to out_path.
 
@@ -347,33 +380,15 @@ def _clone_synthesize_to_file(text, out_path):
     missing. This is the EXACT-copy path: the output IS the nanosuit voice
     (cloned from data/nanosuit_ref.wav), so no extra nanosuit DSP is applied.
     """
-    global _xtts_model
     if not os.path.exists(_CLONE_REF_PATH):
         print(f"[nanosuit] no voice-clone reference at {_CLONE_REF_PATH} — "
               "drop a 6-15s clip of the nanosuit voice there for an exact copy", flush=True)
         return False
-    try:
-        # Accept the XTTS (CPML) model license non-interactively for the daemon
-        os.environ.setdefault("COQUI_TOS_AGREED", "1")
-        from TTS.api import TTS
-    except Exception as e:
-        # Do NOT swallow this — a silent fall-through to Silero is exactly why
-        # "the voice is the same with and without the reference".
-        print(f"[nanosuit] coqui-tts unavailable ({type(e).__name__}: {e}) — "
-              "the exact-copy clone is OFF. Install it with: "
-              "pip install -r requirements-voice.txt", flush=True)
+    model = _ensure_xtts_model()
+    if model is None:
         return False
     try:
-        if _xtts_model is None:
-            try:
-                import torch
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            except Exception:
-                device = "cpu"
-            print(f"[nanosuit] loading XTTS v2 clone model on {device} "
-                  f"(first run downloads ~1.8 GB), ref={_CLONE_REF_PATH}…", flush=True)
-            _xtts_model = TTS(_XTTS_MODEL).to(device)
-        _xtts_model.tts_to_file(
+        model.tts_to_file(
             text=text, speaker_wav=_CLONE_REF_PATH,
             language=_CLONE_LANG, file_path=out_path,
         )
@@ -414,15 +429,15 @@ def _play_clone_voice():
     return spoke
 
 
-def _silero_synthesize(text):
-    """Render text with Silero neural TTS → (float32 mono, sample_rate).
+def _ensure_silero_model():
+    """Load the Silero model singleton (download once to data/, then offline).
 
-    Returns None if torch or the model is unavailable. The model file is
-    downloaded once to data/ and then loaded locally (offline afterward).
-    API: torch.package.PackageImporter(...).load_pickle("tts_models", "model")
-    then model.apply_tts(text=, speaker=, sample_rate=) → torch tensor.
+    Returns the model, or None if torch/numpy are unavailable or load fails.
+    API: torch.package.PackageImporter(...).load_pickle("tts_models", "model").
     """
     global _silero_model
+    if _silero_model is not None:
+        return _silero_model
     if not _HAVE_DSP:
         return None
     try:
@@ -430,16 +445,29 @@ def _silero_synthesize(text):
     except Exception:
         return None
     try:
-        if _silero_model is None:
-            if not os.path.exists(_SILERO_MODEL_PATH):
-                os.makedirs(os.path.dirname(_SILERO_MODEL_PATH), exist_ok=True)
-                print("[nanosuit] downloading Silero voice model (~60 MB, one time)…", flush=True)
-                torch.hub.download_url_to_file(_SILERO_MODEL_URL, _SILERO_MODEL_PATH)
-            imp = torch.package.PackageImporter(_SILERO_MODEL_PATH)
-            _silero_model = imp.load_pickle("tts_models", "model")
-            _silero_model.to(torch.device("cpu"))
+        if not os.path.exists(_SILERO_MODEL_PATH):
+            os.makedirs(os.path.dirname(_SILERO_MODEL_PATH), exist_ok=True)
+            print("[nanosuit] downloading Silero voice model (~60 MB, one time)…", flush=True)
+            torch.hub.download_url_to_file(_SILERO_MODEL_URL, _SILERO_MODEL_PATH)
+        imp = torch.package.PackageImporter(_SILERO_MODEL_PATH)
+        _silero_model = imp.load_pickle("tts_models", "model")
+        _silero_model.to(torch.device("cpu"))
+        return _silero_model
+    except Exception as e:
+        print(f"[nanosuit] Silero load error: {e}", flush=True)
+        return None
+
+
+def _silero_synthesize(text):
+    """Render text with Silero neural TTS → (float32 mono, sample_rate).
+    Returns None if the model/deps are unavailable."""
+    model = _ensure_silero_model()
+    if model is None:
+        return None
+    try:
+        import torch
         torch.set_num_threads(max(1, os.cpu_count() or 1))
-        tensor = _silero_model.apply_tts(
+        tensor = model.apply_tts(
             text=text, speaker=_SILERO_SPEAKER, sample_rate=_SILERO_SR,
         )
         audio = np.asarray(tensor.detach().cpu().numpy(), dtype=np.float32)
@@ -617,6 +645,79 @@ def _nanosuit_greeting():
     print("[nanosuit] no voice engine produced audio — "
           "for the exact/neural voice: pip install -r requirements-voice.txt", flush=True)
     return None
+
+
+def _preload_voice_model():
+    """Download/load the TTS model BEFORE the GUI starts, so the greeting is
+    ready the moment the interface appears (and the big first-run download
+    happens up front, not behind the locked kiosk UI).
+
+    Warms the engine that will actually be used: the XTTS clone when a
+    reference clip + coqui-tts are available, otherwise Silero. Returns that
+    engine key, or None when no neural voice deps are present (the greeting
+    then falls back to espeak as before). Honors NANOSUIT_VOICE.
+    """
+    forced = _VOICE_FORCE
+    if forced in ("espeak", "espeak-plain", "sapi", "sapi-plain"):
+        return None  # nothing to preload for the espeak/SAPI engines
+    if forced == "silero":
+        return "silero" if _ensure_silero_model() is not None else None
+    if forced == "clone":
+        return "clone" if _ensure_xtts_model() is not None else None
+    # Auto order: exact clone if a reference exists, else Silero.
+    if os.path.exists(_CLONE_REF_PATH) and _ensure_xtts_model() is not None:
+        return "clone"
+    if _ensure_silero_model() is not None:
+        return "silero"
+    return None
+
+
+def _preload_with_splash():
+    """Load the TTS model before the main UI, showing a small splash meanwhile.
+
+    Runs the (possibly long) model load on a worker thread so the splash stays
+    responsive. Falls back to a plain blocking preload if no display is usable.
+    """
+    try:
+        splash = tk.Tk()
+    except Exception:
+        _preload_voice_model()
+        return
+    try:
+        splash.overrideredirect(True)
+        splash.configure(bg="#0f172a")
+        sw, sh = splash.winfo_screenwidth(), splash.winfo_screenheight()
+        w, h = max(380, sw // 3), max(160, sh // 6)
+        splash.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        tk.Label(splash, text="Инициализация голосового модуля…",
+                 fg="#f1f5f9", bg="#0f172a",
+                 font=("Segoe UI", 16, "bold")).pack(expand=True, pady=(24, 4))
+        tk.Label(splash,
+                 text="Загрузка модели TTS — при первом запуске это может занять время",
+                 fg="#94a3b8", bg="#0f172a", font=("Segoe UI", 10)).pack(pady=(0, 24))
+        state = {"done": False}
+
+        def work():
+            try:
+                _preload_voice_model()
+            finally:
+                state["done"] = True
+
+        threading.Thread(target=work, daemon=True).start()
+
+        def check():
+            if state["done"]:
+                splash.destroy()
+            else:
+                splash.after(150, check)
+
+        splash.after(150, check)
+        splash.mainloop()
+    finally:
+        try:
+            splash.destroy()
+        except Exception:
+            pass
 
 
 class App:
@@ -1288,6 +1389,8 @@ class App:
 
 
 def launch():
+    # Load the TTS model first (with a splash), then start the app + interface.
+    _preload_with_splash()
     App().run()
 
 
