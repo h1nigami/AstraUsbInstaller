@@ -81,23 +81,23 @@ def _has_bin(*names):
     return None
 
 
-# espeak args: lower base pitch, slightly faster for robotic crispness
-_ESP_ARGS = ["-v", "ru+m3", "-s", "95", "-p", "25", "-a", "200", "-g", "2", "--stdout"]
+# espeak: m7 = deepest robotic male variant; p=5 = maximum base pitch lowering
+_ESP_ARGS = ["-v", "ru+m7", "-s", "90", "-p", "5", "-a", "200", "-g", "2", "--stdout"]
 
 # DSP effect parameters for nanosuit voice
-_PITCH_CENTS    = -550.0   # deeper than before — full robotic bass
+_PITCH_CENTS    = -700.0   # ~7 semitones down — brutal deep bass
 _ECHO1_DELAY_MS =   12.0   # short metallic armor echo
 _ECHO1_DECAY    =    0.40
 _REVERB_AMOUNT  =   18.0   # small helmet reverb, not a room
-_BASS_GAIN_DB   =   +5.0
-_BASS_FREQ_HZ   =  140.0
+_BASS_GAIN_DB   =   +8.0   # heavy bass boost to reinforce masculinity
+_BASS_FREQ_HZ   =  120.0
 _TREBLE_GAIN_DB =   -3.0
 _TREBLE_FREQ_HZ = 3500.0
 # Ring modulator — the key "electronic buzz" of the nanosuit
-_RING_FREQ_HZ   =   62.0
-_RING_MIX       =    0.30
-# Bandpass simulates speaker inside a helmet
-_BP_LO_HZ       =  250.0
+_RING_FREQ_HZ   =   55.0   # lower frequency = deeper metallic buzz
+_RING_MIX       =    0.22  # reduced mix so bass stays dominant
+# Bandpass: low cut at 80Hz preserves male fundamental frequencies (85–180Hz)
+_BP_LO_HZ       =   80.0
 _BP_HI_HZ       = 3400.0
 # Resonant peak adds metallic "rasp" formant
 _PEAK_GAIN_DB   =   +6.0
@@ -308,7 +308,7 @@ def _play_plain_espeak(binary):
     for line in _NANOSUIT_LINES:
         try:
             subprocess.run(
-                [binary, "-v", "ru+m3", "-s", "78", "-p", "8", "-a", "200", line],
+                [binary, "-v", "ru+m7", "-s", "90", "-p", "5", "-a", "200", line],
                 capture_output=True, timeout=10,
             )
         except Exception as e:
@@ -327,10 +327,18 @@ def _sapi_to_wav_and_play(text):
         ps_script = (
             "Add-Type -AssemblyName System.Speech; "
             "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            "$ru = $s.GetInstalledVoices() | "
-            "Where-Object { $_.VoiceInfo.Culture.Name -like 'ru*' }; "
-            "if ($ru) { $s.SelectVoice($ru[0].VoiceInfo.Name) }; "
-            "$s.Rate = -2; "
+            # Prefer Russian male → any Russian → any male → default
+            "$ru_m = $s.GetInstalledVoices() | Where-Object { "
+            "  $_.VoiceInfo.Culture.Name -like 'ru*' -and "
+            "  $_.VoiceInfo.Gender -eq 'Male' }; "
+            "$ru_any = $s.GetInstalledVoices() | Where-Object { "
+            "  $_.VoiceInfo.Culture.Name -like 'ru*' }; "
+            "$male = $s.GetInstalledVoices() | Where-Object { "
+            "  $_.VoiceInfo.Gender -eq 'Male' }; "
+            "if ($ru_m)    { $s.SelectVoice($ru_m[0].VoiceInfo.Name) } "
+            "elseif ($ru_any) { $s.SelectVoice($ru_any[0].VoiceInfo.Name) } "
+            "elseif ($male)   { $s.SelectVoice($male[0].VoiceInfo.Name) }; "
+            "$s.Rate = -3; "
             f"$s.SetOutputToWaveFile('{wav_path}'); "
             f"$s.Speak('{safe_text}'); "
             "$s.Dispose()"
