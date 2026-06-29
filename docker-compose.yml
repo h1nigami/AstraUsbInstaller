@@ -3,11 +3,9 @@ services:
     build:
       context: .
       args:
-        # Nanosuit voice stack (torch + coqui-tts, ~3 GB) — off by default
-        # because the headless server doesn't play audio. On ARM (Jetson) the
-        # native extensions fail to compile. Enable per-host:
-        #   INSTALL_VOICE=1 docker compose up -d --build
-        INSTALL_VOICE: ${INSTALL_VOICE:-0}
+        # Nanosuit voice stack (torch + coqui-tts, ~3 GB).
+        # On ARM (Jetson) native extensions fail — disable with INSTALL_VOICE=0.
+        INSTALL_VOICE: ${INSTALL_VOICE:-1}
     container_name: astra-usb-monitor
     privileged: true
     network_mode: host
@@ -22,6 +20,9 @@ services:
       # X11 auth cookie so the root container may connect to the desktop's
       # X server (:1). Host-scoped cookie + network_mode/pid host => valid here.
       - ${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro
+      # PulseAudio unix socket for desktop audio (Ubuntu Desktop).
+      # Falls back to /run/user/1000 if XDG_RUNTIME_DIR is not set.
+      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse:/tmp/pulse:ro
       - ./USB_Backups:/app/USB_Backups
       - ./data:/app/data
     environment:
@@ -34,6 +35,7 @@ services:
       - DISPLAY=${DISPLAY-}
       - XAUTHORITY=/root/.Xauthority
       - QT_X11_NO_MITSHM=1
+      - PULSE_SERVER=unix:/tmp/pulse/native
       - ALSA_CARD=0
       # Voice: accept the XTTS license and keep models in the ./data volume so
       # they download only on the first run, not on every container recreate.

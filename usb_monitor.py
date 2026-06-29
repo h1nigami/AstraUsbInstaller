@@ -390,9 +390,10 @@ def _unmount(mountpoint):
         pass
 
 
-def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_bytes, progress_obj, task_id, start_time):
+def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     copied_files = 0
     copied_bytes = 0
+    last_emit_t = 0.0
     for root, dirs, files in os.walk(src_root):
         rel_path = os.path.relpath(root, src_root)
         if rel_path == ".":
@@ -420,6 +421,11 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
                     progress_obj.update(task_id, advance=file_size)
                 elif not IS_TTY:
                     _docker_progress(device_id, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
+                if emit_fn is not None:
+                    now = time.time()
+                    if now - last_emit_t >= 1.0:
+                        emit_fn("copying", copied_bytes, total_bytes, "")
+                        last_emit_t = now
             except Exception:
                 pass
     return copied_files, copied_bytes
@@ -477,7 +483,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {display_id}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
     start_time = time.time()
-    copied_files, copied_bytes = _copy_files(mountpoint, dest, ts, device_id, total_files, total_bytes, progress_obj, task_id, start_time)
+    copied_files, copied_bytes = _copy_files(mountpoint, dest, ts, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=_emit)
 
     if should_unmount:
         _unmount(mountpoint)
