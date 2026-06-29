@@ -602,6 +602,9 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         print(f"  Connected: {dev}", flush=True)
         active[dev] = submit(executor, dev, None, None)
 
+    # dev → timestamp of first consecutive miss; cleared when device reappears
+    pending_removals = {}
+
     try:
         while True:
             if stop_event and stop_event.is_set():
@@ -616,12 +619,30 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                 except Exception:
                     pass
 
+            now_t = time.time()
             current = set(_get_linux_partitions()) if is_linux else get_removable_drives()
-            removed = known - current
-            new_devices = sorted(current - known)
-            known = current
 
-            for dev in removed:
+            # Devices missing from this poll but still in known
+            candidate_removed = known - current
+
+            # Devices that came back — clear their pending counter
+            for dev in list(pending_removals):
+                if dev not in candidate_removed:
+                    pending_removals.pop(dev, None)
+
+            # Record first-miss timestamp for newly disappearing devices
+            for dev in candidate_removed:
+                if dev not in pending_removals:
+                    pending_removals[dev] = now_t
+
+            # Confirm removal only after 1.5× the poll interval has elapsed
+            grace = interval * 1.5
+            confirmed_removed = {dev for dev, t in pending_removals.items()
+                                 if now_t - t >= grace}
+
+            for dev in confirmed_removed:
+                pending_removals.pop(dev, None)
+                known.discard(dev)
                 active.pop(dev, None)
                 dn = os.path.basename(dev)
                 if progress_queue is not None:
@@ -630,7 +651,12 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     except Exception:
                         pass
 
+            # New devices: present in current but not yet in known
+            new_devices = sorted(current - known)
+            known.update(new_devices)
+
             for dev in new_devices:
+                pending_removals.pop(dev, None)
                 print(f"  New USB: {dev}", flush=True)
                 active[dev] = submit(executor, dev, None, None)
 
