@@ -796,10 +796,15 @@ class App:
         hdr.pack(fill="x", side="top")
         hdr.pack_propagate(False)
 
-        logo = tk.Label(hdr, text="[LOGO]", width=7, height=3,
-                        font=("Segoe UI", 12, "bold"),
-                        fg=C["brand"], bg=C["bg_app"],
-                        relief="solid", bd=1)
+        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logo-1.png")
+        try:
+            self._logo_img = tk.PhotoImage(file=_logo_path).subsample(3)
+            logo = tk.Label(hdr, image=self._logo_img, bg=C["bg_app"])
+        except Exception:
+            logo = tk.Label(hdr, text="[LOGO]", width=7, height=3,
+                            font=("Segoe UI", 12, "bold"),
+                            fg=C["brand"], bg=C["bg_app"],
+                            relief="solid", bd=1)
         logo.pack(side="left", padx=16, pady=10)
 
         box = tk.Frame(hdr, bg=C["bg_panel"])
