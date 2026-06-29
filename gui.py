@@ -732,7 +732,7 @@ def _preload_with_splash():
 class App:
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("BestElectronics USB Backup Manager")
+        self.root.title("BestCam USB Backup Manager")
         self.root.attributes("-fullscreen", True)
         self.root.bind("<Escape>", lambda e: None)
         self.root.configure(bg="#0f172a")
@@ -831,7 +831,7 @@ class App:
 
         box = tk.Frame(hdr, bg=C["bg_panel"])
         box.pack(side="left", padx=10)
-        tk.Label(box, text="BestElectronics", font=("Segoe UI", 20, "bold"),
+        tk.Label(box, text="BestCam", font=("Segoe UI", 20, "bold"),
                  fg=C["brand"], bg=C["bg_panel"]).pack(anchor="w")
         tk.Label(box, text="USB Backup Manager", font=("Segoe UI", 12),
                  fg=C["fg_muted"], bg=C["bg_panel"]).pack(anchor="w")
@@ -843,7 +843,7 @@ class App:
         bar = tk.Frame(self.root, bg=C["bg_panel"], height=28)
         bar.pack(fill="x", side="bottom")
         bar.pack_propagate(False)
-        tk.Label(bar, text="© BestElectronics", font=("Segoe UI", 10),
+        tk.Label(bar, text="© BestCam", font=("Segoe UI", 10),
                  fg=C["fg_muted"], bg=C["bg_panel"]).pack(side="left", padx=12)
         tk.Label(bar, textvariable=self.mon_status, font=("Segoe UI", 10),
                  fg=C["brand"], bg=C["bg_panel"]).pack(side="right", padx=12)
@@ -1174,7 +1174,7 @@ class App:
 
         about = ttk.LabelFrame(f, text="О программе", padding=16)
         about.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Label(about, text="BestElectronics USB Backup Manager").pack(anchor="w")
+        ttk.Label(about, text="BestCam USB Backup Manager").pack(anchor="w")
         ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
 
     def _refresh_timeout_status(self):
