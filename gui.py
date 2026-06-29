@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS
 
 try:
     import numpy as np
@@ -22,8 +22,6 @@ except Exception:
     _HAVE_DSP = False
 
 POLL_MS = 200
-VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
-              ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
@@ -1009,6 +1007,16 @@ class App:
         f = ttk.Frame(nb)
         nb.add(f, text="Настройки")
 
+        folder_frame = ttk.LabelFrame(f, text="Папка для резервных копий", padding=10)
+        folder_frame.pack(fill="x", padx=10, pady=10)
+
+        ttk.Label(folder_frame, text="Текущая папка:").pack(anchor="w")
+        self.backup_dest_var = tk.StringVar(value=get_dest_base())
+        ttk.Label(folder_frame, textvariable=self.backup_dest_var,
+                  foreground=self.C["brand"], wraplength=900,
+                  font=("Segoe UI", 11)).pack(anchor="w", pady=(2, 8))
+        ttk.Button(folder_frame, text="Выбрать папку", command=self._change_backup_dest).pack(anchor="w")
+
         frame = ttk.LabelFrame(f, text="Защита выхода", padding=10)
         frame.pack(fill="x", padx=10, pady=10)
 
@@ -1024,6 +1032,22 @@ class App:
         about.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Label(about, text="BestElectronics USB Backup Manager").pack(anchor="w")
         ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
+
+    def _change_backup_dest(self):
+        from tkinter import filedialog
+        current = get_dest_base()
+        new_path = filedialog.askdirectory(
+            title="Выберите папку для резервных копий",
+            initialdir=current if os.path.isdir(current) else os.path.expanduser("~"),
+            parent=self.root,
+        )
+        if not new_path:
+            return
+        cfg = _load_config()
+        cfg["backup_dest"] = new_path
+        _save_config(cfg)
+        self.backup_dest_var.set(new_path)
+        messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
 
     def _refresh_pw_status(self):
         pw = _get_exit_password()
@@ -1234,7 +1258,7 @@ class App:
             messagebox.showwarning("Ошибка", "Некорректный Device ID")
             return
 
-        dev_dir = os.path.join(DEST_BASE, f"Device{dev_id}")
+        dev_dir = os.path.join(get_dest_base(), f"Device{dev_id}")
         if not os.path.isdir(dev_dir):
             messagebox.showinfo("Нет данных", f"Папка устройства Device{dev_id} не найдена")
             return

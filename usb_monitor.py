@@ -23,6 +23,41 @@ DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
 IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
 
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
+
+VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
+              ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
+
+
+def get_dest_base():
+    """Return the active backup root: config.json > env var > default."""
+    try:
+        with open(_CONFIG_PATH) as f:
+            path = json.load(f).get("backup_dest", "")
+        if path:
+            return path
+    except Exception:
+        pass
+    return os.environ.get("USB_BACKUP_DEST",
+                          os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
+
+
+def _delete_source_videos(src_root):
+    """Delete video files from the USB source after a successful backup."""
+    deleted = 0
+    for root, _dirs, files in os.walk(src_root):
+        for name in files:
+            if os.path.splitext(name)[1].lower() in VIDEO_EXTS:
+                fp = os.path.join(root, name)
+                try:
+                    os.remove(fp)
+                    deleted += 1
+                except OSError as e:
+                    print(f"  Auto-delete skipped {fp}: {e}", flush=True)
+    if deleted:
+        print(f"  Auto-deleted {deleted} video file(s) from {src_root}", flush=True)
+    return deleted
+
 
 def _format_size(bytes_val):
     for unit in ("B", "KB", "MB", "GB", "TB"):
@@ -445,7 +480,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     started_at = datetime.now()
 
     ts = started_at.strftime("%Y%m%d_%H%M%S")
-    dest = os.path.join(DEST_BASE, display_id)
+    dest = os.path.join(get_dest_base(), display_id)
     os.makedirs(dest, exist_ok=True)
 
     def _emit(state, current=0, total=0, msg=""):
@@ -484,6 +519,8 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
     start_time = time.time()
     copied_files, copied_bytes = _copy_files(mountpoint, dest, ts, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=_emit)
+
+    _delete_source_videos(mountpoint)
 
     if should_unmount:
         _unmount(mountpoint)
