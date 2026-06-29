@@ -848,6 +848,7 @@ class App:
         dlg.geometry(f"{w}x{h}+{x}+{y}")
         dlg.resizable(False, False)
         dlg.transient(self.root)
+        dlg.wait_visibility(dlg)
         dlg.grab_set()
 
         tk.Label(dlg, text="Доступ к разделу защищён.",
@@ -1035,6 +1036,7 @@ class App:
         dlg.geometry("350x200")
         dlg.resizable(False, False)
         dlg.transient(self.root)
+        dlg.wait_visibility(dlg)
         dlg.grab_set()
 
         ttk.Label(dlg, text="Старый пароль:").pack(pady=(10, 0))
@@ -1077,6 +1079,7 @@ class App:
         dlg.geometry(f"{w}x{h}+{x}+{y}")
         dlg.resizable(False, False)
         dlg.transient(self.root)
+        dlg.wait_visibility(dlg)
         dlg.grab_set()
 
         tk.Label(dlg, text="Выход из приложения",
