@@ -3,5 +3,5 @@ __pycache__/
 .idea/
 USB_Backups/
 data/
-!data/logo-1.png
+!data/LOGO-1.png
 *.db

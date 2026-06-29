@@ -796,7 +796,7 @@ class App:
         hdr.pack(fill="x", side="top")
         hdr.pack_propagate(False)
 
-        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "logo-1.png")
+        _logo_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "LOGO-1.png")
         try:
             self._logo_img = tk.PhotoImage(file=_logo_path).subsample(3)
             logo = tk.Label(hdr, image=self._logo_img, bg=C["bg_app"])
