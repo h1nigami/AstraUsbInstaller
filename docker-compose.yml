@@ -4,8 +4,9 @@ services:
       context: .
       args:
         # Nanosuit voice stack (torch + coqui-tts, ~3 GB).
-        # On ARM (Jetson) native extensions fail — disable with INSTALL_VOICE=0.
-        INSTALL_VOICE: ${INSTALL_VOICE:-1}
+        # "auto": install on x86_64, skip on ARM (Jetson) where the native
+        # wheels fail. Force with INSTALL_VOICE=1 / disable with INSTALL_VOICE=0.
+        INSTALL_VOICE: ${INSTALL_VOICE:-auto}
     container_name: astra-usb-monitor
     privileged: true
     network_mode: host

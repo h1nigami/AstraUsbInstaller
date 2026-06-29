@@ -24,12 +24,24 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Optional nanosuit voice stack (torch + coqui-tts, ~3 GB). Off by default to
-# keep the image small; enable with:  docker build --build-arg INSTALL_VOICE=1
-# or set it in docker-compose.yml under build.args.
+# keep the image small (CI builds the Dockerfile directly and stays lean);
+# enable with:  docker build --build-arg INSTALL_VOICE=1
+# docker-compose.yml passes INSTALL_VOICE=auto -> install only on x86_64,
+# skip on ARM (Jetson) where the native wheels fail to build.
 ARG INSTALL_VOICE=0
 COPY requirements-voice.txt .
-RUN if [ "$INSTALL_VOICE" = "1" ] || [ "$INSTALL_VOICE" = "true" ]; then \
+RUN arch="$(uname -m)"; \
+    if [ "$INSTALL_VOICE" = "auto" ]; then \
+        case "$arch" in \
+            x86_64|amd64) INSTALL_VOICE=1 ;; \
+            *) INSTALL_VOICE=0 ;; \
+        esac; \
+    fi; \
+    if [ "$INSTALL_VOICE" = "1" ] || [ "$INSTALL_VOICE" = "true" ]; then \
+        echo "Installing voice stack (arch=$arch)"; \
         pip install --no-cache-dir -r requirements-voice.txt; \
+    else \
+        echo "Skipping voice stack (arch=$arch, INSTALL_VOICE=$INSTALL_VOICE)"; \
     fi
 
 COPY usb_monitor.py .
