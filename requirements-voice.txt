@@ -15,8 +15,8 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2.0
 torchaudio>=2.2.0
-# PyTorch >= 2.9 requires torchcodec for audio IO — coqui-tts needs it.
-torchcodec
+# PyTorch >= 2.9 requires torchcodec for audio IO — coqui-tts[codec] bundles
+# the needed FFmpeg DLLs on Windows, plain torchcodec does not.
 
 # Pinned below transformers 5 (see note above).
 transformers>=4.57,<5
@@ -26,7 +26,7 @@ transformers>=4.57,<5
 # Linux and Windows. First run downloads the ~1.8 GB model.
 # Note: XTTS v2 runs on CPU/CUDA only — Apple-Silicon MPS is unsupported, the
 # code already falls back to CPU there.
-coqui-tts>=0.25.0
+coqui-tts[codec]>=0.25.0
 
 # Fallback neural voice: Silero (real Russian male voice + nanosuit DSP), used
 # when no reference clip is present. Only needs torch above; the ~60 MB model
