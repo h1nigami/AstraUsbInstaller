@@ -3,11 +3,11 @@ services:
     build:
       context: .
       args:
-        # Bake the nanosuit voice stack (torch + coqui-tts) into the image so
-        # `docker compose up` just works with the neural/clone voice out of the
-        # box. The first build is large (~3 GB). To opt out and keep the image
-        # lean (greeting falls back to espeak): INSTALL_VOICE=0 docker compose build
-        INSTALL_VOICE: ${INSTALL_VOICE:-1}
+        # Nanosuit voice stack (torch + coqui-tts, ~3 GB) — off by default
+        # because the headless server doesn't play audio. On ARM (Jetson) the
+        # native extensions fail to compile. Enable per-host:
+        #   INSTALL_VOICE=1 docker compose up -d --build
+        INSTALL_VOICE: ${INSTALL_VOICE:-0}
     container_name: astra-usb-monitor
     privileged: true
     network_mode: host
