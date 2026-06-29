@@ -1,6 +1,13 @@
 services:
   usb-monitor:
-    build: .
+    build:
+      context: .
+      args:
+        # Bake the nanosuit voice stack (torch + coqui-tts) into the image so
+        # `docker compose up` just works with the neural/clone voice out of the
+        # box. The first build is large (~3 GB). To opt out and keep the image
+        # lean (greeting falls back to espeak): INSTALL_VOICE=0 docker compose build
+        INSTALL_VOICE: ${INSTALL_VOICE:-1}
     container_name: astra-usb-monitor
     privileged: true
     network_mode: host
@@ -22,6 +29,10 @@ services:
       - DISPLAY=${DISPLAY:-:0}
       - QT_X11_NO_MITSHM=1
       - ALSA_CARD=0
+      # Voice: accept the XTTS license and keep models in the ./data volume so
+      # they download only on the first run, not on every container recreate.
+      - COQUI_TOS_AGREED=1
+      - TTS_HOME=/app/data/tts
     devices:
       - /dev/snd
     security_opt:

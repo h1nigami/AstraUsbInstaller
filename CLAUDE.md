@@ -78,8 +78,14 @@ Pitch shift is done by writing the WAV with a lower framerate (`write_sr = int(s
 
 Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. Audio via ALSA (`/dev/snd` device, `audio` group). GUI via X11 socket passthrough (`/tmp/.X11-unix`). `start.sh` auto-detects `$DISPLAY`; `.gitattributes` enforces LF endings to prevent CRLF corruption in the container.
 
-CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build the image using `docker/build-push-action` with `type=gha` layer cache.
+The heavy voice stack (`requirements-voice.txt`: torch + coqui-tts, ~3 GB) is gated behind the `INSTALL_VOICE` build arg. The **Dockerfile default is `0`** (lean), but **`docker-compose.yml` defaults it to `1`** so `docker compose up` works with the neural/clone voice out of the box; opt out with `INSTALL_VOICE=0 docker compose build`. The Dockerfile also sets `COQUI_TOS_AGREED=1` (accept XTTS CPML license non-interactively) and `TTS_HOME=/app/data/tts`, and declares `/app/data` a volume, so the large voice models download once into the mounted `./data` and persist across container recreation. Exact-copy clone still needs a `data/nanosuit_ref.wav` reference clip; without it the greeting uses Silero.
+
+CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build via `docker/build-push-action` (the Dockerfile directly, not compose) with `type=gha` cache, so they use the Dockerfile's default `INSTALL_VOICE=0` and stay fast and small.
+
+## Voice dependency pins (`requirements-voice.txt`)
+
+XTTS v2 (coqui-tts) is version-sensitive. The file pins a known-good CPU set: `torch`/`torchaudio` from the pytorch CPU index (must match each other), `coqui-tts>=0.25`, and crucially `transformers>=4.57,<5` — transformers 5.x removed `isin_mps_friendly`, which coqui-tts imports, so transformers≥5 breaks XTTS with `cannot import name 'isin_mps_friendly'`. `torchaudio` is a hard runtime dep of coqui-tts. XTTS runs on CPU/CUDA only (no Apple MPS; the code falls back to CPU).
 
 ## Development branch
 
-Active feature branch: `claude/nanosuit-voice-additive-layers`. Base: `master`.
+Active feature branch: `claude/voice-deps-fix-dockerfiles`. Base: `master`.
