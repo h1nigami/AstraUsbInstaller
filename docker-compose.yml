@@ -26,7 +26,7 @@ services:
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
       - USB_BACKUP_DEST=/app/USB_Backups
-      - DISPLAY=${DISPLAY:-:0}
+      - DISPLAY=${DISPLAY-}
       - QT_X11_NO_MITSHM=1
       - ALSA_CARD=0
       # Voice: accept the XTTS license and keep models in the ./data volume so
