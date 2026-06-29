@@ -2,6 +2,7 @@ import os
 import json
 import platform
 import queue
+import shutil
 import sqlite3
 import subprocess
 import io
@@ -766,12 +767,15 @@ class App:
         self._done_times = {}
         self.port_assignment = {}
         self._search_results = []
+        self._search_gen = 0
 
         conn = _init_db()
         conn.close()
 
         threading.Thread(target=_nanosuit_greeting, daemon=True).start()
         self._build_ui()
+        self.root.bind_all("<Button>", self._touch_activity, add=True)
+        self.root.bind_all("<Key>", self._touch_activity, add=True)
         self._poll_queue()
         self._start_monitor()
         self._check_lock_timeout()
@@ -920,14 +924,20 @@ class App:
         finally:
             self._unlock_in_progress = False
 
+    def _touch_activity(self, _event=None):
+        self._last_activity = time.time()
+
     def _check_lock_timeout(self):
-        if self.tabs_unlocked and self._lock_timeout > 0:
-            if time.time() - self._last_activity > self._lock_timeout:
-                self.tabs_unlocked = False
-                if self.nb.index(self.nb.select()) != self.public_tab_index:
-                    self.nb.select(self.public_tab_index)
-                    self._last_tab = self.public_tab_index
-        self.root.after(30_000, self._check_lock_timeout)
+        try:
+            if self.tabs_unlocked and self._lock_timeout > 0:
+                if time.time() - self._last_activity > self._lock_timeout:
+                    self.tabs_unlocked = False
+                    if self.nb.index(self.nb.select()) != self.public_tab_index:
+                        self.nb.select(self.public_tab_index)
+                        self._last_tab = self.public_tab_index
+            self.root.after(30_000, self._check_lock_timeout)
+        except tk.TclError:
+            pass
 
     def _build_search_tab(self, nb):
         f = ttk.Frame(nb)
@@ -1314,6 +1324,8 @@ class App:
         self._export_btn.configure(state="disabled", text="Выгрузить (0)")
         self._search_status_var.set("Поиск...")
 
+        self._search_gen += 1
+        gen = self._search_gen
         params_snapshot = {
             "dt_from": self._get_dt_from(),
             "dt_to": self._get_dt_to(),
@@ -1322,9 +1334,9 @@ class App:
             "filetype": self.search_filetype.get(),
             "filename": self.search_filename_var.get().strip().lower(),
         }
-        threading.Thread(target=self._search_worker, args=(params_snapshot,), daemon=True).start()
+        threading.Thread(target=self._search_worker, args=(params_snapshot, gen), daemon=True).start()
 
-    def _search_worker(self, p):
+    def _search_worker(self, p, gen):
         results = []
         try:
             conn = self._get_db()
@@ -1354,15 +1366,6 @@ class App:
 
             ft = p["filetype"]
             fn_filter = p["filename"]
-            dt_from_ts = None
-            dt_to_ts = None
-            try:
-                if p["dt_from"]:
-                    dt_from_ts = datetime.strptime(p["dt_from"], "%Y-%m-%d %H:%M:%S").timestamp()
-                if p["dt_to"]:
-                    dt_to_ts = datetime.strptime(p["dt_to"], "%Y-%m-%d %H:%M:%S").timestamp()
-            except Exception:
-                pass
 
             seen_paths = set()
             for dev_id, person, dest_path in sessions:
@@ -1388,10 +1391,6 @@ class App:
                             fsize = os.path.getsize(fpath)
                         except OSError:
                             continue
-                        if dt_from_ts and mtime < dt_from_ts:
-                            continue
-                        if dt_to_ts and mtime > dt_to_ts:
-                            continue
                         dt_str = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
                         results.append({
                             "path": fpath,
@@ -1411,9 +1410,14 @@ class App:
         except Exception as e:
             print(f"[search] error: {e}", flush=True)
 
-        self.root.after(0, self._apply_search_results, results)
+        try:
+            self.root.after(0, self._apply_search_results, results, gen)
+        except tk.TclError:
+            pass
 
-    def _apply_search_results(self, results):
+    def _apply_search_results(self, results, gen):
+        if gen != self._search_gen:
+            return
         for row in self.search_tree.get_children():
             self.search_tree.delete(row)
         self._search_results = results
@@ -1430,6 +1434,17 @@ class App:
         else:
             self._export_btn.configure(state="disabled", text="Выгрузить (0)")
 
+    def _open_externally(self, path):
+        try:
+            if platform.system() == "Windows":
+                os.startfile(path)
+            elif platform.system() == "Darwin":
+                subprocess.Popen(["open", path])
+            else:
+                subprocess.Popen(["xdg-open", path])
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+
     def _on_search_dblclick(self, _event):
         sel = self.search_tree.selection()
         if not sel:
@@ -1443,10 +1458,7 @@ class App:
         if ext in IMAGE_EXTS:
             self._show_image_viewer(path)
         else:
-            try:
-                os.startfile(path)
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+            self._open_externally(path)
 
     def _show_image_viewer(self, path):
         win = tk.Toplevel(self.root)
@@ -1476,10 +1488,7 @@ class App:
             lbl.pack(expand=True)
         except Exception:
             win.destroy()
-            try:
-                os.startfile(path)
-            except Exception as e:
-                messagebox.showerror("Ошибка", str(e))
+            self._open_externally(path)
 
     def _export_found_files(self):
         if not self._search_results:
@@ -1502,7 +1511,6 @@ class App:
                          args=(list(self._search_results), dest), daemon=True).start()
 
     def _export_worker(self, results, dest):
-        import shutil
         ok = 0
         errors = []
         for r in results:
@@ -1516,11 +1524,15 @@ class App:
                 ok += 1
             except Exception as e:
                 errors.append(str(e))
-        self.root.after(0, self._export_done, ok, errors)
+        try:
+            self.root.after(0, self._export_done, ok, errors)
+        except tk.TclError:
+            pass
 
     def _export_done(self, ok, errors):
         n = len(self._search_results)
-        self._export_btn.configure(state="normal", text=f"Выгрузить ({n})")
+        state = "normal" if n > 0 else "disabled"
+        self._export_btn.configure(state=state, text=f"Выгрузить ({n})")
         if errors:
             shown = "\n".join(errors[:5])
             more = f"\n...и ещё {len(errors)-5}" if len(errors) > 5 else ""
@@ -1657,6 +1669,7 @@ class App:
                 if device_id == "_removed_":
                     for did, data in list(self.workers_data.items()):
                         if data.get("devname") == display_id:
+                            self._done_times.pop(did, None)
                             self.workers_data.pop(did, None)
                     self._refresh_workers()
                     continue
@@ -1683,7 +1696,10 @@ class App:
                 self._refresh_workers()
         except queue.Empty:
             pass
-        self.root.after(POLL_MS, self._poll_queue)
+        try:
+            self.root.after(POLL_MS, self._poll_queue)
+        except tk.TclError:
+            pass
 
     def _refresh_workers(self):
         now = time.time()
@@ -1695,7 +1711,9 @@ class App:
                 pi = self.port_assignment[dev_id]
             else:
                 used = set(self.port_assignment.values())
-                pi = next((i for i in range(len(self.ports)) if i not in used), 0)
+                pi = next((i for i in range(len(self.ports)) if i not in used), None)
+                if pi is None:
+                    continue
                 self.port_assignment[dev_id] = pi
             port = self.ports[pi]
             port["device_id"] = dev_id
