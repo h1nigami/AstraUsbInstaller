@@ -49,4 +49,4 @@ services:
       - seccomp:unconfined
     group_add:
       - audio
-    restart: unless-stopped
+    restart: always

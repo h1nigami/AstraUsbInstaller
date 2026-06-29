@@ -6,13 +6,23 @@ import sqlite3
 import subprocess
 import io
 import tempfile
+import time
 import wave
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
+from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
 from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
+DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
+
+try:
+    from PIL import Image, ImageTk as _ImageTk
+    _HAVE_PIL = True
+except ImportError:
+    _HAVE_PIL = False
 
 try:
     import numpy as np
@@ -743,12 +753,19 @@ class App:
         self._last_tab = 0
         self.public_tab_index = 0
 
+        cfg = _load_config()
+        self._lock_timeout = int(cfg.get("lock_timeout_minutes", 10)) * 60
+        self._last_activity = time.time()
+
         self.mon_status = tk.StringVar(value="Мониторинг: запуск...")
 
         self.progress_queue = queue.Queue()
         self.stop_event = threading.Event()
         self.monitor_thread = None
         self.workers_data = {}
+        self._done_times = {}
+        self.port_assignment = {}
+        self._search_results = []
 
         conn = _init_db()
         conn.close()
@@ -757,6 +774,7 @@ class App:
         self._build_ui()
         self._poll_queue()
         self._start_monitor()
+        self._check_lock_timeout()
 
     def _setup_styles(self):
         C = self.C
@@ -888,6 +906,7 @@ class App:
             return
         idx = self.nb.index(self.nb.select())
         if idx == self.public_tab_index or self.tabs_unlocked:
+            self._last_activity = time.time()
             self._last_tab = idx
             return
         self._unlock_in_progress = True
@@ -895,10 +914,20 @@ class App:
             self.nb.select(self._last_tab)
             if self._prompt_unlock():
                 self.tabs_unlocked = True
+                self._last_activity = time.time()
                 self.nb.select(idx)
                 self._last_tab = idx
         finally:
             self._unlock_in_progress = False
+
+    def _check_lock_timeout(self):
+        if self.tabs_unlocked and self._lock_timeout > 0:
+            if time.time() - self._last_activity > self._lock_timeout:
+                self.tabs_unlocked = False
+                if self.nb.index(self.nb.select()) != self.public_tab_index:
+                    self.nb.select(self.public_tab_index)
+                    self._last_tab = self.public_tab_index
+        self.root.after(30_000, self._check_lock_timeout)
 
     def _build_search_tab(self, nb):
         f = ttk.Frame(nb)
@@ -913,6 +942,7 @@ class App:
         hours = [f"{h:02d}" for h in range(0, 24)]
         minutes = [f"{m:02d}" for m in range(0, 60)]
 
+        # Row 0: date range
         ttk.Label(top, text="От:").grid(row=0, column=0, padx=2, sticky="w")
         dt_from_frame = ttk.Frame(top)
         dt_from_frame.grid(row=0, column=1, padx=2, sticky="w")
@@ -949,6 +979,7 @@ class App:
         self._to_min = ttk.Combobox(dt_to_frame, values=minutes, width=3, state="readonly")
         self._to_min.pack(side="left")
 
+        # Row 1: device / person / file type / filename
         ttk.Label(top, text="Устройство:").grid(row=1, column=0, padx=2, pady=(5, 0), sticky="w")
         self.search_device = ttk.Combobox(top, width=14, state="readonly")
         self.search_device.grid(row=1, column=1, padx=2, pady=(5, 0), sticky="w")
@@ -957,17 +988,40 @@ class App:
         self.search_person = ttk.Combobox(top, width=14, state="readonly")
         self.search_person.grid(row=1, column=3, padx=2, pady=(5, 0), sticky="w")
 
+        # Row 2: file type / filename / buttons
+        ttk.Label(top, text="Тип файла:").grid(row=2, column=0, padx=2, pady=(5, 0), sticky="w")
+        self.search_filetype = ttk.Combobox(
+            top, width=14, state="readonly",
+            values=["Все", "Фото", "Видео", "Документы"],
+        )
+        self.search_filetype.set("Все")
+        self.search_filetype.grid(row=2, column=1, padx=2, pady=(5, 0), sticky="w")
+
+        ttk.Label(top, text="Имя файла:").grid(row=2, column=2, padx=(10, 2), pady=(5, 0), sticky="w")
+        self.search_filename_var = tk.StringVar()
+        ttk.Entry(top, textvariable=self.search_filename_var, width=20).grid(
+            row=2, column=3, padx=2, pady=(5, 0), sticky="w")
+
         btn_frame = ttk.Frame(top)
-        btn_frame.grid(row=1, column=4, padx=8, pady=(5, 0), sticky="w")
+        btn_frame.grid(row=2, column=4, padx=8, pady=(5, 0), sticky="w")
         ttk.Button(btn_frame, text="Найти", command=self._do_search).pack(side="left", padx=2)
         ttk.Button(btn_frame, text="Сброс", command=self._reset_search).pack(side="left", padx=2)
+        self._export_btn = ttk.Button(btn_frame, text="Выгрузить (0)", command=self._export_found_files, state="disabled")
+        self._export_btn.pack(side="left", padx=2)
 
-        cols = ("datetime", "device", "label", "person", "files", "size", "path")
-        self.search_tree = ttk.Treeview(f, columns=cols, show="headings", height=18)
-        headings = {"datetime": "Дата/время", "device": "Устройство", "label": "Метка",
-                    "person": "Человек", "files": "Файлы", "size": "Размер", "path": "Путь"}
-        col_widths = {"datetime": 150, "device": 90, "label": 140, "person": 140,
-                      "files": 70, "size": 90, "path": 280}
+        # Status label for search progress
+        self._search_status_var = tk.StringVar(value="")
+        ttk.Label(f, textvariable=self._search_status_var, foreground=self.C["brand"],
+                  font=("Segoe UI", 10)).pack(anchor="w", padx=8)
+
+        cols = ("datetime", "device", "person", "filename", "ext", "size", "path")
+        self.search_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
+        headings = {
+            "datetime": "Дата изм.", "device": "Устройство", "person": "Человек",
+            "filename": "Файл", "ext": "Тип", "size": "Размер", "path": "Путь",
+        }
+        col_widths = {"datetime": 140, "device": 90, "person": 130,
+                      "filename": 200, "ext": 60, "size": 80, "path": 320}
         for c in cols:
             self.search_tree.heading(c, text=headings[c])
             self.search_tree.column(c, width=col_widths[c])
@@ -975,6 +1029,8 @@ class App:
         self.search_tree.configure(yscrollcommand=vsb.set)
         self.search_tree.pack(fill="both", expand=True, padx=5, pady=(0, 5), side="left")
         vsb.pack(fill="y", pady=(0, 5), side="right")
+
+        self.search_tree.bind("<Double-1>", self._on_search_dblclick)
 
         self._reset_search_dates()
         self._refresh_search_filters()
@@ -1040,8 +1096,6 @@ class App:
         nb.add(f, text="Загрузка")
 
         self.ports = []
-        self.port_assignment = {}
-        self.next_port = 0
 
         grid = ttk.Frame(f)
         grid.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1095,13 +1149,45 @@ class App:
 
         self._refresh_pw_status()
 
+        lock_frame = ttk.LabelFrame(f, text="Автоблокировка разделов", padding=10)
+        lock_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        ttk.Label(lock_frame, text="Время до блокировки (минут, 0 — отключено):").pack(anchor="w")
+        self._timeout_var = tk.StringVar(value=str(int(self._lock_timeout / 60)))
+        timeout_row = ttk.Frame(lock_frame)
+        timeout_row.pack(anchor="w", pady=(4, 0))
+        ttk.Entry(timeout_row, textvariable=self._timeout_var, width=6).pack(side="left")
+        ttk.Button(timeout_row, text="Сохранить", command=self._save_lock_timeout).pack(side="left", padx=6)
+        self._timeout_status = tk.StringVar()
+        ttk.Label(lock_frame, textvariable=self._timeout_status, foreground="gray").pack(anchor="w", pady=(4, 0))
+        self._refresh_timeout_status()
+
         about = ttk.LabelFrame(f, text="О программе", padding=16)
         about.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Label(about, text="BestElectronics USB Backup Manager").pack(anchor="w")
         ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
 
+    def _refresh_timeout_status(self):
+        m = int(self._lock_timeout / 60)
+        if m == 0:
+            self._timeout_status.set("Автоблокировка отключена")
+        else:
+            self._timeout_status.set(f"Блокировка через {m} мин. бездействия")
+
+    def _save_lock_timeout(self):
+        try:
+            minutes = int(self._timeout_var.get().strip())
+            minutes = max(0, minutes)
+        except ValueError:
+            messagebox.showwarning("Ошибка", "Введите целое число минут")
+            return
+        self._lock_timeout = minutes * 60
+        cfg = _load_config()
+        cfg["lock_timeout_minutes"] = minutes
+        _save_config(cfg)
+        self._refresh_timeout_status()
+
     def _change_backup_dest(self):
-        from tkinter import filedialog
         current = get_dest_base()
         new_path = filedialog.askdirectory(
             title="Выберите папку для резервных копий",
@@ -1224,55 +1310,231 @@ class App:
     def _do_search(self):
         for row in self.search_tree.get_children():
             self.search_tree.delete(row)
+        self._search_results = []
+        self._export_btn.configure(state="disabled", text="Выгрузить (0)")
+        self._search_status_var.set("Поиск...")
 
-        conn = self._get_db()
+        params_snapshot = {
+            "dt_from": self._get_dt_from(),
+            "dt_to": self._get_dt_to(),
+            "dev": self.search_device.get(),
+            "person": self.search_person.get(),
+            "filetype": self.search_filetype.get(),
+            "filename": self.search_filename_var.get().strip().lower(),
+        }
+        threading.Thread(target=self._search_worker, args=(params_snapshot,), daemon=True).start()
+
+    def _search_worker(self, p):
+        results = []
         try:
-            sql = """
-                SELECT b.started_at, d.id, d.label, d.person,
-                       b.total_files, b.total_bytes, b.dest_path
-                FROM backups b
-                JOIN devices d ON d.id = b.device_id
-                WHERE 1=1
-            """
-            params = []
+            conn = self._get_db()
+            try:
+                sql = """
+                    SELECT d.id, d.person, b.dest_path
+                    FROM backups b
+                    JOIN devices d ON d.id = b.device_id
+                    WHERE 1=1
+                """
+                params = []
+                if p["dt_from"]:
+                    sql += " AND b.started_at >= ?"
+                    params.append(p["dt_from"])
+                if p["dt_to"]:
+                    sql += " AND b.started_at <= ?"
+                    params.append(p["dt_to"])
+                if p["dev"]:
+                    sql += " AND d.label = ?"
+                    params.append(p["dev"])
+                if p["person"]:
+                    sql += " AND d.person = ?"
+                    params.append(p["person"])
+                sessions = conn.execute(sql, params).fetchall()
+            finally:
+                conn.close()
 
-            dt_from = self._get_dt_from()
-            dt_to = self._get_dt_to()
-            dev = self.search_device.get()
-            person = self.search_person.get()
+            ft = p["filetype"]
+            fn_filter = p["filename"]
+            dt_from_ts = None
+            dt_to_ts = None
+            try:
+                if p["dt_from"]:
+                    dt_from_ts = datetime.strptime(p["dt_from"], "%Y-%m-%d %H:%M:%S").timestamp()
+                if p["dt_to"]:
+                    dt_to_ts = datetime.strptime(p["dt_to"], "%Y-%m-%d %H:%M:%S").timestamp()
+            except Exception:
+                pass
 
-            if dt_from:
-                sql += " AND b.started_at >= ?"
-                params.append(dt_from)
-            if dt_to:
-                sql += " AND b.started_at <= ?"
-                params.append(dt_to)
-            if dev:
-                sql += " AND d.label = ?"
-                params.append(dev)
-            if person:
-                sql += " AND d.person = ?"
-                params.append(person)
+            seen_paths = set()
+            for dev_id, person, dest_path in sessions:
+                if not dest_path or not os.path.isdir(dest_path):
+                    continue
+                for root, _dirs, files in os.walk(dest_path):
+                    for fname in files:
+                        ext = os.path.splitext(fname)[1].lower()
+                        if ft == "Фото" and ext not in IMAGE_EXTS:
+                            continue
+                        if ft == "Видео" and ext not in VIDEO_EXTS:
+                            continue
+                        if ft == "Документы" and ext not in DOC_EXTS:
+                            continue
+                        if fn_filter and fn_filter not in fname.lower():
+                            continue
+                        fpath = os.path.join(root, fname)
+                        if fpath in seen_paths:
+                            continue
+                        seen_paths.add(fpath)
+                        try:
+                            mtime = os.path.getmtime(fpath)
+                            fsize = os.path.getsize(fpath)
+                        except OSError:
+                            continue
+                        if dt_from_ts and mtime < dt_from_ts:
+                            continue
+                        if dt_to_ts and mtime > dt_to_ts:
+                            continue
+                        dt_str = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+                        results.append({
+                            "path": fpath,
+                            "filename": fname,
+                            "ext": ext,
+                            "size": fsize,
+                            "device": f"Device{dev_id}",
+                            "person": person or "",
+                            "datetime": dt_str,
+                        })
+                        if len(results) >= 500:
+                            break
+                    if len(results) >= 500:
+                        break
+                if len(results) >= 500:
+                    break
+        except Exception as e:
+            print(f"[search] error: {e}", flush=True)
 
-            sql += " ORDER BY b.started_at DESC"
+        self.root.after(0, self._apply_search_results, results)
 
-            for row in conn.execute(sql, params):
-                self.search_tree.insert("", "end", values=(
-                    row[0][:19],
-                    f"Device{row[1]}",
-                    row[2],
-                    row[3],
-                    row[4],
-                    self._fmt_size(row[5]),
-                    row[6],
-                ))
-        finally:
-            conn.close()
+    def _apply_search_results(self, results):
+        for row in self.search_tree.get_children():
+            self.search_tree.delete(row)
+        self._search_results = results
+        for r in results:
+            self.search_tree.insert("", "end", values=(
+                r["datetime"], r["device"], r["person"],
+                r["filename"], r["ext"], self._fmt_size(r["size"]), r["path"],
+            ))
+        count = len(results)
+        limit_note = " (лимит 500)" if count >= 500 else ""
+        self._search_status_var.set(f"Найдено: {count} файлов{limit_note}")
+        if count:
+            self._export_btn.configure(state="normal", text=f"Выгрузить ({count})")
+        else:
+            self._export_btn.configure(state="disabled", text="Выгрузить (0)")
+
+    def _on_search_dblclick(self, _event):
+        sel = self.search_tree.selection()
+        if not sel:
+            return
+        vals = self.search_tree.item(sel[0], "values")
+        path = vals[6] if len(vals) > 6 else ""
+        if not path or not os.path.isfile(path):
+            messagebox.showwarning("Файл не найден", f"Файл не существует:\n{path}")
+            return
+        ext = os.path.splitext(path)[1].lower()
+        if ext in IMAGE_EXTS:
+            self._show_image_viewer(path)
+        else:
+            try:
+                os.startfile(path)
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+
+    def _show_image_viewer(self, path):
+        win = tk.Toplevel(self.root)
+        win.title(os.path.basename(path))
+        win.configure(bg=self.C["bg_app"])
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w, h = int(sw * 0.8), int(sh * 0.8)
+        win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+
+        if _HAVE_PIL:
+            try:
+                img = Image.open(path)
+                img.thumbnail((w - 20, h - 60))
+                photo = _ImageTk.PhotoImage(img)
+                lbl = tk.Label(win, image=photo, bg=self.C["bg_app"])
+                lbl.image = photo
+                lbl.pack(expand=True)
+                tk.Label(win, text=path, fg=self.C["fg_muted"], bg=self.C["bg_app"],
+                         font=("Segoe UI", 9)).pack(pady=4)
+                return
+            except Exception:
+                pass
+        try:
+            photo = tk.PhotoImage(file=path)
+            lbl = tk.Label(win, image=photo, bg=self.C["bg_app"])
+            lbl.image = photo
+            lbl.pack(expand=True)
+        except Exception:
+            win.destroy()
+            try:
+                os.startfile(path)
+            except Exception as e:
+                messagebox.showerror("Ошибка", str(e))
+
+    def _export_found_files(self):
+        if not self._search_results:
+            return
+        dest = filedialog.askdirectory(
+            title="Выберите папку для выгрузки файлов",
+            parent=self.root,
+        )
+        if not dest:
+            return
+        count = len(self._search_results)
+        if not messagebox.askyesno(
+            "Подтверждение",
+            f"Выгрузить {count} файлов в:\n{dest}?",
+            parent=self.root,
+        ):
+            return
+        self._export_btn.configure(state="disabled", text="Выгрузка...")
+        threading.Thread(target=self._export_worker,
+                         args=(list(self._search_results), dest), daemon=True).start()
+
+    def _export_worker(self, results, dest):
+        import shutil
+        ok = 0
+        errors = []
+        for r in results:
+            try:
+                dst = os.path.join(dest, r["filename"])
+                if os.path.exists(dst):
+                    base, ext = os.path.splitext(r["filename"])
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    dst = os.path.join(dest, f"{base}_{ts}{ext}")
+                shutil.copy2(r["path"], dst)
+                ok += 1
+            except Exception as e:
+                errors.append(str(e))
+        self.root.after(0, self._export_done, ok, errors)
+
+    def _export_done(self, ok, errors):
+        n = len(self._search_results)
+        self._export_btn.configure(state="normal", text=f"Выгрузить ({n})")
+        if errors:
+            shown = "\n".join(errors[:5])
+            more = f"\n...и ещё {len(errors)-5}" if len(errors) > 5 else ""
+            messagebox.showwarning("Выгрузка завершена",
+                                   f"Скопировано: {ok}\nОшибок: {len(errors)}\n\n{shown}{more}")
+        else:
+            messagebox.showinfo("Выгрузка завершена", f"Скопировано файлов: {ok}")
 
     def _reset_search(self):
         self._reset_search_dates()
         self.search_device.set("")
         self.search_person.set("")
+        self.search_filetype.set("Все")
+        self.search_filename_var.set("")
         self._refresh_search_filters()
         self._do_search()
 
@@ -1424,6 +1686,7 @@ class App:
         self.root.after(POLL_MS, self._poll_queue)
 
     def _refresh_workers(self):
+        now = time.time()
         tracked = set()
         for dev_id, data in self.workers_data.items():
             tracked.add(dev_id)
@@ -1431,8 +1694,8 @@ class App:
             if dev_id in self.port_assignment:
                 pi = self.port_assignment[dev_id]
             else:
-                pi = self.next_port % 10
-                self.next_port = (self.next_port + 1) % 10
+                used = set(self.port_assignment.values())
+                pi = next((i for i in range(len(self.ports)) if i not in used), 0)
                 self.port_assignment[dev_id] = pi
             port = self.ports[pi]
             port["device_id"] = dev_id
@@ -1467,7 +1730,11 @@ class App:
 
         done_ids = [did for did, d in self.workers_data.items() if d["state"] == "Готово"]
         for did in done_ids:
-            self.workers_data.pop(did, None)
+            if did not in self._done_times:
+                self._done_times[did] = now
+            elif now - self._done_times[did] >= 5.0:
+                self._done_times.pop(did, None)
+                self.workers_data.pop(did, None)
 
     def _fmt_size(self, b):
         for unit in ("B", "KB", "MB", "GB", "TB"):
