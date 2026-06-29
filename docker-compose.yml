@@ -19,6 +19,9 @@ services:
       - /proc:/proc
       - /run/udev:/run/udev:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # X11 auth cookie so the root container may connect to the desktop's
+      # X server (:1). Host-scoped cookie + network_mode/pid host => valid here.
+      - ${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro
       - ./USB_Backups:/app/USB_Backups
       - ./data:/app/data
     environment:
@@ -26,7 +29,10 @@ services:
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
       - USB_BACKUP_DEST=/app/USB_Backups
+      # Empty when launched over SSH (-> headless), set to :1 when launched
+      # from the desktop terminal (-> GUI). Do NOT hardcode a value.
       - DISPLAY=${DISPLAY-}
+      - XAUTHORITY=/root/.Xauthority
       - QT_X11_NO_MITSHM=1
       - ALSA_CARD=0
       # Voice: accept the XTTS license and keep models in the ./data volume so

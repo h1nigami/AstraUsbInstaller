@@ -1,8 +1,13 @@
 #!/bin/bash
-# Auto-detect: use GUI only if X11 is actually reachable
+# Auto-detect: use GUI only if X11 is actually reachable.
+# DISPLAY is inherited from the launching shell: set (e.g. :1) on the desktop
+# -> try GUI; empty over SSH -> headless. The X11 cookie is mounted at
+# /root/.Xauthority by docker-compose; fall back to the conventional path.
+export XAUTHORITY="${XAUTHORITY:-/root/.Xauthority}"
 if [ -n "$DISPLAY" ]; then
     if command -v xdpyinfo &>/dev/null; then
-        if xdpyinfo -display "$DISPLAY" &>/dev/null 2>&1; then
+        if xdpyinfo -display "$DISPLAY" &>/dev/null; then
+            echo "X11 reachable on $DISPLAY (XAUTHORITY=$XAUTHORITY) — starting GUI"
             exec python3 /app/main.py
         fi
     else
