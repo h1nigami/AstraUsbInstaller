@@ -764,7 +764,6 @@ class App:
         self.stop_event = threading.Event()
         self.monitor_thread = None
         self.workers_data = {}
-        self._done_times = {}
         self.port_assignment = {}
         self._search_results = []
         self._search_gen = 0
@@ -1669,7 +1668,6 @@ class App:
                 if device_id == "_removed_":
                     for did, data in list(self.workers_data.items()):
                         if data.get("devname") == display_id:
-                            self._done_times.pop(did, None)
                             self.workers_data.pop(did, None)
                     self._refresh_workers()
                     continue
@@ -1702,7 +1700,6 @@ class App:
             pass
 
     def _refresh_workers(self):
-        now = time.time()
         tracked = set()
         for dev_id, data in self.workers_data.items():
             tracked.add(dev_id)
@@ -1745,14 +1742,6 @@ class App:
                 self.port_assignment.pop(did, None)
                 port["preview"].configure(text="Простой", bg=self.C["accent"])
                 port["status"].configure(text="Нет передачи данных")
-
-        done_ids = [did for did, d in self.workers_data.items() if d["state"] == "Готово"]
-        for did in done_ids:
-            if did not in self._done_times:
-                self._done_times[did] = now
-            elif now - self._done_times[did] >= 5.0:
-                self._done_times.pop(did, None)
-                self.workers_data.pop(did, None)
 
     def _fmt_size(self, b):
         for unit in ("B", "KB", "MB", "GB", "TB"):
