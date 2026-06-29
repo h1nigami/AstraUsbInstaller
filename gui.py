@@ -10,7 +10,7 @@ import wave
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS
 
@@ -902,25 +902,60 @@ class App:
         top = ttk.Frame(f)
         top.pack(fill="x", padx=5, pady=5)
 
-        ttk.Label(top, text="От:").grid(row=0, column=0, padx=2)
-        self.search_date_from = ttk.Entry(top, width=12)
-        self.search_date_from.grid(row=0, column=1, padx=2)
-        self.search_date_from.insert(0, "")
+        days = [f"{d:02d}" for d in range(1, 32)]
+        months = [f"{m:02d}" for m in range(1, 13)]
+        years = [str(y) for y in range(2020, 2036)]
+        hours = [f"{h:02d}" for h in range(0, 24)]
+        minutes = [f"{m:02d}" for m in range(0, 60)]
 
-        ttk.Label(top, text="До:").grid(row=0, column=2, padx=2)
-        self.search_date_to = ttk.Entry(top, width=12)
-        self.search_date_to.grid(row=0, column=3, padx=2)
+        ttk.Label(top, text="От:").grid(row=0, column=0, padx=2, sticky="w")
+        dt_from_frame = ttk.Frame(top)
+        dt_from_frame.grid(row=0, column=1, padx=2, sticky="w")
+        self._from_day = ttk.Combobox(dt_from_frame, values=days, width=3, state="readonly")
+        self._from_day.pack(side="left")
+        ttk.Label(dt_from_frame, text=".").pack(side="left")
+        self._from_mon = ttk.Combobox(dt_from_frame, values=months, width=3, state="readonly")
+        self._from_mon.pack(side="left")
+        ttk.Label(dt_from_frame, text=".").pack(side="left")
+        self._from_year = ttk.Combobox(dt_from_frame, values=years, width=5, state="readonly")
+        self._from_year.pack(side="left")
+        ttk.Label(dt_from_frame, text="  ").pack(side="left")
+        self._from_hour = ttk.Combobox(dt_from_frame, values=hours, width=3, state="readonly")
+        self._from_hour.pack(side="left")
+        ttk.Label(dt_from_frame, text=":").pack(side="left")
+        self._from_min = ttk.Combobox(dt_from_frame, values=minutes, width=3, state="readonly")
+        self._from_min.pack(side="left")
 
-        ttk.Label(top, text="Устройство:").grid(row=0, column=4, padx=2)
+        ttk.Label(top, text="До:").grid(row=0, column=2, padx=(10, 2), sticky="w")
+        dt_to_frame = ttk.Frame(top)
+        dt_to_frame.grid(row=0, column=3, padx=2, sticky="w")
+        self._to_day = ttk.Combobox(dt_to_frame, values=days, width=3, state="readonly")
+        self._to_day.pack(side="left")
+        ttk.Label(dt_to_frame, text=".").pack(side="left")
+        self._to_mon = ttk.Combobox(dt_to_frame, values=months, width=3, state="readonly")
+        self._to_mon.pack(side="left")
+        ttk.Label(dt_to_frame, text=".").pack(side="left")
+        self._to_year = ttk.Combobox(dt_to_frame, values=years, width=5, state="readonly")
+        self._to_year.pack(side="left")
+        ttk.Label(dt_to_frame, text="  ").pack(side="left")
+        self._to_hour = ttk.Combobox(dt_to_frame, values=hours, width=3, state="readonly")
+        self._to_hour.pack(side="left")
+        ttk.Label(dt_to_frame, text=":").pack(side="left")
+        self._to_min = ttk.Combobox(dt_to_frame, values=minutes, width=3, state="readonly")
+        self._to_min.pack(side="left")
+
+        ttk.Label(top, text="Устройство:").grid(row=1, column=0, padx=2, pady=(5, 0), sticky="w")
         self.search_device = ttk.Combobox(top, width=14, state="readonly")
-        self.search_device.grid(row=0, column=5, padx=2)
+        self.search_device.grid(row=1, column=1, padx=2, pady=(5, 0), sticky="w")
 
-        ttk.Label(top, text="Человек:").grid(row=0, column=6, padx=2)
-        self.search_person = ttk.Combobox(top, width="14", state="readonly")
-        self.search_person.grid(row=0, column=7, padx=2)
+        ttk.Label(top, text="Человек:").grid(row=1, column=2, padx=(10, 2), pady=(5, 0), sticky="w")
+        self.search_person = ttk.Combobox(top, width=14, state="readonly")
+        self.search_person.grid(row=1, column=3, padx=2, pady=(5, 0), sticky="w")
 
-        ttk.Button(top, text="Найти", command=self._do_search).grid(row=0, column=8, padx=4)
-        ttk.Button(top, text="Сброс", command=self._reset_search).grid(row=0, column=9, padx=4)
+        btn_frame = ttk.Frame(top)
+        btn_frame.grid(row=1, column=4, padx=8, pady=(5, 0), sticky="w")
+        ttk.Button(btn_frame, text="Найти", command=self._do_search).pack(side="left", padx=2)
+        ttk.Button(btn_frame, text="Сброс", command=self._reset_search).pack(side="left", padx=2)
 
         cols = ("datetime", "device", "label", "person", "files", "size", "path")
         self.search_tree = ttk.Treeview(f, columns=cols, show="headings", height=18)
@@ -936,7 +971,34 @@ class App:
         self.search_tree.pack(fill="both", expand=True, padx=5, pady=(0, 5), side="left")
         vsb.pack(fill="y", pady=(0, 5), side="right")
 
+        self._reset_search_dates()
         self._refresh_search_filters()
+
+    def _reset_search_dates(self):
+        now = datetime.now()
+        dt_from = now - timedelta(hours=24)
+        self._from_day.set(f"{dt_from.day:02d}")
+        self._from_mon.set(f"{dt_from.month:02d}")
+        self._from_year.set(str(dt_from.year))
+        self._from_hour.set(f"{dt_from.hour:02d}")
+        self._from_min.set(f"{dt_from.minute:02d}")
+        self._to_day.set(f"{now.day:02d}")
+        self._to_mon.set(f"{now.month:02d}")
+        self._to_year.set(str(now.year))
+        self._to_hour.set(f"{now.hour:02d}")
+        self._to_min.set(f"{now.minute:02d}")
+
+    def _get_dt_from(self):
+        try:
+            return f"{self._from_year.get()}-{self._from_mon.get()}-{self._from_day.get()} {self._from_hour.get()}:{self._from_min.get()}:00"
+        except Exception:
+            return ""
+
+    def _get_dt_to(self):
+        try:
+            return f"{self._to_year.get()}-{self._to_mon.get()}-{self._to_day.get()} {self._to_hour.get()}:{self._to_min.get()}:59"
+        except Exception:
+            return ""
 
     def _build_devices_tab(self, nb):
         f = ttk.Frame(nb)
@@ -1169,8 +1231,8 @@ class App:
             """
             params = []
 
-            dt_from = self.search_date_from.get().strip()
-            dt_to = self.search_date_to.get().strip()
+            dt_from = self._get_dt_from()
+            dt_to = self._get_dt_to()
             dev = self.search_device.get()
             person = self.search_person.get()
 
@@ -1179,7 +1241,7 @@ class App:
                 params.append(dt_from)
             if dt_to:
                 sql += " AND b.started_at <= ?"
-                params.append(dt_to + "T23:59:59")
+                params.append(dt_to)
             if dev:
                 sql += " AND d.label = ?"
                 params.append(dev)
@@ -1203,8 +1265,7 @@ class App:
             conn.close()
 
     def _reset_search(self):
-        self.search_date_from.delete(0, "end")
-        self.search_date_to.delete(0, "end")
+        self._reset_search_dates()
         self.search_device.set("")
         self.search_person.set("")
         self._refresh_search_filters()
