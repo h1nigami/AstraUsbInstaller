@@ -1041,6 +1041,7 @@ class App:
 
         self.search_tree.bind("<Double-1>", self._on_search_dblclick)
 
+        self._device_filter_ids = {}
         self._reset_search_dates()
         self._refresh_search_filters()
 
@@ -1307,9 +1308,10 @@ class App:
     def _refresh_search_filters(self):
         conn = self._get_db()
         try:
-            devices = conn.execute("SELECT DISTINCT label FROM devices WHERE label != '' ORDER BY label").fetchall()
+            devices = conn.execute("SELECT id FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
-            dev_list = [""] + [r[0] for r in devices]
+            self._device_filter_ids = {f"Device{r[0]}": r[0] for r in devices}
+            dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
             self.search_device["values"] = dev_list
             self.search_person["values"] = per_list
@@ -1325,10 +1327,11 @@ class App:
 
         self._search_gen += 1
         gen = self._search_gen
+        dev_sel = self.search_device.get()
         params_snapshot = {
             "dt_from": self._get_dt_from(),
             "dt_to": self._get_dt_to(),
-            "dev": self.search_device.get(),
+            "dev_id": self._device_filter_ids.get(dev_sel) if dev_sel else None,
             "person": self.search_person.get(),
             "filetype": self.search_filetype.get(),
             "filename": self.search_filename_var.get().strip().lower(),
@@ -1353,9 +1356,9 @@ class App:
                 if p["dt_to"]:
                     sql += " AND b.started_at <= ?"
                     params.append(p["dt_to"])
-                if p["dev"]:
-                    sql += " AND d.label = ?"
-                    params.append(p["dev"])
+                if p["dev_id"] is not None:
+                    sql += " AND d.id = ?"
+                    params.append(p["dev_id"])
                 if p["person"]:
                     sql += " AND d.person = ?"
                     params.append(p["person"])
