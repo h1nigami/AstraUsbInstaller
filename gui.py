@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS, cleanup_old_backup_videos, _format_size
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -396,13 +396,17 @@ class App:
 
     def _get_dt_from(self):
         try:
-            return f"{self._from_year.get()}-{self._from_mon.get()}-{self._from_day.get()} {self._from_hour.get()}:{self._from_min.get()}:00"
+            return format_filter_dt(self._from_year.get(), self._from_mon.get(),
+                                    self._from_day.get(), self._from_hour.get(),
+                                    self._from_min.get(), "00")
         except Exception:
             return ""
 
     def _get_dt_to(self):
         try:
-            return f"{self._to_year.get()}-{self._to_mon.get()}-{self._to_day.get()} {self._to_hour.get()}:{self._to_min.get()}:59"
+            return format_filter_dt(self._to_year.get(), self._to_mon.get(),
+                                    self._to_day.get(), self._to_hour.get(),
+                                    self._to_min.get(), "59")
         except Exception:
             return ""
 

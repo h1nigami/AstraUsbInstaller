@@ -42,13 +42,21 @@ def get_dest_base():
                           os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
 
 
-def _delete_source_videos(src_root):
-    """Delete video files from the USB source after a successful backup."""
+def _delete_source_videos(src_root, allowed=None):
+    """Delete video files from the USB source after a successful backup.
+
+    Only files whose source path is in ``allowed`` are removed — this guards
+    against data loss when a copy failed (and was silently skipped): a video
+    that was never backed up must never be deleted from the source. When
+    ``allowed`` is None all videos are eligible (legacy behaviour).
+    """
     deleted = 0
     for root, _dirs, files in os.walk(src_root):
         for name in files:
             if os.path.splitext(name)[1].lower() in VIDEO_EXTS:
                 fp = os.path.join(root, name)
+                if allowed is not None and fp not in allowed:
+                    continue
                 try:
                     os.remove(fp)
                     deleted += 1
@@ -103,6 +111,18 @@ def _format_size(bytes_val):
     return f"{bytes_val:.1f} PB"
 
 
+def format_filter_dt(year, mon, day, hour, minute, second="00"):
+    """Build a datetime string for range-filtering ``backups.started_at``.
+
+    ``started_at`` is stored via ``datetime.isoformat()`` which uses a ``T``
+    separator (e.g. ``2026-06-30T10:00:00``). The filter MUST use the same
+    separator, otherwise the lexicographic comparison breaks: a space (0x20)
+    sorts before ``T`` (0x54), so an upper bound built with a space wrongly
+    excludes every backup taken on that calendar day.
+    """
+    return f"{year}-{mon}-{day}T{hour}:{minute}:{second}"
+
+
 def _format_time(seconds):
     m, s = divmod(int(seconds), 60)
     h, m = divmod(m, 60)
@@ -137,6 +157,16 @@ def _docker_progress(dev_id, copied_files, total_files, copied_bytes, total_byte
         f"| ETA {eta_str} | {fname}"
     )
     print(line, flush=True)
+
+
+def _connect():
+    """Open a fresh SQLite connection for the calling thread.
+
+    Each backup worker uses its own connection (with a busy timeout) instead
+    of sharing one across the thread pool, which is not safe for concurrent
+    writes and silently dropped backup records under load.
+    """
+    return sqlite3.connect(DB_PATH, timeout=30)
 
 
 def _init_db():
@@ -309,6 +339,8 @@ def _scan_drive(drive_path):
     total_bytes = 0
     for root, dirs, files in os.walk(drive_path):
         for file in files:
+            if file == DEVICE_ID_FILE:
+                continue  # internal marker, never copied — keep totals honest
             total_files += 1
             try:
                 total_bytes += os.path.getsize(os.path.join(root, file))
@@ -365,30 +397,43 @@ def _get_linux_partitions():
     return _get_sys_block_partitions()
 
 
-def _get_lsblk_partitions():
+def _parse_lsblk_tree(data):
+    """Return the list of USB partition (or whole-disk) device names.
+
+    Pure helper over parsed ``lsblk -J`` output so it can be unit-tested
+    without invoking lsblk. A USB disk with partitions yields its partitions
+    (each exactly once); a USB disk without partitions yields the disk itself.
+    """
     parts = []
+
+    def walk(devices, parent_is_usb=False):
+        for dev in devices:
+            is_usb = dev.get("tran") == "usb" or parent_is_usb
+            children = dev.get("children", [])
+            dtype = dev.get("type")
+            if is_usb and dtype == "part":
+                parts.append(dev["name"])
+            elif is_usb and dtype == "disk" and not children:
+                # Whole-disk filesystem (no partition table).
+                parts.append(dev["name"])
+            # Partitions are collected via recursion only, so a disk with
+            # partitions is not double-counted.
+            for child in children:
+                walk([child], is_usb)
+
+    walk(data.get("blockdevices", []))
+    return parts
+
+
+def _get_lsblk_partitions():
     try:
         result = subprocess.run(
             ["lsblk", "-J", "-o", "NAME,TRAN,TYPE"],
             capture_output=True, text=True, check=True, timeout=5
         )
-        data = json.loads(result.stdout)
-
-        def walk(devices, parent_is_usb=False):
-            for dev in devices:
-                is_usb = dev.get("tran") == "usb" or parent_is_usb
-                children = dev.get("children", [])
-                if is_usb and dev.get("type") == "part":
-                    parts.append(dev["name"])
-                elif is_usb and dev.get("type") == "disk":
-                    sub = [c["name"] for c in children if c.get("type") == "part"]
-                    parts.extend(sub) if sub else parts.append(dev["name"])
-                for child in children:
-                    walk([child], is_usb)
-        walk(data.get("blockdevices", []))
+        return _parse_lsblk_tree(json.loads(result.stdout))
     except Exception:
-        pass
-    return parts
+        return []
 
 
 def _get_sys_block_partitions():
@@ -464,6 +509,9 @@ def _unmount(mountpoint):
 def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     copied_files = 0
     copied_bytes = 0
+    # Source paths that are now safely present at the destination — either just
+    # copied or already identical. Only these may be auto-deleted from source.
+    backed_up = set()
     last_emit_t = 0.0
     for root, dirs, files in os.walk(src_root):
         rel_path = os.path.relpath(root, src_root)
@@ -481,6 +529,7 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
                     src_stat = os.stat(src_file)
                     dst_stat = os.stat(dst_file)
                     if src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1:
+                        backed_up.add(src_file)  # identical copy already exists
                         continue
                     base, ext = os.path.splitext(file_name)
                     dst_file = os.path.join(dest_dir, f"{base}_{timestamp}{ext}")
@@ -488,6 +537,7 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
                 shutil.copy2(src_file, dst_file)
                 copied_files += 1
                 copied_bytes += file_size
+                backed_up.add(src_file)
                 if USE_RICH and progress_obj:
                     progress_obj.update(task_id, advance=file_size)
                 elif not IS_TTY:
@@ -498,11 +548,13 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
                         emit_fn("copying", copied_bytes, total_bytes, "")
                         last_emit_t = now
             except Exception:
+                # Copy failed for this file — deliberately NOT added to
+                # backed_up, so it will be preserved on the source.
                 pass
-    return copied_files, copied_bytes
+    return copied_files, copied_bytes, backed_up
 
 
-def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, conn=None, progress_queue=None):
+def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, progress_queue=None):
     is_linux = platform.system() != "Windows"
     label = _get_drive_label_linux(mountpoint) if is_linux else get_drive_label_windows(drive_path.replace(":\\", ""))
 
@@ -511,83 +563,92 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     else:
         serial = _get_device_serial_windows(drive_path.replace(":\\", ""))
 
-    device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
-    display_id = f"Device{device_id}"
-    started_at = datetime.now()
+    # Each worker thread owns its connection; sharing one across the pool is
+    # not safe for concurrent writes.
+    conn = _connect()
+    try:
+        device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
+        display_id = f"Device{device_id}"
+        started_at = datetime.now()
 
-    ts = started_at.strftime("%Y%m%d_%H%M%S")
-    dest = os.path.join(get_dest_base(), display_id)
-    os.makedirs(dest, exist_ok=True)
+        ts = started_at.strftime("%Y%m%d_%H%M%S")
+        dest = os.path.join(get_dest_base(), display_id)
+        os.makedirs(dest, exist_ok=True)
 
-    def _emit(state, current=0, total=0, msg=""):
-        if progress_queue is not None:
-            try:
-                progress_queue.put_nowait((device_id, display_id, state, current, total, msg, devname))
-            except Exception:
-                pass
+        def _emit(state, current=0, total=0, msg=""):
+            if progress_queue is not None:
+                try:
+                    progress_queue.put_nowait((device_id, display_id, state, current, total, msg, devname))
+                except Exception:
+                    pass
 
-    _emit("scanning", 0, 0, f"Scanning {display_id}...")
+        _emit("scanning", 0, 0, f"Scanning {display_id}...")
 
-    if USE_RICH and progress_obj:
-        progress_obj.update(task_id, description=f"[cyan]Scanning {display_id}...")
-    else:
-        print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {display_id} ({label or 'no label'})...", flush=True)
-
-    total_files, total_bytes = _scan_drive(mountpoint)
-
-    if total_files == 0:
-        msg = f"Empty: {display_id}"
-        _emit("done", 0, 0, msg)
         if USE_RICH and progress_obj:
-            progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
+            progress_obj.update(task_id, description=f"[cyan]Scanning {display_id}...")
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+            print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {display_id} ({label or 'no label'})...", flush=True)
+
+        total_files, total_bytes = _scan_drive(mountpoint)
+
+        if total_files == 0:
+            msg = f"Empty: {display_id}"
+            _emit("done", 0, 0, msg)
+            if USE_RICH and progress_obj:
+                progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
+
+        _emit("copying", 0, total_bytes, f"Copying {display_id}...")
+
+        if USE_RICH and progress_obj:
+            progress_obj.update(task_id, description=f"[green]{display_id} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
+        else:
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {display_id}: {total_files} files, {_format_size(total_bytes)}", flush=True)
+
+        start_time = time.time()
+        copied_files, copied_bytes, backed_up = _copy_files(
+            mountpoint, dest, ts, device_id, total_files, total_bytes,
+            progress_obj, task_id, start_time, emit_fn=_emit)
+
+        # Only delete videos that were actually backed up successfully.
+        _delete_source_videos(mountpoint, backed_up)
+
         if should_unmount:
             _unmount(mountpoint)
-        return device_id, 0, 0
 
-    _emit("copying", 0, total_bytes, f"Copying {display_id}...")
+        finished_at = datetime.now()
+        _emit("done", copied_bytes, total_bytes, f"Done: {display_id}")
 
-    if USE_RICH and progress_obj:
-        progress_obj.update(task_id, description=f"[green]{display_id} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
-    else:
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] {display_id}: {total_files} files, {_format_size(total_bytes)}", flush=True)
+        msg = f"Done: {display_id} ({copied_files} files, {_format_size(copied_bytes)})"
+        if USE_RICH and progress_obj:
+            progress_obj.update(task_id, description=f"[green]{msg}")
+        else:
+            print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
 
-    start_time = time.time()
-    copied_files, copied_bytes = _copy_files(mountpoint, dest, ts, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=_emit)
+        try:
+            conn.execute(
+                "INSERT INTO backups (device_id, dest_path, total_files, total_bytes, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (device_id, dest, copied_files, copied_bytes, started_at.isoformat(), finished_at.isoformat()),
+            )
+            conn.commit()
+        except Exception:
+            pass
 
-    _delete_source_videos(mountpoint)
-
-    if should_unmount:
-        _unmount(mountpoint)
-
-    finished_at = datetime.now()
-    _emit("done", copied_bytes, total_bytes, f"Done: {display_id}")
-
-    msg = f"Done: {display_id} ({copied_files} files, {_format_size(copied_bytes)})"
-    if USE_RICH and progress_obj:
-        progress_obj.update(task_id, description=f"[green]{msg}")
-    else:
-        print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
-
-    try:
-        conn.execute(
-            "INSERT INTO backups (device_id, dest_path, total_files, total_bytes, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (device_id, dest, copied_files, copied_bytes, started_at.isoformat(), finished_at.isoformat()),
-        )
-        conn.commit()
-    except Exception:
-        pass
-
-    return device_id, copied_files, copied_bytes
+        return device_id, copied_files, copied_bytes
+    finally:
+        conn.close()
 
 
-def copy_task_windows(drive_letter, progress_obj, task_id, conn, progress_queue=None):
+def copy_task_windows(drive_letter, progress_obj, task_id, progress_queue=None):
     drive_path = f"{drive_letter}:\\"
-    return copy_task(drive_path, drive_path, drive_letter, progress_obj, task_id, conn=conn, progress_queue=progress_queue)
+    return copy_task(drive_path, drive_path, drive_letter, progress_obj, task_id, progress_queue=progress_queue)
 
 
-def copy_task_linux(device_path, progress_obj, task_id, conn, progress_queue=None):
+def copy_task_linux(device_path, progress_obj, task_id, progress_queue=None):
     should_unmount = False
     mountpoint = device_path
     if not os.path.ismount(device_path):
@@ -601,14 +662,14 @@ def copy_task_linux(device_path, progress_obj, task_id, conn, progress_queue=Non
         mountpoint = mp
         should_unmount = True
     devname = os.path.basename(mountpoint)
-    return copy_task(device_path, mountpoint, devname, progress_obj, task_id, should_unmount, conn, progress_queue)
+    return copy_task(device_path, mountpoint, devname, progress_obj, task_id, should_unmount, progress_queue)
 
 
-def _make_submit_fn(conn, progress_queue=None):
+def _make_submit_fn(progress_queue=None):
     def _submit(executor, dev, progress_obj, task_id):
         if platform.system() == "Windows":
-            return executor.submit(copy_task_windows, dev, progress_obj, task_id, conn, progress_queue)
-        return executor.submit(copy_task_linux, dev, progress_obj, task_id, conn, progress_queue)
+            return executor.submit(copy_task_windows, dev, progress_obj, task_id, progress_queue)
+        return executor.submit(copy_task_linux, dev, progress_obj, task_id, progress_queue)
     return _submit
 
 
@@ -620,13 +681,13 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     system = platform.system()
     is_linux = system != "Windows"
 
-    conn = _init_db()
+    _init_db().close()  # ensure schema + migrations; workers open their own conn
     print(f"USB Monitor | Platform: {system} | Workers: {MAX_WORKERS} | DB: {DB_PATH}", flush=True)
     print("Waiting for USB devices... (Ctrl+C to stop)", flush=True)
 
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     active = {}  # dev → future
-    submit = _make_submit_fn(conn, progress_queue)
+    submit = _make_submit_fn(progress_queue)
 
     if is_linux:
         os.makedirs(MOUNT_BASE, exist_ok=True)
@@ -700,7 +761,6 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         print("\nStopped.")
     finally:
         executor.shutdown(wait=False)
-        conn.close()
 
 
 if __name__ == "__main__":
