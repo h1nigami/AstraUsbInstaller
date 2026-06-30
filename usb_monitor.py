@@ -413,11 +413,13 @@ def _parse_lsblk_tree(data):
             dtype = dev.get("type")
             if is_usb and dtype == "part":
                 parts.append(dev["name"])
-            elif is_usb and dtype == "disk" and not children:
-                # Whole-disk filesystem (no partition table).
-                parts.append(dev["name"])
-            # Partitions are collected via recursion only, so a disk with
-            # partitions is not double-counted.
+            elif is_usb and dtype == "disk":
+                # Partitions are collected via recursion only (so a disk with
+                # partitions is not double-counted); the disk itself is added
+                # only when it carries no partition (whole-disk filesystem or
+                # whole-disk container such as LUKS).
+                if not any(c.get("type") == "part" for c in children):
+                    parts.append(dev["name"])
             for child in children:
                 walk([child], is_usb)
 

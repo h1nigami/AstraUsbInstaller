@@ -84,6 +84,16 @@ class LsblkParseTest(unittest.TestCase):
         ]}
         self.assertEqual(um._parse_lsblk_tree(data), [])
 
+    def test_usb_whole_disk_with_non_partition_child(self):
+        # Whole-disk container (e.g. LUKS) — no partition table, child is not
+        # a 'part'. The disk itself must still be returned (mountable target).
+        data = {"blockdevices": [
+            {"name": "sdd", "tran": "usb", "type": "disk", "children": [
+                {"name": "sdd_crypt", "type": "crypt"},
+            ]}
+        ]}
+        self.assertEqual(um._parse_lsblk_tree(data), ["sdd"])
+
     def test_partition_inherits_usb_from_parent(self):
         # Some lsblk versions only set tran on the disk, not the partition.
         data = {"blockdevices": [
