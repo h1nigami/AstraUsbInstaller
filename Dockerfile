@@ -28,6 +28,6 @@ RUN sed -i 's/\r$//' start.sh && chmod +x start.sh
 
 VOLUME ["/app/USB_Backups", "/app/data"]
 
-ENV USB_DEBUG=1
+ENV USB_DEBUG=0
 
 CMD ["/bin/bash", "start.sh"]
