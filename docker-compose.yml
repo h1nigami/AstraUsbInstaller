@@ -2,11 +2,6 @@ services:
   usb-monitor:
     build:
       context: .
-      args:
-        # Nanosuit voice stack (torch + coqui-tts, ~3 GB).
-        # "auto": install on x86_64, skip on ARM (Jetson) where the native
-        # wheels fail. Force with INSTALL_VOICE=1 / disable with INSTALL_VOICE=0.
-        INSTALL_VOICE: ${INSTALL_VOICE:-auto}
     container_name: astra-usb-monitor
     privileged: true
     network_mode: host
@@ -18,12 +13,7 @@ services:
       - /proc:/proc
       - /run/udev:/run/udev:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
-      # X11 auth cookie so the root container may connect to the desktop's
-      # X server (:1). Host-scoped cookie + network_mode/pid host => valid here.
       - ${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro
-      # PulseAudio unix socket for desktop audio (Ubuntu Desktop).
-      # Falls back to /run/user/1000 if XDG_RUNTIME_DIR is not set.
-      - ${XDG_RUNTIME_DIR:-/run/user/1000}/pulse:/tmp/pulse:ro
       - ./USB_Backups:/app/USB_Backups
       - ./data:/app/data
     environment:
@@ -31,23 +21,10 @@ services:
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
       - USB_BACKUP_DEST=/app/USB_Backups
-      # On manual launch: inherits $DISPLAY from the shell.
-      # On autostart (systemd/restart:always): falls back to :0 so the GUI
-      # starts once the X server is up (start.sh retries for 90 s).
       - DISPLAY=${DISPLAY:-:0}
       - XAUTHORITY=/root/.Xauthority
       - QT_X11_NO_MITSHM=1
-      - PULSE_SERVER=unix:/tmp/pulse/native
-      - ALSA_CARD=0
-      # Voice: accept the XTTS license and keep models in the ./data volume so
-      # they download only on the first run, not on every container recreate.
-      - COQUI_TOS_AGREED=1
-      - TTS_HOME=/app/data/tts
-    devices:
-      - /dev/snd
     security_opt:
       - apparmor:unconfined
       - seccomp:unconfined
-    group_add:
-      - audio
     restart: always
