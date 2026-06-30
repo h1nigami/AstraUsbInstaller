@@ -31,9 +31,10 @@ services:
       - PYTHONIOENCODING=utf-8
       - LANG=C.UTF-8
       - USB_BACKUP_DEST=/app/USB_Backups
-      # Empty when launched over SSH (-> headless), set to :1 when launched
-      # from the desktop terminal (-> GUI). Do NOT hardcode a value.
-      - DISPLAY=${DISPLAY-}
+      # On manual launch: inherits $DISPLAY from the shell.
+      # On autostart (systemd/restart:always): falls back to :0 so the GUI
+      # starts once the X server is up (start.sh retries for 90 s).
+      - DISPLAY=${DISPLAY:-:0}
       - XAUTHORITY=/root/.Xauthority
       - QT_X11_NO_MITSHM=1
       - PULSE_SERVER=unix:/tmp/pulse/native
