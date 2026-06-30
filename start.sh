@@ -1,45 +1,47 @@
 #!/bin/bash
-# Auto-detect: use GUI only if X11 is actually reachable.
+# Auto-detect GUI vs headless.
 # On manual launch $DISPLAY is inherited from the shell.
-# On autostart (systemd / restart:always) $DISPLAY defaults to :0 (set in
-# docker-compose.yml); we wait up to 90 s for the X server to come up before
-# falling back to headless so the GUI starts after the desktop logs in.
+# On autostart (systemd / restart:always) $DISPLAY defaults to :0 (docker-compose.yml).
+#
+# Strategy: start USB monitor in the background immediately so devices are
+# handled even before the desktop appears, then keep polling for X11.
+# When the display becomes reachable, stop the background monitor and hand
+# off to the full GUI (which runs its own monitor thread).
 export XAUTHORITY="${XAUTHORITY:-/root/.Xauthority}"
 
 _x11_reachable() {
-    # Check socket existence first — xdpyinfo can fail due to XAUTHORITY
-    # mismatch even when the server is running, causing false negatives.
+    # Socket existence is the primary signal — xdpyinfo can fail on auth
+    # mismatch even when the server is running, producing false negatives.
     local dispnum="${DISPLAY%%.*}"; dispnum="${dispnum#:}"
     [ -S "/tmp/.X11-unix/X${dispnum}" ] || return 1
-    # If xdpyinfo is available, use it as a secondary auth check but don't
-    # fail on auth errors (exit code 1 from auth vs. exit code from no server).
     if command -v xdpyinfo &>/dev/null; then
         local out
         out=$(xdpyinfo -display "$DISPLAY" 2>&1) && return 0
-        # "unable to open display" means no server; auth errors still mean server is up
+        # "unable to open display" = no server; any other error = server up, auth issue
         echo "$out" | grep -qi "unable to open display" && return 1
     fi
     return 0
 }
 
-if [ -n "$DISPLAY" ]; then
-    if _x11_reachable; then
-        echo "X11 reachable on $DISPLAY (XAUTHORITY=$XAUTHORITY) — starting GUI"
-        exec python3 /app/main.py
-    fi
-
-    # Wait for X server to become available (e.g. autostart before desktop login)
-    echo "DISPLAY=$DISPLAY set but X11 not yet reachable — waiting up to 90 s..."
-    for i in $(seq 1 45); do
-        sleep 2
-        if _x11_reachable; then
-            echo "X11 reachable after $((i * 2)) s — starting GUI"
-            exec python3 /app/main.py
-        fi
-        echo "  still waiting ($((i * 2)) / 90 s)..."
-    done
-
-    echo "X11 unreachable after 90 s — falling back to headless"
+if [ -z "$DISPLAY" ]; then
+    echo "DISPLAY not set — headless mode"
+    exec python3 /app/usb_monitor.py
 fi
 
-exec python3 /app/usb_monitor.py
+# Start USB monitor in the background immediately so backups work even
+# before the desktop is ready.
+echo "Starting headless USB monitor in background (DISPLAY=$DISPLAY)..."
+python3 /app/usb_monitor.py &
+MONITOR_PID=$!
+
+# Poll for X11 indefinitely. When it appears, switch to full GUI.
+echo "Waiting for X11 on $DISPLAY..."
+while true; do
+    if _x11_reachable; then
+        echo "X11 reachable — stopping background monitor and launching GUI"
+        kill "$MONITOR_PID" 2>/dev/null
+        wait "$MONITOR_PID" 2>/dev/null
+        exec python3 /app/main.py
+    fi
+    sleep 5
+done
