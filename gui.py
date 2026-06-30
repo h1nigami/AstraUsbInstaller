@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS, cleanup_old_backup_videos, _format_size
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -84,6 +84,8 @@ class App:
         cfg = _load_config()
         self._lock_timeout = int(cfg.get("lock_timeout_minutes", 10)) * 60
         self._last_activity = time.time()
+        self._cleanup_enabled = bool(cfg.get("auto_cleanup_enabled", False))
+        self._cleanup_days = int(cfg.get("auto_cleanup_days", 30))
 
         self.mon_status = tk.StringVar(value="Мониторинг: запуск...")
 
@@ -104,6 +106,8 @@ class App:
         self._poll_queue()
         self._start_monitor()
         self._check_lock_timeout()
+        if self._cleanup_enabled:
+            threading.Thread(target=self._run_startup_cleanup, daemon=True).start()
 
     def _setup_styles(self):
         C = self.C
@@ -498,6 +502,31 @@ class App:
         ttk.Label(lock_frame, textvariable=self._timeout_status, foreground="gray").pack(anchor="w", pady=(4, 0))
         self._refresh_timeout_status()
 
+        cleanup_frame = ttk.LabelFrame(f, text="Автоочистка старых видео", padding=10)
+        cleanup_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        self._cleanup_enabled_var = tk.BooleanVar(value=self._cleanup_enabled)
+        ttk.Checkbutton(
+            cleanup_frame,
+            text="Включить автоочистку при запуске",
+            variable=self._cleanup_enabled_var,
+        ).pack(anchor="w")
+
+        days_row = ttk.Frame(cleanup_frame)
+        days_row.pack(anchor="w", pady=(6, 0))
+        ttk.Label(days_row, text="Удалять видео старше (дней):").pack(side="left")
+        self._cleanup_days_var = tk.StringVar(value=str(self._cleanup_days))
+        ttk.Entry(days_row, textvariable=self._cleanup_days_var, width=6).pack(side="left", padx=6)
+
+        btn_row = ttk.Frame(cleanup_frame)
+        btn_row.pack(anchor="w", pady=(8, 0))
+        ttk.Button(btn_row, text="Сохранить", command=self._save_cleanup_settings).pack(side="left")
+        ttk.Button(btn_row, text="Запустить очистку сейчас", command=self._run_cleanup_now).pack(side="left", padx=8)
+
+        self._cleanup_status_var = tk.StringVar(value="")
+        ttk.Label(cleanup_frame, textvariable=self._cleanup_status_var,
+                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(6, 0))
+
         about = ttk.LabelFrame(f, text="О программе", padding=16)
         about.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Label(about, text="BestCam USB Backup Manager").pack(anchor="w")
@@ -522,6 +551,56 @@ class App:
         cfg["lock_timeout_minutes"] = minutes
         _save_config(cfg)
         self._refresh_timeout_status()
+
+    def _save_cleanup_settings(self):
+        try:
+            days = int(self._cleanup_days_var.get().strip())
+            if days < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Ошибка", "Введите целое число дней (не менее 1)")
+            return
+        self._cleanup_enabled = self._cleanup_enabled_var.get()
+        self._cleanup_days = days
+        cfg = _load_config()
+        cfg["auto_cleanup_enabled"] = self._cleanup_enabled
+        cfg["auto_cleanup_days"] = days
+        _save_config(cfg)
+        self._cleanup_status_var.set("Настройки сохранены")
+
+    def _run_startup_cleanup(self):
+        deleted, freed = cleanup_old_backup_videos(older_than_days=self._cleanup_days)
+        if deleted:
+            msg = f"Автоочистка при запуске: удалено {deleted} видео, освобождено {_format_size(freed)}"
+        else:
+            msg = "Автоочистка при запуске: старых видео не найдено"
+        try:
+            self._cleanup_status_var.set(msg)
+        except Exception:
+            pass
+
+    def _run_cleanup_now(self):
+        try:
+            days = int(self._cleanup_days_var.get().strip())
+            if days < 1:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Ошибка", "Введите целое число дней (не менее 1)")
+            return
+        self._cleanup_status_var.set("Очистка...")
+
+        def _do():
+            deleted, freed = cleanup_old_backup_videos(older_than_days=days)
+            if deleted:
+                msg = f"Удалено {deleted} видео, освобождено {_format_size(freed)}"
+            else:
+                msg = "Старых видео не найдено"
+            try:
+                self._cleanup_status_var.set(msg)
+            except Exception:
+                pass
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _change_backup_dest(self):
         current = get_dest_base()

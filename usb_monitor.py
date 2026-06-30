@@ -7,7 +7,7 @@ import platform
 import sys
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 
 try:
     from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeRemainingColumn
@@ -57,6 +57,42 @@ def _delete_source_videos(src_root):
     if deleted:
         print(f"  Auto-deleted {deleted} video file(s) from {src_root}", flush=True)
     return deleted
+
+
+def cleanup_old_backup_videos(dest_base=None, older_than_days=30):
+    """Delete video files in dest_base that are older than older_than_days.
+
+    Returns (deleted_count, freed_bytes).
+    """
+    if dest_base is None:
+        dest_base = get_dest_base()
+    if not os.path.isdir(dest_base):
+        return 0, 0
+
+    cutoff = datetime.now() - timedelta(days=older_than_days)
+    cutoff_ts = cutoff.timestamp()
+
+    deleted = 0
+    freed = 0
+    for root, _dirs, files in os.walk(dest_base):
+        for name in files:
+            if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+                continue
+            fp = os.path.join(root, name)
+            try:
+                mtime = os.path.getmtime(fp)
+                if mtime < cutoff_ts:
+                    size = os.path.getsize(fp)
+                    os.remove(fp)
+                    deleted += 1
+                    freed += size
+            except OSError as e:
+                print(f"  Cleanup skipped {fp}: {e}", flush=True)
+
+    if deleted:
+        print(f"  Auto-cleanup: removed {deleted} video file(s), freed {_format_size(freed)} "
+              f"(older than {older_than_days} days)", flush=True)
+    return deleted, freed
 
 
 def _format_size(bytes_val):
