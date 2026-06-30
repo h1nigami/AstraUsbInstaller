@@ -39,7 +39,8 @@ Three layers:
 - `App` class owns the notebook (4 tabs: Загрузка, Поиск, Устройства, Настройки)
 - Runs `monitor_usb` in a daemon thread; polls `progress_queue` every 200ms via `root.after`
 - Tab access protection: tabs at indices 1–3 require password; `_prompt_unlock()` is modal, sized to 1/4 screen
-- Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run
+- Exit is password-protected: the header has a visible "⏻ Выход" button (only way out in fullscreen kiosk mode, since the window has no close button); it calls `_on_close()`, a modal password dialog that on success runs `stop_event.set()` + `root.destroy()`. Same dialog is bound to `WM_DELETE_WINDOW`.
+- Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run; change via Настройки tab (`_change_password`)
 - Nanosuit voice greeting runs in a daemon thread at startup via `_nanosuit_greeting()` → espeak-ng + Python DSP (numpy/scipy)
 
 **`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`
@@ -88,4 +89,4 @@ XTTS v2 (coqui-tts) is version-sensitive. The file pins a known-good CPU set: `t
 
 ## Development branch
 
-Active feature branch: `claude/voice-deps-fix-dockerfiles`. Base: `master`.
+Active feature branch: `claude/gui-autostart-password-exit-aggt9f`. Base: `master`.

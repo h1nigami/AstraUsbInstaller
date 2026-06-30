@@ -165,6 +165,11 @@ class App:
         tk.Label(box, text="USB Backup Manager", font=("Segoe UI", 12),
                  fg=C["fg_muted"], bg=C["bg_panel"]).pack(anchor="w")
 
+        # Кнопка выхода (защищена паролем). В полноэкранном режиме у окна нет
+        # системной кнопки закрытия, поэтому это единственный видимый способ выйти.
+        ttk.Button(hdr, text="⏻ Выход", style="Danger.TButton",
+                   command=self._on_close).pack(side="right", padx=16, pady=20)
+
         tk.Frame(self.root, bg=C["brand"], height=2).pack(fill="x")
 
     def _build_statusbar(self):
