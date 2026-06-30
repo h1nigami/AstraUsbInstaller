@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     espeak-ng-data \
     alsa-utils \
     x11-utils \
+    xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
