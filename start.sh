@@ -7,12 +7,19 @@
 export XAUTHORITY="${XAUTHORITY:-/root/.Xauthority}"
 
 _x11_reachable() {
+    # Check socket existence first — xdpyinfo can fail due to XAUTHORITY
+    # mismatch even when the server is running, causing false negatives.
+    local dispnum="${DISPLAY%%.*}"; dispnum="${dispnum#:}"
+    [ -S "/tmp/.X11-unix/X${dispnum}" ] || return 1
+    # If xdpyinfo is available, use it as a secondary auth check but don't
+    # fail on auth errors (exit code 1 from auth vs. exit code from no server).
     if command -v xdpyinfo &>/dev/null; then
-        xdpyinfo -display "$DISPLAY" &>/dev/null
-    else
-        local dispnum="${DISPLAY%%.*}"; dispnum="${dispnum#:}"
-        [ -S "/tmp/.X11-unix/X${dispnum}" ]
+        local out
+        out=$(xdpyinfo -display "$DISPLAY" 2>&1) && return 0
+        # "unable to open display" means no server; auth errors still mean server is up
+        echo "$out" | grep -qi "unable to open display" && return 1
     fi
+    return 0
 }
 
 if [ -n "$DISPLAY" ]; then
