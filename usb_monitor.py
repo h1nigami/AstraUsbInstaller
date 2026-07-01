@@ -262,9 +262,14 @@ def _get_device_id_by_serial(conn, serial):
 
 def _create_device(conn, serial, label, devname):
     now = datetime.now().isoformat()
+    # devices.serial is UNIQUE NOT NULL: a real serial is unusable to more
+    # than one device anyway, but when the hardware exposes none at all we
+    # must not insert the same "" for every such drive — that collides on
+    # the second one and crashes the backup worker with an IntegrityError.
+    serial = serial or f"NOSERIAL_{devname or 'usb'}_{now}"
     cur = conn.execute(
         "INSERT INTO devices (serial, label, first_seen, last_seen) VALUES (?, ?, ?, ?)",
-        (serial or "", label or devname or "USB", now, now),
+        (serial, label or devname or "USB", now, now),
     )
     conn.commit()
     did = cur.lastrowid
