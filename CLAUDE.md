@@ -18,75 +18,77 @@ docker compose logs -f
 # Syntax check
 python3 -m py_compile gui.py usb_monitor.py main.py
 
+# Tests (pure stdlib unittest, no GUI/X11 needed)
+python3 -m unittest discover -s tests -v
+
 # Windows launcher
 run_gui.bat
 ```
 
-No test suite exists. Syntax check with `py_compile` before committing Python changes.
+Run `py_compile` and the unittest suite before committing Python changes. The
+tests in `tests/` cover the GUI-free core logic in `usb_monitor.py` (formatting,
+the search date filter, lsblk parsing, scanning, and the copy/auto-delete
+safety guarantees) — extend them when you touch that logic.
 
 ## Architecture
 
 Three layers:
 
 **`usb_monitor.py`** — core engine (no GUI dependency)
-- `monitor_usb(interval, stop_event, progress_queue)` — main loop; detects USB attach/detach via polling `lsblk` (Linux) or `GetDriveTypeW` (Windows)
-- `copy_task()` → `_copy_files()` — incremental backup: skips files matching size+mtime, renames changed files with `_YYYYMMDD_HHMMSS` suffix
-- `_resolve_device_id()` — stable device identity: reads/writes `.astra_id` on the USB, falls back to serial number lookup in SQLite, then creates new record
-- SQLite DB at `data/devices.db`: tables `devices` (serial, label, person) and `backups` (per-session stats)
-- Progress emission: when `progress_queue` is provided, puts tuples `(device_id, display_id, state, current, total, msg, devname)` for GUI consumption; special sentinel device_ids `"_removed_"` and `"_status_"` signal device removal and status updates
+- `monitor_usb(interval, stop_event, progress_queue)` — main loop; detects USB attach/detach via polling `lsblk` (Linux) or `GetDriveTypeW` (Windows). Removal is debounced: a device must be missing for ≥1.5× the poll interval before it is confirmed gone.
+- `copy_task()` → `_copy_files()` — incremental backup: skips files matching size+mtime, renames changed files with `_YYYYMMDD_HHMMSS` suffix. `_copy_files` returns the set of source paths that are safely present at the destination (copied or already identical); only those are passed to `_delete_source_videos()`, so a video whose copy failed is never deleted from the source.
+- Each backup runs in its own `ThreadPoolExecutor` worker and opens its own SQLite connection via `_connect()` (sharing one connection across the pool is not safe for concurrent writes). `_init_db()` is called once at startup to create the schema / run migrations, then closed.
+- `_resolve_device_id()` — stable device identity: reads/writes `.astra_id` on the USB, falls back to serial number lookup in SQLite, then creates a new record. The `.astra_id` marker file is excluded from scans and copies.
+- `_parse_lsblk_tree()` — pure helper over parsed `lsblk -J` output (unit-tested); partitions of a USB disk are listed exactly once, a whole-disk filesystem yields the disk itself.
+- SQLite DB at `data/devices.db`: tables `devices` (serial, label, person) and `backups` (per-session stats). `started_at`/`finished_at` are stored via `datetime.isoformat()` (`T` separator).
+- `format_filter_dt()` — builds search range bounds with the same `T` separator as stored `started_at` so lexicographic SQL comparisons are correct (a space would sort before `T` and wrongly exclude same-day backups).
+- Progress emission: when `progress_queue` is provided, puts tuples `(device_id, display_id, state, current, total, msg, devname)` for GUI consumption; special sentinel device_ids `"_removed_"` and `"_status_"` signal device removal and status updates.
 
 **`gui.py`** — Tkinter fullscreen GUI
 - `App` class owns the notebook (4 tabs: Загрузка, Поиск, Устройства, Настройки)
 - Runs `monitor_usb` in a daemon thread; polls `progress_queue` every 200ms via `root.after`
-- Tab access protection: tabs at indices 1–3 require password; `_prompt_unlock()` is modal, sized to 1/4 screen
+- Tab access protection: tabs at indices 1–3 require a password; `_prompt_unlock()` is modal, sized to 1/4 screen. Unlocked tabs re-lock after `lock_timeout_minutes` of inactivity (`_check_lock_timeout`).
+- Search tab runs queries in a background thread (`_search_worker`, generation-guarded), walks the matched backup folders on disk, and can export the matched files (`_export_worker`). Results are capped at 500.
 - Exit is password-protected: the header has a visible "⏻ Выход" button (only way out in fullscreen kiosk mode, since the window has no close button); it calls `_on_close()`, a modal password dialog that on success runs `stop_event.set()` + `root.destroy()`. Same dialog is bound to `WM_DELETE_WINDOW`.
-- Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run; change via Настройки tab (`_change_password`)
-- Nanosuit voice greeting runs in a daemon thread at startup via `_nanosuit_greeting()` → espeak-ng + Python DSP (numpy/scipy)
+- Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run; change via Настройки tab (`_change_password`). The Настройки tab also configures the backup destination, lock timeout, and auto-cleanup of old videos.
 
-**`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`
-
-## DSP audio chain (`gui.py`)
-
-`_HAVE_DSP` guards all numpy/scipy usage — app works without them (falls back to plain espeak).
-
-**Source voice (in priority order):**
-
-1. **Exact copy via voice cloning — XTTS v2** (`_clone_synthesize_to_file`, `_play_clone_voice`). The only way to reproduce the EXACT localized nanosuit voice on arbitrary text: clone it from a real sample. The user drops a 6–15 s clip at `data/nanosuit_ref.wav` (override: `NANOSUIT_REF_WAV`); `TTS.api.TTS("tts_models/multilingual/multi-dataset/xtts_v2").tts_to_file(text=, speaker_wav=ref, language="ru", file_path=)` renders the line in that voice. The reference already carries the suit timbre, so **no nanosuit DSP is applied** to the clone. `coqui-tts` is imported lazily; `COQUI_TOS_AGREED=1` is set to accept the CPML license non-interactively. Model (~1.8 GB) downloads once. If `coqui-tts` or the reference clip are missing, falls through to Silero.
-2. **Silero neural TTS** (`_silero_synthesize`, speaker `eugene`, 48 kHz) — a real Russian male voice + the additive nanosuit FX, used when there is no reference clip. `torch` lazy/optional. Model (~60 MB) → `data/silero_v3_1_ru.pt` via `torch.hub.download_url_to_file`, loaded with `torch.package.PackageImporter(...).load_pickle("tts_models", "model")`.
-3. **espeak / SAPI + DSP** — final fallbacks (formant-synth robot; no DSP can humanize it).
-
-Greeting fallback order (both OS): `_play_clone_voice` → `_play_silero_fx` → `_play_with_python_fx` (espeak+DSP) → [Windows: `_sapi_to_wav_and_play`] → plain espeak/SAPI.
-
-Pipeline: source WAV/tensor → (`_wav_bytes_to_float()` for espeak) → `_nanosuit_fx()` → `_play_processed_wav()`
-
-**Nanosuit FX design principle:** the source voice stays fully intelligible; character is ADDED in parallel layers. Do NOT replace the voice with a synthetic carrier (vocoder / ring-mod / sawtooth) — that produces robotic noise, not the Crysis nanosuit sound. The game voice is the original voice + 5 additive components: grit/vocal-fry, breathy highs, bass body, presence, and a metallic "detuned-double" robotic echo.
-
-`_nanosuit_fx` order: normalize → `_grit` (parallel soft-clip) → `_detuned_double` (two LFO-modulated short delays = the metallic two-voices signature) → `_comb_fast` → `_shelf`/`_peak` EQ (bass, mud scoop, presence, air) → `_reverb` → normalize → pitch via framerate.
-
-Pitch shift is done by writing the WAV with a lower framerate (`write_sr = int(sr * 2**(_PITCH_CENTS/1200))`), not by resampling the audio array. DSP constants (`_PITCH_CENTS`, `_DBL_*`, `_GRIT_*`, `_COMB_*`, `_REVERB_AMOUNT`, `_BASS_*`, `_MUD_*`, `_PRESENCE_*`, `_AIR_*`) are module-level.
+**`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`.
 
 ## Key environment variables
 
 | Variable | Default | Effect |
 |---|---|---|
-| `USB_BACKUP_DEST` | `./USB_Backups` | Backup root; device folders are `Device{id}/` inside |
+| `USB_BACKUP_DEST` | `./USB_Backups` | Backup root; device folders are `Device{id}/` inside. `data/config.json`'s `backup_dest` overrides this (see `get_dest_base`). |
 | `USB_DB_PATH` | `./data/devices.db` | SQLite DB path |
 | `USB_MAX_WORKERS` | `10` | ThreadPoolExecutor size |
 | `USB_DEBUG` | `0` | Enable debug output |
-| `APP_EXIT_PASSWORD` | `exit` | Initial exit/unlock password |
+| `APP_EXIT_PASSWORD` | `exit` | Initial exit/unlock password (only used on first run, then persisted to `config.json`) |
 
 ## Docker
 
-Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. Audio via ALSA (`/dev/snd` device, `audio` group). GUI via X11 socket passthrough (`/tmp/.X11-unix`). `start.sh` auto-detects `$DISPLAY`; `.gitattributes` enforces LF endings to prevent CRLF corruption in the container.
+Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. GUI via X11
+socket passthrough (`/tmp/.X11-unix`). The image is lean: `requirements.txt`
+only pulls `rich`; system packages are `util-linux`/`udev`/`mount`/`ntfs-3g`/
+etc. for mounting USB filesystems, plus `python3-tk` and `x11-utils` for the GUI.
 
-The heavy voice stack (`requirements-voice.txt`: torch + coqui-tts, ~3 GB) is gated behind the `INSTALL_VOICE` build arg. The **Dockerfile default is `0`** (lean), but **`docker-compose.yml` defaults it to `1`** so `docker compose up` works with the neural/clone voice out of the box; opt out with `INSTALL_VOICE=0 docker compose build`. The Dockerfile also sets `COQUI_TOS_AGREED=1` (accept XTTS CPML license non-interactively) and `TTS_HOME=/app/data/tts`, and declares `/app/data` a volume, so the large voice models download once into the mounted `./data` and persist across container recreation. Exact-copy clone still needs a `data/nanosuit_ref.wav` reference clip; without it the greeting uses Silero.
+`start.sh` is the container entrypoint and handles the kiosk lifecycle:
+- If `DISPLAY` is empty → headless `usb_monitor.py`.
+- Otherwise it runs the USB monitor in the background and waits for X11 to
+  become reachable. Because the container starts before the desktop session,
+  it discovers the real session X11 cookie via `/proc/<pid>/{environ,cmdline,root}`
+  (works thanks to `pid:host` + privileged) and **honestly verifies** the
+  connection with `xdpyinfo` rather than trusting the error text.
+- When X11 is up it stops the background monitor and launches the GUI. If the
+  GUI exits with code 0 (the password-protected "Выход") it does **not**
+  relaunch — it drops to headless monitoring so the kiosk exit is meaningful.
+  A non-zero exit (e.g. the X session died) is treated as a crash and the GUI
+  relaunch loop continues.
 
-CI: two GitHub Actions workflows (`pr-docker-build.yml`, `main-docker-build.yml`) build via `docker/build-push-action` (the Dockerfile directly, not compose) with `type=gha` cache, so they use the Dockerfile's default `INSTALL_VOICE=0` and stay fast and small.
-
-## Voice dependency pins (`requirements-voice.txt`)
-
-XTTS v2 (coqui-tts) is version-sensitive. The file pins a known-good CPU set: `torch`/`torchaudio` from the pytorch CPU index (must match each other), `coqui-tts>=0.25`, and crucially `transformers>=4.57,<5` — transformers 5.x removed `isin_mps_friendly`, which coqui-tts imports, so transformers≥5 breaks XTTS with `cannot import name 'isin_mps_friendly'`. `torchaudio` is a hard runtime dep of coqui-tts. XTTS runs on CPU/CUDA only (no Apple MPS; the code falls back to CPU).
+`.gitattributes` enforces LF endings; `start.sh` is also stripped of CR at build
+time. CI: two GitHub Actions workflows (`pr-docker-build.yml`,
+`main-docker-build.yml`) build the image via `docker/build-push-action` with
+`type=gha` cache.
 
 ## Development branch
 
-Active feature branch: `claude/gui-autostart-password-exit-aggt9f`. Base: `master`.
+Active feature branch: `claude/project-review-bugs-k0neon`. Base: `master`.
