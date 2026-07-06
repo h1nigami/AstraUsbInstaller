@@ -2,6 +2,7 @@
 resolution + scan + copy + DB persistence wired together, and the thin
 platform-specific wrappers (copy_task_linux/_windows, _make_submit_fn)."""
 
+import json
 import os
 import sys
 import sqlite3
@@ -18,6 +19,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
     def _run(self, src, dest, progress_queue=None, label="MYUSB", serial="SERIAL123"):
         with mock.patch.object(um, "_get_drive_label_linux", return_value=label), \
              mock.patch.object(um, "_get_device_serial_linux", return_value=serial), \
+             mock.patch.object(um, "_CONFIG_PATH", os.path.join(dest, "no_config.json")), \
              mock.patch.object(um, "get_dest_base", return_value=dest):
             return um.copy_task(src, src, "sda1", None, None, progress_queue=progress_queue)
 
@@ -90,6 +92,52 @@ class CopyTaskEndToEndTest(unittest.TestCase):
         self.assertEqual(states[-1], "done")
         self.assertIn("copying", states)
 
+    def test_refuses_when_configured_dest_has_no_marker(self):
+        """Regression: destination disk unmounted -> its path is a plain shadow
+        directory without the marker. copy_task must fail loudly (error state),
+        write nothing there and never auto-delete the source videos."""
+        import queue
+        pq = queue.Queue()
+        with tempfile.TemporaryDirectory() as src, \
+             tempfile.TemporaryDirectory() as cfgdir, \
+             tempfile.TemporaryDirectory() as data_dir:
+            shadow_dest = os.path.join(cfgdir, "unmounted_disk")
+            os.makedirs(shadow_dest)  # exists, but no marker => not the real disk
+            cfg_path = os.path.join(cfgdir, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({"backup_dest": shadow_dest}, f)
+
+            video = os.path.join(src, "clip.mp4")
+            with open(video, "wb") as f:
+                f.write(b"x" * 10)
+
+            db_path = os.path.join(data_dir, "d.db")
+            with mock.patch.object(um, "DB_PATH", db_path), \
+                 mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.object(um, "_get_drive_label_linux", return_value="L"), \
+                 mock.patch.object(um, "_get_device_serial_linux", return_value="S"):
+                um._init_db().close()
+                device_id, copied_files, copied_bytes = um.copy_task(
+                    src, src, "sda1", None, None, progress_queue=pq)
+
+                conn = sqlite3.connect(db_path)
+                try:
+                    backup_row = conn.execute(
+                        "SELECT 1 FROM backups WHERE device_id=?", (device_id,)).fetchone()
+                finally:
+                    conn.close()
+
+            self.assertEqual((copied_files, copied_bytes), (0, 0))
+            self.assertTrue(os.path.exists(video), "source video must never be deleted")
+            self.assertEqual(os.listdir(shadow_dest), [],
+                             "nothing may be written into the shadow directory")
+            self.assertIsNone(backup_row, "a refused backup must not be recorded")
+
+            states = []
+            while not pq.empty():
+                states.append(pq.get_nowait()[2])
+            self.assertEqual(states, ["error"])
+
     def test_should_unmount_triggers_unmount(self):
         with tempfile.TemporaryDirectory() as src, \
              tempfile.TemporaryDirectory() as dest, \
@@ -98,6 +146,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
             with mock.patch.object(um, "DB_PATH", db_path), \
                  mock.patch.object(um, "_get_drive_label_linux", return_value="L"), \
                  mock.patch.object(um, "_get_device_serial_linux", return_value="S"), \
+                 mock.patch.object(um, "_CONFIG_PATH", os.path.join(dest, "no_config.json")), \
                  mock.patch.object(um, "get_dest_base", return_value=dest), \
                  mock.patch.object(um, "_unmount") as unmount_mock:
                 um._init_db().close()
@@ -131,6 +180,43 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
         self.assertEqual(result, (5, 6, 7))
         args, _kwargs = copy_mock.call_args
         self.assertFalse(args[5])  # should_unmount False: caller already owns the mount
+
+    def test_destination_drive_is_skipped_and_kept_mounted(self):
+        """Regression: the drive hosting the backup destination used to be
+        treated as a source — backed up and then unmounted, after which every
+        real backup silently went into a shadow directory on the root FS."""
+        import queue
+        pq = queue.Queue()
+        with tempfile.TemporaryDirectory() as mnt:
+            dest = os.path.join(mnt, "backups")
+            with mock.patch.object(um.os.path, "ismount", return_value=False), \
+                 mock.patch.object(um, "_mount_device", return_value=mnt), \
+                 mock.patch.object(um, "get_dest_base", return_value=dest), \
+                 mock.patch.object(um, "_CONFIG_PATH", os.path.join(mnt, "no_config.json")), \
+                 mock.patch.object(um, "_unmount") as unmount_mock, \
+                 mock.patch.object(um, "copy_task") as copy_mock:
+                result = um.copy_task_linux("sdb1", None, None, progress_queue=pq)
+        self.assertEqual(result, (0, 0, 0))
+        copy_mock.assert_not_called()
+        unmount_mock.assert_not_called()
+        status = pq.get_nowait()
+        self.assertEqual(status[0], "_status_")
+
+    def test_destination_drive_heals_marker_on_connect(self):
+        with tempfile.TemporaryDirectory() as mnt:
+            dest = os.path.join(mnt, "backups")
+            os.makedirs(dest)
+            cfg_path = os.path.join(mnt, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({"backup_dest": dest}, f)
+            with mock.patch.object(um.os.path, "ismount", return_value=False), \
+                 mock.patch.object(um, "_mount_device", return_value=mnt), \
+                 mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.object(um, "copy_task") as copy_mock:
+                um.copy_task_linux("sdb1", None, None)
+            copy_mock.assert_not_called()
+            self.assertTrue(os.path.isfile(os.path.join(dest, um.DEST_MARKER_FILE)),
+                            "reconnecting the dest drive must (re)stamp the marker")
 
 
 class CopyTaskWindowsWrapperTest(unittest.TestCase):

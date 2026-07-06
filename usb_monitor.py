@@ -31,15 +31,64 @@ VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
 
 def get_dest_base():
     """Return the active backup root: config.json > env var > default."""
-    try:
-        with open(_CONFIG_PATH) as f:
-            path = json.load(f).get("backup_dest", "")
-        if path:
-            return path
-    except Exception:
-        pass
+    path = _config_backup_dest()
+    if path:
+        return path
     return os.environ.get("USB_BACKUP_DEST",
                           os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
+
+
+def _config_backup_dest():
+    """Return the destination explicitly chosen in the GUI (config.json), or None."""
+    try:
+        with open(_CONFIG_PATH) as f:
+            return json.load(f).get("backup_dest", "") or None
+    except Exception:
+        return None
+
+
+DEST_MARKER_FILE = ".astra_dest"
+
+
+def ensure_dest_marker(dest_base):
+    """Stamp ``dest_base`` with the destination marker file. True on success.
+
+    The marker is written when the user picks the folder in the GUI, i.e.
+    while the disk it lives on is actually mounted. Later backups require it:
+    if the disk is gone, the same path is either missing or gets silently
+    recreated by ``makedirs`` as a plain directory on the root/overlay
+    filesystem — without the marker. Requiring the marker turns that silent
+    write into a visible error instead of filling a shadow directory the
+    user will never find on the real disk.
+    """
+    try:
+        marker = os.path.join(dest_base, DEST_MARKER_FILE)
+        if not os.path.isfile(marker):
+            with open(marker, "w") as f:
+                f.write("BestCam backup destination marker. Do not delete.\n")
+        return True
+    except OSError:
+        return False
+
+
+def dest_available():
+    """True when the active backup destination may be written to.
+
+    Env/default destinations keep the historical behaviour (created on
+    demand). A destination chosen in the GUI must exist AND carry the marker
+    written at selection time — see ensure_dest_marker().
+    """
+    cfg_dest = _config_backup_dest()
+    if not cfg_dest:
+        return True
+    return os.path.isfile(os.path.join(cfg_dest, DEST_MARKER_FILE))
+
+
+def _is_dest_path(mountpoint):
+    """True when the backup destination lives on (or is) this mountpoint."""
+    dest = os.path.realpath(get_dest_base())
+    mp = os.path.realpath(mountpoint)
+    return dest == mp or dest.startswith(mp + os.sep)
 
 
 def _delete_source_videos(src_root, allowed=None):
@@ -485,6 +534,10 @@ def _get_sys_block_partitions():
 
 def _mount_device(devname):
     mountpoint = os.path.join(MOUNT_BASE, devname.replace("/", "_"))
+    if os.path.ismount(mountpoint):
+        # Already mounted — e.g. the destination disk, which is deliberately
+        # kept mounted across backups (see copy_task_linux).
+        return mountpoint
     os.makedirs(mountpoint, exist_ok=True)
     try:
         subprocess.run(["mount", f"/dev/{devname}", mountpoint], check=True, capture_output=True, text=True)
@@ -516,6 +569,7 @@ def _unmount(mountpoint):
 def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     copied_files = 0
     copied_bytes = 0
+    failed = 0
     # Source paths that are now safely present at the destination — either just
     # copied or already identical. Only these may be auto-deleted from source.
     backed_up = set()
@@ -525,7 +579,15 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
         if rel_path == ".":
             rel_path = ""
         dest_dir = os.path.join(dest_root, rel_path) if rel_path else dest_root
-        os.makedirs(dest_dir, exist_ok=True)
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except OSError as e:
+            # Destination vanished mid-copy (e.g. the disk was pulled) —
+            # everything in this directory counts as failed, nothing here may
+            # be auto-deleted from the source.
+            failed += sum(1 for f in files if f != DEVICE_ID_FILE)
+            print(f"  Copy failed into {dest_dir}: {e}", flush=True)
+            continue
         for file_name in files:
             if file_name == DEVICE_ID_FILE:
                 continue
@@ -554,11 +616,12 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
                     if now - last_emit_t >= 1.0:
                         emit_fn("copying", copied_bytes, total_bytes, "")
                         last_emit_t = now
-            except Exception:
+            except Exception as e:
                 # Copy failed for this file — deliberately NOT added to
                 # backed_up, so it will be preserved on the source.
-                pass
-    return copied_files, copied_bytes, backed_up
+                failed += 1
+                print(f"  Copy failed {src_file}: {e}", flush=True)
+    return copied_files, copied_bytes, backed_up, failed
 
 
 def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, progress_queue=None):
@@ -579,8 +642,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         started_at = datetime.now()
 
         ts = started_at.strftime("%Y%m%d_%H%M%S")
-        dest = os.path.join(get_dest_base(), display_id)
-        os.makedirs(dest, exist_ok=True)
+        dest_base = get_dest_base()
 
         def _emit(state, current=0, total=0, msg=""):
             if progress_queue is not None:
@@ -588,6 +650,24 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                     progress_queue.put_nowait((device_id, display_id, state, current, total, msg, devname))
                 except Exception:
                     pass
+
+        if not dest_available():
+            # The configured destination is not reachable (its disk is not
+            # mounted). Creating the path anyway would silently back up into a
+            # shadow directory on the root filesystem, so refuse loudly and,
+            # critically, never reach the source auto-delete below.
+            msg = f"Диск назначения недоступен: {dest_base}"
+            _emit("error", 0, 0, msg)
+            if USE_RICH and progress_obj:
+                progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
+            else:
+                print(f"[{started_at.strftime('%H:%M:%S')}] {msg} — {display_id} не скопирован", flush=True)
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
+
+        dest = os.path.join(dest_base, display_id)
+        os.makedirs(dest, exist_ok=True)
 
         _emit("scanning", 0, 0, f"Scanning {display_id}...")
 
@@ -617,7 +697,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {display_id}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
-        copied_files, copied_bytes, backed_up = _copy_files(
+        copied_files, copied_bytes, backed_up, failed = _copy_files(
             mountpoint, dest, ts, device_id, total_files, total_bytes,
             progress_obj, task_id, start_time, emit_fn=_emit)
 
@@ -628,11 +708,16 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             _unmount(mountpoint)
 
         finished_at = datetime.now()
-        _emit("done", copied_bytes, total_bytes, f"Done: {display_id}")
+        if failed:
+            msg = f"Ошибки: {display_id} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
+            _emit("error", copied_bytes, total_bytes, msg)
+        else:
+            msg = f"Done: {display_id} ({copied_files} files, {_format_size(copied_bytes)})"
+            _emit("done", copied_bytes, total_bytes, f"Done: {display_id}")
 
-        msg = f"Done: {display_id} ({copied_files} files, {_format_size(copied_bytes)})"
         if USE_RICH and progress_obj:
-            progress_obj.update(task_id, description=f"[green]{msg}")
+            color = "red" if failed else "green"
+            progress_obj.update(task_id, description=f"[{color}]{msg}")
         else:
             print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
 
@@ -668,6 +753,23 @@ def copy_task_linux(device_path, progress_obj, task_id, progress_queue=None):
             return 0, 0, 0
         mountpoint = mp
         should_unmount = True
+    if _is_dest_path(mountpoint):
+        # This drive hosts the backup destination — it is not a source to back
+        # up, and it must STAY mounted: unmounting it here (and rmdir'ing the
+        # mountpoint) is what used to make later backups silently recreate the
+        # path as a plain directory on the root filesystem, so the interface
+        # reported success while the real disk stayed empty.
+        cfg_dest = _config_backup_dest()
+        if cfg_dest and os.path.isdir(cfg_dest):
+            ensure_dest_marker(cfg_dest)
+        print(f"  Destination drive connected, keeping mounted: {mountpoint}", flush=True)
+        if progress_queue is not None:
+            try:
+                progress_queue.put_nowait(("_status_", "", "info", 0, 0,
+                                           f"Диск назначения подключён: {os.path.basename(mountpoint)}", ""))
+            except Exception:
+                pass
+        return 0, 0, 0
     devname = os.path.basename(mountpoint)
     return copy_task(device_path, mountpoint, devname, progress_obj, task_id, should_unmount, progress_queue)
 
@@ -689,6 +791,17 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     is_linux = system != "Windows"
 
     _init_db().close()  # ensure schema + migrations; workers open their own conn
+
+    cfg_dest = _config_backup_dest()
+    if cfg_dest:
+        if os.path.isdir(cfg_dest):
+            # Configs saved before the marker existed get stamped here, while
+            # the destination is actually reachable.
+            ensure_dest_marker(cfg_dest)
+        else:
+            print(f"WARNING: backup destination is not available yet: {cfg_dest} "
+                  f"(backups will fail until its disk is mounted)", flush=True)
+
     print(f"USB Monitor | Platform: {system} | Workers: {MAX_WORKERS} | DB: {DB_PATH}", flush=True)
     print("Waiting for USB devices... (Ctrl+C to stop)", flush=True)
 

@@ -16,6 +16,11 @@ services:
       - ${XAUTHORITY:-$HOME/.Xauthority}:/root/.Xauthority:ro
       - ./USB_Backups:/app/USB_Backups
       - ./data:/app/data
+      # Диски, смонтированные на хосте (в т.ч. после старта контейнера),
+      # видны внутри и их можно выбирать как папку назначения. Без rslave
+      # контейнер видел бы только пустой каталог точки монтирования, и копии
+      # молча уходили бы в overlay контейнера, а не на диск.
+      - /media:/media:rslave
     environment:
       - PYTHONUNBUFFERED=1
       - PYTHONIOENCODING=utf-8
