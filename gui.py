@@ -860,15 +860,54 @@ class App:
             self._export_btn.configure(state="disabled", text="Выгрузить (0)")
 
     def _open_externally(self, path):
-        try:
-            if platform.system() == "Windows":
-                os.startfile(path)
-            elif platform.system() == "Darwin":
-                subprocess.Popen(["open", path])
-            else:
-                subprocess.Popen(["xdg-open", path])
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+        system = platform.system()
+        if system in ("Windows", "Darwin"):
+            try:
+                if system == "Windows":
+                    os.startfile(path)
+                else:
+                    subprocess.Popen(["open", path])
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{e}")
+            return
+
+        # Linux/kiosk: xdg-open often has no MIME handler inside the container
+        # and exits non-zero without any visible feedback, so try real players
+        # first and verify the launched process didn't die immediately.
+        ext = os.path.splitext(path)[1].lower()
+        if ext in VIDEO_EXTS:
+            candidates = [
+                ["mpv", "--keep-open=yes"],
+                ["ffplay", "-autoexit"],
+                ["vlc"],
+                ["totem"],
+                ["xdg-open"],
+            ]
+        else:
+            candidates = [["xdg-open"], ["eog"], ["feh"]]
+        for cmd in candidates:
+            exe = shutil.which(cmd[0])
+            if not exe:
+                continue
+            try:
+                proc = subprocess.Popen(
+                    [exe, *cmd[1:], path],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                continue
+            try:
+                rc = proc.wait(timeout=1.0)
+            except subprocess.TimeoutExpired:
+                return  # still running after a second — assume it opened
+            if rc == 0:
+                return
+        messagebox.showerror(
+            "Ошибка",
+            "Не найдено приложение, способное открыть файл:\n"
+            f"{path}\n\n"
+            "Установите видеоплеер (mpv/vlc) или настройте xdg-open.",
+        )
 
     def _on_search_dblclick(self, _event):
         sel = self.search_tree.selection()
@@ -892,28 +931,34 @@ class App:
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         w, h = int(sw * 0.8), int(sh * 0.8)
         win.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+        # In kiosk mode the WM may not draw window decorations, so the viewer
+        # needs its own way to close.
+        win.bind("<Escape>", lambda _e: win.destroy())
 
+        photo = None
         if _HAVE_PIL:
             try:
                 img = Image.open(path)
-                img.thumbnail((w - 20, h - 60))
+                img.thumbnail((w - 20, h - 90))
                 photo = _ImageTk.PhotoImage(img)
-                lbl = tk.Label(win, image=photo, bg=self.C["bg_app"])
-                lbl.image = photo
-                lbl.pack(expand=True)
-                tk.Label(win, text=path, fg=self.C["fg_muted"], bg=self.C["bg_app"],
-                         font=("Segoe UI", 9)).pack(pady=4)
-                return
             except Exception:
-                pass
-        try:
-            photo = tk.PhotoImage(file=path)
-            lbl = tk.Label(win, image=photo, bg=self.C["bg_app"])
-            lbl.image = photo
-            lbl.pack(expand=True)
-        except Exception:
-            win.destroy()
-            self._open_externally(path)
+                photo = None
+        if photo is None:
+            try:
+                photo = tk.PhotoImage(file=path)
+            except Exception:
+                win.destroy()
+                self._open_externally(path)
+                return
+
+        lbl = tk.Label(win, image=photo, bg=self.C["bg_app"])
+        lbl.image = photo
+        lbl.pack(expand=True)
+        bottom = tk.Frame(win, bg=self.C["bg_app"])
+        bottom.pack(fill="x", pady=4)
+        tk.Label(bottom, text=path, fg=self.C["fg_muted"], bg=self.C["bg_app"],
+                 font=("Segoe UI", 9)).pack(side="left", padx=8)
+        ttk.Button(bottom, text="Закрыть", command=win.destroy).pack(side="right", padx=8)
 
     def _export_found_files(self):
         if not self._search_results:

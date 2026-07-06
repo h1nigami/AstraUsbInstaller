@@ -50,9 +50,15 @@ $SUDO apt-get install -y python3 python3-tk util-linux mount udev \
 
 # Необязательные пакеты. x11-utils даёт xdpyinfo — им честно проверяется
 # доступность X-сервера (без него запуск GUI будет пробоваться вслепую).
-# Остальное — поддержка NTFS/exFAT-флешек и pip для rich. Имена различаются
-# между версиями Astra, поэтому ставим по одному и не падаем, если пакета нет.
-for pkg in x11-utils ntfs-3g exfat-fuse exfatprogs exfat-utils python3-pip python3-rich; do
+# python3-pil + python3-pil.imagetk дают превью фото (JPEG и т.п.) во вкладке
+# «Поиск» — без них tkinter умеет только GIF/PNG и окно просмотра остаётся
+# пустым. mpv/vlc/eog — плеер и просмотрщик для открытия видео/фото по
+# двойному клику (xdg-open в киоске часто без обработчика и молча ничего не
+# открывает). Остальное — поддержка NTFS/exFAT-флешек и pip для rich. Имена
+# различаются между версиями Astra, поэтому ставим по одному и не падаем,
+# если пакета нет.
+for pkg in x11-utils ntfs-3g exfat-fuse exfatprogs exfat-utils python3-pip \
+           python3-rich python3-pil python3-pil.imagetk mpv vlc eog; do
     if $SUDO apt-get install -y "$pkg" 2>/dev/null; then
         echo "  установлен: $pkg"
     else
@@ -66,6 +72,17 @@ if ! python3 -c "import rich" 2>/dev/null; then
         $SUDO pip3 install rich 2>/dev/null \
             || $SUDO pip3 install --break-system-packages rich 2>/dev/null \
             || echo "  rich не установился — не страшно, приложение работает без него"
+    fi
+fi
+
+# Pillow — превью фото во вкладке «Поиск». Если apt-пакета нет (имя зависит от
+# версии Astra), пробуем через pip. GUI и без него работает — просто вместо
+# превью откроется внешний просмотрщик.
+if ! python3 -c "import PIL.ImageTk" 2>/dev/null; then
+    if command -v pip3 >/dev/null 2>&1; then
+        $SUDO pip3 install Pillow 2>/dev/null \
+            || $SUDO pip3 install --break-system-packages Pillow 2>/dev/null \
+            || echo "  Pillow не установился — превью фото будет открываться внешним просмотрщиком"
     fi
 fi
 
