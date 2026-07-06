@@ -128,9 +128,10 @@ class CopyAndDeleteTest(unittest.TestCase):
                 f.write(b"data")
             with open(os.path.join(src, um.DEVICE_ID_FILE), "w") as f:
                 f.write("1\n")
-            copied_files, copied_bytes, backed_up = self._copy(src, dst)
+            copied_files, copied_bytes, backed_up, failed = self._copy(src, dst)
             self.assertEqual(copied_files, 1)
             self.assertEqual(copied_bytes, 4)
+            self.assertEqual(failed, 0)
             self.assertIn(f1, backed_up)
             self.assertTrue(os.path.exists(os.path.join(dst, "video.mp4")))
 
@@ -142,7 +143,7 @@ class CopyAndDeleteTest(unittest.TestCase):
             # First pass copies it.
             self._copy(src, dst)
             # Second pass: identical (size+mtime) -> skipped but still "backed up".
-            copied_files, _bytes, backed_up = self._copy(src, dst)
+            copied_files, _bytes, backed_up, _failed = self._copy(src, dst)
             self.assertEqual(copied_files, 0)
             self.assertIn(f1, backed_up)
 
@@ -180,10 +181,11 @@ class CopyAndDeleteTest(unittest.TestCase):
                 return real_copy2(s, d, *a, **kw)
 
             with mock.patch.object(um.shutil, "copy2", side_effect=flaky_copy2):
-                _cf, _cb, backed_up = self._copy(src, dst)
+                _cf, _cb, backed_up, failed = self._copy(src, dst)
 
             um._delete_source_videos(src, backed_up)
             # good was copied -> eligible for deletion; bad failed -> preserved.
+            self.assertEqual(failed, 1, "the failed copy must be counted, not swallowed")
             self.assertNotIn(bad, backed_up)
             self.assertTrue(os.path.exists(bad), "failed-copy video must survive")
             self.assertFalse(os.path.exists(good), "successfully backed-up video is deleted")

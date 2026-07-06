@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -620,6 +620,15 @@ class App:
         )
         if not new_path:
             return
+        # Пробная запись + файл-маркер. Маркер пишется на реально подключённый
+        # диск; если позже диск окажется не смонтирован, копирование остановится
+        # с ошибкой вместо тихой записи в пустую папку на системном диске.
+        if not ensure_dest_marker(new_path):
+            messagebox.showerror(
+                "Ошибка",
+                f"Папка недоступна для записи:\n{new_path}\n\n"
+                f"Убедитесь, что диск подключён и смонтирован.")
+            return
         cfg = _load_config()
         cfg["backup_dest"] = new_path
         _save_config(cfg)
@@ -1101,7 +1110,7 @@ class App:
 
                 self.workers_data[device_id] = {
                     "device": display_id,
-                    "state": {"scanning": "Сканирование", "copying": "Копирование", "done": "Готово"}.get(state, state),
+                    "state": {"scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",
                     "size": self._fmt_size(total),
@@ -1144,6 +1153,10 @@ class App:
                 bg = self.C["accent_ok"]
                 preview_text = data["device"]
                 status_text = data.get("message", "Готово")
+            elif state == "Ошибка":
+                bg = "#dc2626"
+                preview_text = data["device"]
+                status_text = data.get("message", "Ошибка")
             else:
                 bg = self.C["bg_surface"]
                 preview_text = data["device"]

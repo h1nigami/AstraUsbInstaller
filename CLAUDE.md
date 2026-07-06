@@ -36,7 +36,8 @@ Three layers:
 
 **`usb_monitor.py`** — core engine (no GUI dependency)
 - `monitor_usb(interval, stop_event, progress_queue)` — main loop; detects USB attach/detach via polling `lsblk` (Linux) or `GetDriveTypeW` (Windows). Removal is debounced: a device must be missing for ≥1.5× the poll interval before it is confirmed gone.
-- `copy_task()` → `_copy_files()` — incremental backup: skips files matching size+mtime, renames changed files with `_YYYYMMDD_HHMMSS` suffix. `_copy_files` returns the set of source paths that are safely present at the destination (copied or already identical); only those are passed to `_delete_source_videos()`, so a video whose copy failed is never deleted from the source.
+- `copy_task()` → `_copy_files()` — incremental backup: skips files matching size+mtime, renames changed files with `_YYYYMMDD_HHMMSS` suffix. `_copy_files` returns the set of source paths that are safely present at the destination (copied or already identical) plus a failed-copy count; only backed-up paths are passed to `_delete_source_videos()`, so a video whose copy failed is never deleted from the source. Failures surface as an `error` progress state (red in the GUI) instead of a false "Done".
+- Destination availability: a GUI-selected `backup_dest` is stamped with a `.astra_dest` marker (`ensure_dest_marker`) at selection time, and `copy_task` refuses to write (state `error`) while the marker is absent (`dest_available()`) — a missing marker means the destination disk is not mounted at that path, and `makedirs` would otherwise silently back up into a shadow directory on the root/overlay FS. The drive hosting the destination (`_is_dest_path`) is never treated as a backup source and is kept mounted (`copy_task_linux` skips it, `_mount_device` tolerates an existing mount); reconnecting it re-stamps the marker.
 - Each backup runs in its own `ThreadPoolExecutor` worker and opens its own SQLite connection via `_connect()` (sharing one connection across the pool is not safe for concurrent writes). `_init_db()` is called once at startup to create the schema / run migrations, then closed.
 - `_resolve_device_id()` — stable device identity: reads/writes `.astra_id` on the USB, falls back to serial number lookup in SQLite, then creates a new record. The `.astra_id` marker file is excluded from scans and copies.
 - `_parse_lsblk_tree()` — pure helper over parsed `lsblk -J` output (unit-tested); partitions of a USB disk are listed exactly once, a whole-disk filesystem yields the disk itself.
@@ -67,7 +68,10 @@ Three layers:
 ## Docker
 
 Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. GUI via X11
-socket passthrough (`/tmp/.X11-unix`). The image is lean: `requirements.txt`
+socket passthrough (`/tmp/.X11-unix`). `/media` is bind-mounted with `rslave`
+propagation so disks mounted on the host (including after container start) are
+visible inside the container and can be picked as the backup destination.
+The image is lean: `requirements.txt`
 only pulls `rich`; system packages are `util-linux`/`udev`/`mount`/`ntfs-3g`/
 etc. for mounting USB filesystems, plus `python3-tk` and `x11-utils` for the GUI.
 

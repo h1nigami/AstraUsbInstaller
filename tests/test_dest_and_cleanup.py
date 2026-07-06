@@ -51,6 +51,74 @@ class GetDestBaseTest(unittest.TestCase):
                 self.assertEqual(um.get_dest_base(), "/env/dest3")
 
 
+class DestMarkerTest(unittest.TestCase):
+    """The marker file distinguishes the really selected destination from a
+    same-named shadow directory recreated on the root filesystem after the
+    destination disk was unmounted (the "interface says OK, disk is empty"
+    bug)."""
+
+    def test_ensure_dest_marker_creates_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertTrue(um.ensure_dest_marker(d))
+            self.assertTrue(os.path.isfile(os.path.join(d, um.DEST_MARKER_FILE)))
+
+    def test_ensure_dest_marker_fails_on_unwritable_path(self):
+        self.assertFalse(um.ensure_dest_marker("/no/such/dir"))
+
+    def test_dest_available_without_configured_dest(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = os.path.join(d, "missing.json")
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path):
+                self.assertTrue(um.dest_available(), "env/default dest keeps legacy behaviour")
+
+    def _with_config(self, d, dest):
+        cfg_path = os.path.join(d, "config.json")
+        with open(cfg_path, "w") as f:
+            json.dump({"backup_dest": dest}, f)
+        return mock.patch.object(um, "_CONFIG_PATH", cfg_path)
+
+    def test_dest_available_with_marker(self):
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "disk")
+            os.makedirs(dest)
+            um.ensure_dest_marker(dest)
+            with self._with_config(d, dest):
+                self.assertTrue(um.dest_available())
+
+    def test_dest_unavailable_when_dir_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self._with_config(d, os.path.join(d, "gone")):
+                self.assertFalse(um.dest_available())
+
+    def test_dest_unavailable_when_marker_missing(self):
+        # Directory exists but has no marker: this is exactly the shadow
+        # directory makedirs used to recreate after the disk was unmounted.
+        with tempfile.TemporaryDirectory() as d:
+            shadow = os.path.join(d, "disk")
+            os.makedirs(shadow)
+            with self._with_config(d, shadow):
+                self.assertFalse(um.dest_available())
+
+
+class IsDestPathTest(unittest.TestCase):
+    def test_exact_mountpoint_match(self):
+        with mock.patch.object(um, "get_dest_base", return_value="/mnt/usb_backup/sdb1"):
+            self.assertTrue(um._is_dest_path("/mnt/usb_backup/sdb1"))
+
+    def test_dest_inside_mountpoint(self):
+        with mock.patch.object(um, "get_dest_base", return_value="/mnt/usb_backup/sdb1/backups"):
+            self.assertTrue(um._is_dest_path("/mnt/usb_backup/sdb1"))
+
+    def test_sibling_name_prefix_is_not_a_match(self):
+        # sdb11 must not be treated as hosting a dest at sdb1.
+        with mock.patch.object(um, "get_dest_base", return_value="/mnt/usb_backup/sdb11"):
+            self.assertFalse(um._is_dest_path("/mnt/usb_backup/sdb1"))
+
+    def test_unrelated_path(self):
+        with mock.patch.object(um, "get_dest_base", return_value="/app/USB_Backups"):
+            self.assertFalse(um._is_dest_path("/mnt/usb_backup/sdb1"))
+
+
 class CleanupOldVideosTest(unittest.TestCase):
     def _touch(self, path, days_old, size=10):
         with open(path, "wb") as f:
