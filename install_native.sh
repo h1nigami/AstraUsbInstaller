@@ -109,8 +109,15 @@ $SUDO mkdir -p "$APP_DIR"
 $SUDO cp "$SRC_DIR/main.py" "$SRC_DIR/gui.py" "$SRC_DIR/usb_monitor.py" \
          "$SRC_DIR/start_native.sh" "$APP_DIR/"
 $SUDO chmod 755 "$APP_DIR/start_native.sh"
-# data/ (база и конфиг) при переустановке не трогаем.
+# data/ (база и конфиг) при переустановке не трогаем, но логотип — часть
+# приложения, его кладём/обновляем всегда (GUI ищет data/LOGO-1.png рядом
+# с gui.py).
 $SUDO mkdir -p "$APP_DIR/data" "$APP_DIR/USB_Backups"
+if [ -f "$SRC_DIR/data/LOGO-1.png" ]; then
+    $SUDO cp "$SRC_DIR/data/LOGO-1.png" "$APP_DIR/data/LOGO-1.png"
+else
+    echo "ВНИМАНИЕ: $SRC_DIR/data/LOGO-1.png не найден — GUI покажет заглушку вместо логотипа"
+fi
 
 # --- 4. Systemd-сервис --------------------------------------------------------
 echo "--- Настройка systemd-сервиса..."
