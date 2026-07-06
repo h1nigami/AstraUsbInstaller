@@ -4,12 +4,11 @@
 # Что делает скрипт:
 #   1. Ставит все зависимости через apt (python3, tkinter, утилиты монтирования).
 #   2. Копирует приложение в /opt/astra-usb-monitor.
-#   3. Ставит один systemd-сервис (start_native.sh), который сам:
-#        - сразу запускает headless-мониторинг USB (бэкапы идут ещё до входа
-#          пользователя в сессию);
-#        - ждёт X-сервер, находит cookie сессии через /proc и поднимает GUI,
-#          как только графическая сессия готова;
-#        - после парольного «Выхода» из GUI возвращается в headless-режим.
+#   3. Ставит один systemd-сервис (start_native.sh), который ждёт X-сервер,
+#      находит cookie сессии через /proc и поднимает GUI, как только
+#      графическая сессия готова. Мониторинг USB работает внутри GUI
+#      (gui.py сам запускает monitor_usb фоновым потоком). Парольный
+#      «Выход» из GUI останавливает сервис до следующей перезагрузки.
 #      Автозапуск рабочего стола (fly/.config/autostart) НЕ используется —
 #      он в Astra срабатывает не во всех конфигурациях; systemd надёжнее,
 #      и все логи видны через journalctl.
@@ -40,10 +39,14 @@ echo "=== Установка USB Backup Manager (без Docker) ==="
 echo ""
 echo "--- Установка системных пакетов..."
 export DEBIAN_FRONTEND=noninteractive
-$SUDO apt-get update
+# На киоске без интернета/репозиториев apt может не работать — это не повод
+# прерывать установку: ниже мы проверяем фактическое наличие python3/tkinter,
+# и падаем только если их реально нет.
+$SUDO apt-get update || echo "ВНИМАНИЕ: apt-get update не сработал (нет сети/репозиториев?), пробуем продолжить"
 
 # Критичные пакеты — без них приложение не работает.
-$SUDO apt-get install -y python3 python3-tk util-linux mount udev
+$SUDO apt-get install -y python3 python3-tk util-linux mount udev \
+    || echo "ВНИМАНИЕ: apt не смог поставить пакеты, проверяем что уже есть в системе"
 
 # Необязательные пакеты. x11-utils даёт xdpyinfo — им честно проверяется
 # доступность X-сервера (без него запуск GUI будет пробоваться вслепую).
@@ -66,9 +69,18 @@ if ! python3 -c "import rich" 2>/dev/null; then
     fi
 fi
 
-# Проверяем, что tkinter реально импортируется.
+# Проверяем, что всё критичное реально есть в системе (независимо от того,
+# поставил его apt сейчас или оно уже было).
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "ОШИБКА: нет python3 и apt не смог его установить."
+    exit 1
+fi
 if ! python3 -c "import tkinter" 2>/dev/null; then
-    echo "ОШИБКА: python3-tk не установился, GUI работать не будет."
+    echo "ОШИБКА: нет python3-tk (tkinter), GUI работать не будет."
+    exit 1
+fi
+if ! command -v lsblk >/dev/null 2>&1; then
+    echo "ОШИБКА: нет lsblk (пакет util-linux) — без него флешки не обнаруживаются."
     exit 1
 fi
 
@@ -104,18 +116,18 @@ $SUDO mkdir -p "$APP_DIR/data" "$APP_DIR/USB_Backups"
 echo "--- Настройка systemd-сервиса..."
 $SUDO tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null << EOF
 [Unit]
-Description=Astra USB Monitor (headless + GUI при появлении X-сессии)
+Description=Astra USB Monitor (GUI, мониторинг USB работает внутри GUI)
 After=multi-user.target
 
 [Service]
 Type=simple
 WorkingDirectory=$APP_DIR
 ExecStart=$APP_DIR/start_native.sh
-Restart=always
+# on-failure: парольный «Выход» из GUI завершает сервис с кодом 0, и systemd
+# НЕ перезапускает его — иначе kiosk-выход был бы бессмысленным.
+Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
-# Раскомментируйте, чтобы принудительно работать без GUI:
-#Environment=APP_FORCE_HEADLESS=1
 
 [Install]
 WantedBy=multi-user.target
@@ -124,10 +136,22 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE_NAME.service"
 $SUDO systemctl restart "$SERVICE_NAME.service"
 
+# Не рапортуем «Готово», не убедившись, что сервис действительно жив.
+sleep 3
+if ! $SUDO systemctl is-active --quiet "$SERVICE_NAME.service"; then
+    echo ""
+    echo "ОШИБКА: сервис не запустился. Последние строки лога:"
+    $SUDO journalctl -u "$SERVICE_NAME" -n 20 --no-pager 2>/dev/null || true
+    echo ""
+    echo "Соберите полную диагностику: sudo bash $SRC_DIR/diagnose.sh"
+    exit 1
+fi
+
 echo ""
 echo "=== Готово ==="
-echo "Сервис запущен. Headless-мониторинг уже работает; GUI появится сам,"
-echo "как только будет доступна графическая сессия (и после перезагрузки тоже)."
+echo "Сервис запущен. GUI появится сам, как только будет доступна графическая"
+echo "сессия — т.е. после входа пользователя в систему (и после перезагрузки"
+echo "тоже). Мониторинг USB работает внутри GUI."
 echo ""
 echo "Статус:  systemctl status $SERVICE_NAME"
 echo "Логи:    journalctl -u $SERVICE_NAME -f"
