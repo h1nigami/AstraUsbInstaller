@@ -18,6 +18,12 @@ except ImportError:
 DEST_BASE = os.environ.get("USB_BACKUP_DEST", os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
 DB_PATH = os.environ.get("USB_DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "devices.db"))
 MOUNT_BASE = "/mnt/usb_backup"
+# How long to wait for the desktop auto-mounter to claim a freshly attached
+# device before we mount it ourselves. Reusing the system's own mount avoids a
+# second concurrent read-write mount of a FAT/exFAT stick, which corrupts it
+# (see _find_existing_mount). Headless/Docker has no auto-mounter, so this is a
+# one-time bounded delay per device before self-mounting.
+MOUNT_GRACE_SECONDS = float(os.environ.get("USB_MOUNT_GRACE", "4"))
 MAX_WORKERS = int(os.environ.get("USB_MAX_WORKERS", "10"))
 DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
 IS_TTY = sys.stdout.isatty()
@@ -538,6 +544,76 @@ def _get_sys_block_partitions():
     return result
 
 
+def _unescape_mount_field(field):
+    """Decode the octal escapes (\\040 space, \\011 tab, \\012 nl, \\134 \\)
+    that /proc/mounts uses in the device/mountpoint fields."""
+    return (field.replace("\\040", " ").replace("\\011", "\t")
+                 .replace("\\012", "\n").replace("\\134", "\\"))
+
+
+def _find_existing_mount(devname):
+    """Return an existing mountpoint of ``/dev/<devname>`` if the device is
+    already mounted anywhere (e.g. by the desktop auto-mounter under
+    ``/run/user/<uid>/media/...``), else ``None``.
+
+    Mounting a vfat/exFAT stick a *second* time read-write while the desktop
+    still holds its own mount lets two uncoordinated FAT caches flush over each
+    other and corrupt the filesystem — after which the stick reports 0 B and
+    refuses to mount. Preferring the system's existing mount avoids that.
+
+    Reads ``/proc/mounts`` directly (no external tool) so it works headless and
+    is cheap to poll.
+    """
+    dev = f"/dev/{devname}"
+    try:
+        realdev = os.path.realpath(dev)
+    except Exception:
+        realdev = dev
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) < 2:
+                    continue
+                src = _unescape_mount_field(fields[0])
+                if src == dev or os.path.realpath(src) == realdev:
+                    return _unescape_mount_field(fields[1])
+    except Exception:
+        pass
+    return None
+
+
+def _wait_for_system_mount(devname, timeout):
+    """Poll _find_existing_mount for up to ``timeout`` seconds, returning the
+    mountpoint as soon as the system mounts the device, else ``None``.
+
+    Gives the desktop auto-mounter a short grace period to claim a just-attached
+    device so we reuse its mount instead of racing to create a conflicting
+    second one. Returns early the moment a mount appears (desktop case is
+    typically well under a second); on headless/Docker it times out and the
+    caller self-mounts.
+    """
+    deadline = time.time() + max(0.0, timeout)
+    while True:
+        mp = _find_existing_mount(devname)
+        if mp and os.path.ismount(mp):
+            return mp
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def _is_own_mount(mountpoint):
+    """True when ``mountpoint`` lives under MOUNT_BASE — i.e. one we created and
+    may safely unmount. The desktop auto-mounter's own mounts must never be torn
+    down by us."""
+    if not mountpoint:
+        return False
+    base = os.path.realpath(MOUNT_BASE)
+    mp = os.path.realpath(mountpoint)
+    return mp == base or mp.startswith(base + os.sep)
+
+
 def _mount_device(devname):
     mountpoint = os.path.join(MOUNT_BASE, devname.replace("/", "_"))
     if os.path.ismount(mountpoint):
@@ -749,15 +825,26 @@ def copy_task_windows(drive_letter, progress_obj, task_id, progress_queue=None):
 def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
     should_unmount = False
     if not (mountpoint and os.path.ismount(mountpoint)):
-        mp = _mount_device(devname)
-        if mp is None:
-            if USE_RICH and progress_obj:
-                progress_obj.update(task_id, description=f"[red]Mount failed: {devname}", total=1, completed=1)
-            else:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Mount failed: {devname}", flush=True)
-            return 0, 0, 0
-        mountpoint = mp
-        should_unmount = True
+        # The lsblk mountpoint captured at detection can be stale: the desktop
+        # auto-mounter may have (or may be about to) mount the device since
+        # then. Prefer a mount the system already owns, giving it a short grace
+        # period to appear. Creating our own *second* read-write mount while the
+        # desktop also holds one lets two uncoordinated FAT caches corrupt the
+        # stick (0 B, refuses to remount). Only when no system mount shows up
+        # (headless / Docker) do we mount it ourselves and own the unmount.
+        existing = _wait_for_system_mount(devname, MOUNT_GRACE_SECONDS)
+        if existing:
+            mountpoint = existing
+        else:
+            mp = _mount_device(devname)
+            if mp is None:
+                if USE_RICH and progress_obj:
+                    progress_obj.update(task_id, description=f"[red]Mount failed: {devname}", total=1, completed=1)
+                else:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Mount failed: {devname}", flush=True)
+                return 0, 0, 0
+            mountpoint = mp
+            should_unmount = _is_own_mount(mp)
     if _is_dest_path(mountpoint):
         # This drive hosts the backup destination — it is not a source to back
         # up, and it must STAY mounted: unmounting it here (and rmdir'ing the

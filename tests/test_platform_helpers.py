@@ -150,6 +150,46 @@ class MountUnmountTest(unittest.TestCase):
             um._unmount("/nonexistent/path")  # must not raise
 
 
+class ExistingMountReuseTest(unittest.TestCase):
+    """The desktop auto-mounter and the app must never hold two concurrent
+    read-write mounts of the same FAT/exFAT stick — that corrupts it (0 B,
+    refuses to remount). These helpers let the app reuse the system's mount."""
+
+    _PROC = ("/dev/sda1 / ext4 rw,relatime 0 0\n"
+             "/dev/sdc1 /run/user/1000/media/My\\040A3 vfat rw,nosuid 0 0\n")
+
+    def test_find_existing_mount_returns_system_mountpoint(self):
+        with mock.patch("builtins.open", mock.mock_open(read_data=self._PROC)):
+            # octal-escaped space in the mountpoint is decoded
+            self.assertEqual(um._find_existing_mount("sdc1"),
+                             "/run/user/1000/media/My A3")
+
+    def test_find_existing_mount_none_when_not_mounted(self):
+        with mock.patch("builtins.open", mock.mock_open(read_data=self._PROC)):
+            self.assertIsNone(um._find_existing_mount("sdd1"))
+
+    def test_find_existing_mount_swallows_missing_proc(self):
+        with mock.patch("builtins.open", side_effect=OSError):
+            self.assertIsNone(um._find_existing_mount("sdc1"))
+
+    def test_is_own_mount(self):
+        with mock.patch.object(um, "MOUNT_BASE", "/mnt/usb_backup"):
+            self.assertTrue(um._is_own_mount("/mnt/usb_backup/sdc1"))
+            self.assertFalse(um._is_own_mount("/run/user/1000/media/A3"))
+            self.assertFalse(um._is_own_mount(None))
+
+    def test_wait_returns_mount_as_soon_as_it_appears(self):
+        with mock.patch.object(um, "_find_existing_mount", return_value="/run/user/1000/media/A3"), \
+             mock.patch.object(um.os.path, "ismount", return_value=True):
+            self.assertEqual(um._wait_for_system_mount("sdc1", 10),
+                             "/run/user/1000/media/A3")
+
+    def test_wait_times_out_to_none(self):
+        with mock.patch.object(um, "_find_existing_mount", return_value=None):
+            # timeout=0 → checks once and returns without sleeping
+            self.assertIsNone(um._wait_for_system_mount("sdc1", 0))
+
+
 class WindowsFallbackTest(unittest.TestCase):
     """These helpers are only meaningful on Windows; on Linux ctypes.windll
     does not exist, exercising the except-branch fallback they ship for

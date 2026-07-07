@@ -157,6 +157,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
 class CopyTaskLinuxWrapperTest(unittest.TestCase):
     def test_mounts_when_not_already_mounted(self):
         with mock.patch.object(um.os.path, "ismount", return_value=False), \
+             mock.patch.object(um, "_wait_for_system_mount", return_value=None), \
              mock.patch.object(um, "_mount_device", return_value="/mnt/usb_backup/sda1") as mount_mock, \
              mock.patch.object(um, "copy_task", return_value=(1, 2, 3)) as copy_mock:
             result = um.copy_task_linux("sda1", None, None, None)
@@ -165,10 +166,28 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
         args, _kwargs = copy_mock.call_args
         self.assertEqual(args[1], "/mnt/usb_backup/sda1")  # mountpoint
         self.assertEqual(args[2], "sda1")  # devname
-        self.assertTrue(args[5])  # should_unmount
+        self.assertTrue(args[5])  # should_unmount: we created the mount
+
+    def test_reuses_system_mount_without_self_mounting_or_unmount(self):
+        """When the desktop auto-mounter already holds the device, reuse that
+        mount and never create a second one — the double RW mount is exactly
+        what corrupts FAT sticks. We must also not unmount someone else's mount."""
+        sys_mp = "/run/user/1000/media/A3"
+        with mock.patch.object(um.os.path, "ismount", return_value=False), \
+             mock.patch.object(um, "_wait_for_system_mount", return_value=sys_mp), \
+             mock.patch.object(um, "_mount_device") as mount_mock, \
+             mock.patch.object(um, "_is_dest_path", return_value=False), \
+             mock.patch.object(um, "copy_task", return_value=(1, 2, 3)) as copy_mock:
+            result = um.copy_task_linux("sdc1", None, None, None)
+        self.assertEqual(result, (1, 2, 3))
+        mount_mock.assert_not_called()
+        args, _kwargs = copy_mock.call_args
+        self.assertEqual(args[1], sys_mp)  # mountpoint: the system's own
+        self.assertFalse(args[5])  # should_unmount False: not ours to tear down
 
     def test_mount_failure_returns_zero_tuple(self):
         with mock.patch.object(um.os.path, "ismount", return_value=False), \
+             mock.patch.object(um, "_wait_for_system_mount", return_value=None), \
              mock.patch.object(um, "_mount_device", return_value=None):
             result = um.copy_task_linux("sda1", None, None, None)
         self.assertEqual(result, (0, 0, 0))
@@ -190,6 +209,7 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as mnt:
             dest = os.path.join(mnt, "backups")
             with mock.patch.object(um.os.path, "ismount", return_value=False), \
+                 mock.patch.object(um, "_wait_for_system_mount", return_value=None), \
                  mock.patch.object(um, "_mount_device", return_value=mnt), \
                  mock.patch.object(um, "get_dest_base", return_value=dest), \
                  mock.patch.object(um, "_CONFIG_PATH", os.path.join(mnt, "no_config.json")), \
@@ -210,6 +230,7 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
             with open(cfg_path, "w") as f:
                 json.dump({"backup_dest": dest}, f)
             with mock.patch.object(um.os.path, "ismount", return_value=False), \
+                 mock.patch.object(um, "_wait_for_system_mount", return_value=None), \
                  mock.patch.object(um, "_mount_device", return_value=mnt), \
                  mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
                  mock.patch.object(um, "copy_task") as copy_mock:
