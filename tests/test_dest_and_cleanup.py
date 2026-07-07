@@ -50,6 +50,36 @@ class GetDestBaseTest(unittest.TestCase):
                  mock.patch.dict(os.environ, {"USB_BACKUP_DEST": "/env/dest3"}):
                 self.assertEqual(um.get_dest_base(), "/env/dest3")
 
+    def test_resolves_same_destination_disk_under_new_mountpoint(self):
+        with tempfile.TemporaryDirectory() as d, \
+             tempfile.TemporaryDirectory() as mount_root:
+            resolved = os.path.join(mount_root, "backups")
+            os.makedirs(resolved)
+            cfg_path = os.path.join(d, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({
+                    "backup_dest": "/run/user/1000/media/OLD/backups",
+                    "backup_mount_relpath": "backups",
+                    "backup_fs_uuid": "UUID-1",
+                }, f)
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.object(um, "_iter_mounts", return_value=[("/dev/sdb1", mount_root)]), \
+                 mock.patch.object(um, "_get_filesystem_uuid", return_value="UUID-1"):
+                self.assertEqual(um.get_dest_base(), resolved)
+
+    def test_describe_dest_path_captures_relative_path_and_device_identity(self):
+        with tempfile.TemporaryDirectory() as mount_root:
+            dest = os.path.join(mount_root, "nested", "backups")
+            os.makedirs(dest)
+            with mock.patch.object(um, "_find_mount_for_path", return_value=("/dev/sdb1", mount_root)), \
+                 mock.patch.object(um, "_get_filesystem_uuid", return_value="UUID-2"), \
+                 mock.patch.object(um, "_get_device_serial_linux", return_value="SER-2"):
+                info = um.describe_dest_path(dest)
+        self.assertEqual(info["backup_dest"], dest)
+        self.assertEqual(info["backup_mount_relpath"], os.path.join("nested", "backups"))
+        self.assertEqual(info["backup_fs_uuid"], "UUID-2")
+        self.assertEqual(info["backup_device_serial"], "SER-2")
+
 
 class DestMarkerTest(unittest.TestCase):
     """The marker file distinguishes the really selected destination from a
@@ -99,6 +129,24 @@ class DestMarkerTest(unittest.TestCase):
             with self._with_config(d, shadow):
                 self.assertFalse(um.dest_available())
 
+    def test_dest_available_when_real_disk_is_resolved_under_new_mountpoint(self):
+        with tempfile.TemporaryDirectory() as d, \
+             tempfile.TemporaryDirectory() as mount_root:
+            resolved = os.path.join(mount_root, "backups")
+            os.makedirs(resolved)
+            um.ensure_dest_marker(resolved)
+            cfg_path = os.path.join(d, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({
+                    "backup_dest": "/run/user/1000/media/OLD/backups",
+                    "backup_mount_relpath": "backups",
+                    "backup_fs_uuid": "UUID-3",
+                }, f)
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.object(um, "_iter_mounts", return_value=[("/dev/sdb1", mount_root)]), \
+                 mock.patch.object(um, "_get_filesystem_uuid", return_value="UUID-3"):
+                self.assertTrue(um.dest_available())
+
 
 class IsDestPathTest(unittest.TestCase):
     def test_exact_mountpoint_match(self):
@@ -117,6 +165,23 @@ class IsDestPathTest(unittest.TestCase):
     def test_unrelated_path(self):
         with mock.patch.object(um, "get_dest_base", return_value="/app/USB_Backups"):
             self.assertFalse(um._is_dest_path("/mnt/usb_backup/sdb1"))
+
+    def test_resolved_dest_under_app_mount_is_still_detected(self):
+        with tempfile.TemporaryDirectory() as d, \
+             tempfile.TemporaryDirectory() as mount_root:
+            dest = os.path.join(mount_root, "backups")
+            os.makedirs(dest)
+            cfg_path = os.path.join(d, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({
+                    "backup_dest": "/run/user/1000/media/OLD/backups",
+                    "backup_mount_relpath": "backups",
+                    "backup_fs_uuid": "UUID-4",
+                }, f)
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.object(um, "_iter_mounts", return_value=[("/dev/sdb1", mount_root)]), \
+                 mock.patch.object(um, "_get_filesystem_uuid", return_value="UUID-4"):
+                self.assertTrue(um._is_dest_path(mount_root))
 
 
 class CleanupOldVideosTest(unittest.TestCase):

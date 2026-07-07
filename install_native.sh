@@ -3,8 +3,11 @@
 #
 # Что делает скрипт:
 #   1. Ставит все зависимости через apt (python3, tkinter, утилиты монтирования).
-#   2. Копирует приложение в /opt/astra-usb-monitor.
-#   3. Ставит один systemd-сервис (start_native.sh), который ждёт X-сервер,
+#   2. Ставит udev-правило: в нативном режиме рабочий стол больше НЕ
+#      auto-mount'ит новые USB-носители сам, чтобы не было позднего второго
+#      RW-mount поверх нашего.
+#   3. Копирует приложение в /opt/astra-usb-monitor.
+#   4. Ставит один systemd-сервис (start_native.sh), который ждёт X-сервер,
 #      находит cookie сессии через /proc и поднимает GUI, как только
 #      графическая сессия готова. Мониторинг USB работает внутри GUI
 #      (gui.py сам запускает monitor_usb фоновым потоком). Парольный
@@ -120,7 +123,16 @@ for d in /home/*/.config/autostart /root/.config/autostart; do
     fi
 done
 
-# --- 3. Копируем приложение в /opt -------------------------------------------
+# --- 3. Правило udev / udisks ------------------------------------------------
+echo "--- Настройка udev-правила против desktop auto-mount..."
+UDEV_RULE_DST="/etc/udev/rules.d/99-astra-usb-monitor-udisks.rules"
+$SUDO cp "$SRC_DIR/99-astra-usb-monitor-udisks.rules" "$UDEV_RULE_DST"
+$SUDO chmod 644 "$UDEV_RULE_DST"
+if command -v udevadm >/dev/null 2>&1; then
+    $SUDO udevadm control --reload-rules || true
+fi
+
+# --- 4. Копируем приложение в /opt -------------------------------------------
 echo "--- Установка приложения в $APP_DIR..."
 $SUDO mkdir -p "$APP_DIR"
 $SUDO cp "$SRC_DIR/main.py" "$SRC_DIR/gui.py" "$SRC_DIR/usb_monitor.py" \
@@ -136,7 +148,7 @@ else
     echo "ВНИМАНИЕ: $SRC_DIR/data/LOGO-1.png не найден — GUI покажет заглушку вместо логотипа"
 fi
 
-# --- 4. Systemd-сервис --------------------------------------------------------
+# --- 5. Systemd-сервис --------------------------------------------------------
 echo "--- Настройка systemd-сервиса..."
 $SUDO tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null << EOF
 [Unit]
@@ -183,5 +195,8 @@ echo ""
 echo "База и настройки: $APP_DIR/data"
 echo "Папку назначения выбирайте в GUI на вкладке «Настройки» —"
 echo "диски видны как в файловом менеджере, пробрасывать ничего не нужно."
+echo "Новые USB-носители рабочий стол теперь не auto-mount'ит намеренно:"
+echo "это защищает от двойного mount. Если нужно выбрать НОВЫЙ USB-диск как"
+echo "диск назначения, сначала смонтируйте его вручную в файловом менеджере."
 echo ""
 echo "Удаление: systemctl disable --now $SERVICE_NAME"

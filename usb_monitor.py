@@ -30,30 +30,186 @@ IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
 
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
+DEST_MARKER_FILE = ".astra_dest"
+_DEST_CFG_RELPATH = "backup_mount_relpath"
+_DEST_CFG_UUID = "backup_fs_uuid"
+_DEST_CFG_SERIAL = "backup_device_serial"
+_DEST_CFG_KEYS = (_DEST_CFG_RELPATH, _DEST_CFG_UUID, _DEST_CFG_SERIAL)
 
 VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
               ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
 
 
-def get_dest_base():
-    """Return the active backup root: config.json > env var > default."""
-    path = _config_backup_dest()
-    if path:
-        return path
-    return os.environ.get("USB_BACKUP_DEST",
-                          os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
+def _load_config():
+    try:
+        with open(_CONFIG_PATH) as f:
+            data = json.load(f)
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_config(cfg):
+    try:
+        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+        with open(_CONFIG_PATH, "w") as f:
+            json.dump(cfg, f)
+        return True
+    except Exception:
+        return False
 
 
 def _config_backup_dest():
     """Return the destination explicitly chosen in the GUI (config.json), or None."""
+    return _load_config().get("backup_dest", "") or None
+
+
+def _iter_mounts():
+    """Yield (source_device, mountpoint) pairs from /proc/mounts."""
     try:
-        with open(_CONFIG_PATH) as f:
-            return json.load(f).get("backup_dest", "") or None
+        with open("/proc/mounts") as f:
+            for line in f:
+                fields = line.split()
+                if len(fields) < 2:
+                    continue
+                yield (_unescape_mount_field(fields[0]),
+                       _unescape_mount_field(fields[1]))
+    except Exception:
+        return
+
+
+def _find_mount_for_path(path):
+    """Return the most specific mounted filesystem containing ``path``."""
+    if not path:
+        return None
+    try:
+        target = os.path.realpath(path)
+    except Exception:
+        return None
+
+    best = None
+    for src, mountpoint in _iter_mounts():
+        try:
+            real_mp = os.path.realpath(mountpoint)
+        except Exception:
+            real_mp = mountpoint
+        if target == real_mp or target.startswith(real_mp + os.sep):
+            if best is None or len(real_mp) > len(best[1]):
+                best = (src, real_mp)
+    return best
+
+
+def _get_filesystem_uuid(devpath):
+    if not devpath or not devpath.startswith("/dev/"):
+        return None
+    try:
+        result = subprocess.run(
+            ["blkid", "-o", "value", "-s", "UUID", devpath],
+            capture_output=True, text=True, check=True, timeout=5
+        )
+        val = result.stdout.strip()
+        return val or None
     except Exception:
         return None
 
 
-DEST_MARKER_FILE = ".astra_dest"
+def describe_dest_path(dest_base):
+    """Return config fields that let the destination survive mountpoint changes."""
+    info = {"backup_dest": dest_base}
+    if platform.system() == "Windows":
+        return info
+
+    mount = _find_mount_for_path(dest_base)
+    if not mount:
+        return info
+
+    src, mountpoint = mount
+    if not src.startswith("/dev/"):
+        return info
+
+    mount_root = os.path.realpath(mountpoint)
+    rel = os.path.relpath(os.path.realpath(dest_base), mount_root)
+    info[_DEST_CFG_RELPATH] = "" if rel == "." else rel
+
+    fs_uuid = _get_filesystem_uuid(src)
+    if fs_uuid:
+        info[_DEST_CFG_UUID] = fs_uuid
+
+    devname = os.path.basename(os.path.realpath(src))
+    serial = _get_device_serial_linux(devname)
+    if serial:
+        info[_DEST_CFG_SERIAL] = serial
+
+    return info
+
+
+def remember_configured_dest(dest_base, update_path=False):
+    """Persist destination metadata once the real filesystem is reachable."""
+    cfg = _load_config()
+    info = describe_dest_path(dest_base)
+
+    for key in _DEST_CFG_KEYS:
+        cfg.pop(key, None)
+    for key in _DEST_CFG_KEYS:
+        if key in info:
+            cfg[key] = info[key]
+
+    if update_path:
+        cfg["backup_dest"] = dest_base
+
+    return _save_config(cfg)
+
+
+def _dest_device_matches(src, cfg):
+    if not src or not src.startswith("/dev/"):
+        return False
+
+    want_uuid = cfg.get(_DEST_CFG_UUID)
+    if want_uuid:
+        return _get_filesystem_uuid(src) == want_uuid
+
+    want_serial = cfg.get(_DEST_CFG_SERIAL)
+    if not want_serial:
+        return False
+
+    devname = os.path.basename(os.path.realpath(src))
+    return _get_device_serial_linux(devname) == want_serial
+
+
+def _resolve_configured_dest(cfg):
+    dest = cfg.get("backup_dest", "") or None
+    if not dest:
+        return None
+
+    # Fast path: the originally selected path is still the live mounted one.
+    if os.path.isdir(dest) and os.path.isfile(os.path.join(dest, DEST_MARKER_FILE)):
+        return dest
+
+    if platform.system() == "Windows":
+        return dest
+
+    rel = cfg.get(_DEST_CFG_RELPATH)
+    if rel is None:
+        return dest
+
+    for src, mountpoint in _iter_mounts():
+        if not _dest_device_matches(src, cfg):
+            continue
+        candidate = os.path.join(mountpoint, rel) if rel else mountpoint
+        if os.path.isdir(candidate):
+            return candidate
+
+    return dest
+
+
+def get_dest_base():
+    """Return the active backup root: config.json > env var > default."""
+    cfg = _load_config()
+    path = _resolve_configured_dest(cfg)
+    if path:
+        return path
+    return os.environ.get("USB_BACKUP_DEST",
+                          os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
 
 
 def ensure_dest_marker(dest_base):
@@ -84,10 +240,12 @@ def dest_available():
     demand). A destination chosen in the GUI must exist AND carry the marker
     written at selection time — see ensure_dest_marker().
     """
-    cfg_dest = _config_backup_dest()
+    cfg = _load_config()
+    cfg_dest = cfg.get("backup_dest", "") or None
     if not cfg_dest:
         return True
-    return os.path.isfile(os.path.join(cfg_dest, DEST_MARKER_FILE))
+    resolved = _resolve_configured_dest(cfg)
+    return os.path.isfile(os.path.join(resolved, DEST_MARKER_FILE))
 
 
 def _is_dest_path(mountpoint):
@@ -570,14 +728,9 @@ def _find_existing_mount(devname):
     except Exception:
         realdev = dev
     try:
-        with open("/proc/mounts") as f:
-            for line in f:
-                fields = line.split()
-                if len(fields) < 2:
-                    continue
-                src = _unescape_mount_field(fields[0])
-                if src == dev or os.path.realpath(src) == realdev:
-                    return _unescape_mount_field(fields[1])
+        for src, mountpoint in _iter_mounts():
+            if src == dev or os.path.realpath(src) == realdev:
+                return mountpoint
     except Exception:
         pass
     return None
@@ -852,8 +1005,10 @@ def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=N
         # path as a plain directory on the root filesystem, so the interface
         # reported success while the real disk stayed empty.
         cfg_dest = _config_backup_dest()
-        if cfg_dest and os.path.isdir(cfg_dest):
-            ensure_dest_marker(cfg_dest)
+        resolved_dest = get_dest_base()
+        if cfg_dest and os.path.isdir(resolved_dest):
+            ensure_dest_marker(resolved_dest)
+            remember_configured_dest(resolved_dest, update_path=False)
         print(f"  Destination drive connected, keeping mounted: {mountpoint}", flush=True)
         if progress_queue is not None:
             try:
@@ -885,12 +1040,16 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
     cfg_dest = _config_backup_dest()
     if cfg_dest:
-        if os.path.isdir(cfg_dest):
+        resolved_dest = get_dest_base()
+        if os.path.isdir(resolved_dest):
             # Configs saved before the marker existed get stamped here, while
-            # the destination is actually reachable.
-            ensure_dest_marker(cfg_dest)
+            # the destination is actually reachable. Also backfill the
+            # filesystem UUID / relative path so the same disk is recognised
+            # even if native mode mounts it under /mnt/usb_backup later.
+            ensure_dest_marker(resolved_dest)
+            remember_configured_dest(resolved_dest, update_path=False)
         else:
-            print(f"WARNING: backup destination is not available yet: {cfg_dest} "
+            print(f"WARNING: backup destination is not available yet: {resolved_dest} "
                   f"(backups will fail until its disk is mounted)", flush=True)
 
     print(f"USB Monitor | Platform: {system} | Workers: {MAX_WORKERS} | DB: {DB_PATH}", flush=True)

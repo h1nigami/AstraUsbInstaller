@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -630,7 +630,9 @@ class App:
                 f"Убедитесь, что диск подключён и смонтирован.")
             return
         cfg = _load_config()
-        cfg["backup_dest"] = new_path
+        for key in ("backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial"):
+            cfg.pop(key, None)
+        cfg.update(describe_dest_path(new_path))
         _save_config(cfg)
         self.backup_dest_var.set(new_path)
         messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")

@@ -239,6 +239,37 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(dest, um.DEST_MARKER_FILE)),
                             "reconnecting the dest drive must (re)stamp the marker")
 
+    def test_destination_drive_is_recognised_after_mountpoint_change(self):
+        """Native mode may mount the configured destination under our own
+        /mnt/usb_backup path after a reboot/replug. The same disk must still
+        be skipped as destination rather than backed up as a source."""
+        import queue
+        pq = queue.Queue()
+        with tempfile.TemporaryDirectory() as mnt, \
+             tempfile.TemporaryDirectory() as cfgdir:
+            dest = os.path.join(mnt, "backups")
+            os.makedirs(dest)
+            cfg_path = os.path.join(cfgdir, "config.json")
+            with open(cfg_path, "w") as f:
+                json.dump({
+                    "backup_dest": "/run/user/1000/media/OLD/backups",
+                    "backup_mount_relpath": "backups",
+                    "backup_fs_uuid": "UUID-DEST",
+                }, f)
+            with mock.patch.object(um.os.path, "ismount", return_value=False), \
+                 mock.patch.object(um, "_wait_for_system_mount", return_value=None), \
+                 mock.patch.object(um, "_mount_device", return_value=mnt), \
+                 mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.object(um, "_iter_mounts", return_value=[("/dev/sdb1", mnt)]), \
+                 mock.patch.object(um, "_find_mount_for_path", return_value=("/dev/sdb1", mnt)), \
+                 mock.patch.object(um, "_get_filesystem_uuid", return_value="UUID-DEST"), \
+                 mock.patch.object(um, "copy_task") as copy_mock:
+                result = um.copy_task_linux("sdb1", None, None, None, progress_queue=pq)
+                self.assertEqual(result, (0, 0, 0))
+                copy_mock.assert_not_called()
+                self.assertTrue(os.path.isfile(os.path.join(dest, um.DEST_MARKER_FILE)))
+                self.assertEqual(pq.get_nowait()[0], "_status_")
+
 
 class CopyTaskWindowsWrapperTest(unittest.TestCase):
     def test_builds_drive_path_and_delegates(self):
