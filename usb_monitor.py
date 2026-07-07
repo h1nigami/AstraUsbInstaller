@@ -452,13 +452,14 @@ def _get_linux_partitions():
 
 
 def _parse_lsblk_tree(data):
-    """Return the list of USB partition (or whole-disk) device names.
+    """Return dict mapping USB partition (or whole-disk) devname to mountpoint
+    (None if the device is not mounted).
 
     Pure helper over parsed ``lsblk -J`` output so it can be unit-tested
     without invoking lsblk. A USB disk with partitions yields its partitions
     (each exactly once); a USB disk without partitions yields the disk itself.
     """
-    parts = []
+    result = {}
 
     def walk(devices, parent_is_usb=False):
         for dev in devices:
@@ -466,34 +467,35 @@ def _parse_lsblk_tree(data):
             children = dev.get("children", [])
             dtype = dev.get("type")
             if is_usb and dtype == "part":
-                parts.append(dev["name"])
+                result[dev["name"]] = dev.get("mountpoint") or None
             elif is_usb and dtype == "disk":
                 # Partitions are collected via recursion only (so a disk with
                 # partitions is not double-counted); the disk itself is added
                 # only when it carries no partition (whole-disk filesystem or
                 # whole-disk container such as LUKS).
                 if not any(c.get("type") == "part" for c in children):
-                    parts.append(dev["name"])
+                    result[dev["name"]] = dev.get("mountpoint") or None
             for child in children:
                 walk([child], is_usb)
 
     walk(data.get("blockdevices", []))
-    return parts
+    return result
 
 
 def _get_lsblk_partitions():
     try:
         result = subprocess.run(
-            ["lsblk", "-J", "-o", "NAME,TRAN,TYPE"],
+            ["lsblk", "-J", "-o", "NAME,TRAN,TYPE,MOUNTPOINT"],
             capture_output=True, text=True, check=True, timeout=5
         )
         return _parse_lsblk_tree(json.loads(result.stdout))
     except Exception:
-        return []
+        return {}
 
 
 def _get_sys_block_partitions():
-    parts = []
+    """Return dict mapping USB devname → None (sysfs has no mountpoint info)."""
+    result = {}
     try:
         for dev in os.listdir("/sys/block"):
             devpath = os.path.join("/sys/block", dev)
@@ -526,10 +528,14 @@ def _get_sys_block_partitions():
                         with open(ep) as f:
                             if "DEVTYPE=partition" in f.read():
                                 found.append(entry)
-            parts.extend(found) if found else parts.append(dev)
+            if found:
+                for p in found:
+                    result[p] = None
+            else:
+                result[dev] = None
     except Exception:
         pass
-    return parts
+    return result
 
 
 def _mount_device(devname):
@@ -740,16 +746,15 @@ def copy_task_windows(drive_letter, progress_obj, task_id, progress_queue=None):
     return copy_task(drive_path, drive_path, drive_letter, progress_obj, task_id, progress_queue=progress_queue)
 
 
-def copy_task_linux(device_path, progress_obj, task_id, progress_queue=None):
+def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
     should_unmount = False
-    mountpoint = device_path
-    if not os.path.ismount(device_path):
-        mp = _mount_device(device_path)
+    if not (mountpoint and os.path.ismount(mountpoint)):
+        mp = _mount_device(devname)
         if mp is None:
             if USE_RICH and progress_obj:
-                progress_obj.update(task_id, description=f"[red]Mount failed: {device_path}", total=1, completed=1)
+                progress_obj.update(task_id, description=f"[red]Mount failed: {devname}", total=1, completed=1)
             else:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Mount failed: {device_path}", flush=True)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Mount failed: {devname}", flush=True)
             return 0, 0, 0
         mountpoint = mp
         should_unmount = True
@@ -770,15 +775,14 @@ def copy_task_linux(device_path, progress_obj, task_id, progress_queue=None):
             except Exception:
                 pass
         return 0, 0, 0
-    devname = os.path.basename(mountpoint)
-    return copy_task(device_path, mountpoint, devname, progress_obj, task_id, should_unmount, progress_queue)
+    return copy_task(devname, mountpoint, devname, progress_obj, task_id, should_unmount, progress_queue)
 
 
 def _make_submit_fn(progress_queue=None):
-    def _submit(executor, dev, progress_obj, task_id):
+    def _submit(executor, dev, mountpoint, progress_obj, task_id):
         if platform.system() == "Windows":
             return executor.submit(copy_task_windows, dev, progress_obj, task_id, progress_queue)
-        return executor.submit(copy_task_linux, dev, progress_obj, task_id, progress_queue)
+        return executor.submit(copy_task_linux, dev, mountpoint, progress_obj, task_id, progress_queue)
     return _submit
 
 
@@ -811,13 +815,14 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
     if is_linux:
         os.makedirs(MOUNT_BASE, exist_ok=True)
-        known = set(_get_linux_partitions())
+        known = _get_linux_partitions()  # dict: devname → mountpoint
     else:
         known = get_removable_drives()
 
     for dev in sorted(known):
+        mp = known[dev] if is_linux else None
         print(f"  Connected: {dev}", flush=True)
-        active[dev] = submit(executor, dev, None, None)
+        active[dev] = submit(executor, dev, mp, None, None)
 
     # dev → timestamp of first consecutive miss; cleared when device reappears
     pending_removals = {}
@@ -837,10 +842,13 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     pass
 
             now_t = time.time()
-            current = set(_get_linux_partitions()) if is_linux else get_removable_drives()
+            current = _get_linux_partitions() if is_linux else get_removable_drives()
+
+            known_keys = set(known) if is_linux else known
+            current_keys = set(current) if is_linux else current
 
             # Devices missing from this poll but still in known
-            candidate_removed = known - current
+            candidate_removed = known_keys - current_keys
 
             # Devices that came back — clear their pending counter
             for dev in list(pending_removals):
@@ -859,7 +867,10 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             for dev in confirmed_removed:
                 pending_removals.pop(dev, None)
-                known.discard(dev)
+                if is_linux:
+                    known.pop(dev, None)
+                else:
+                    known.discard(dev)
                 active.pop(dev, None)
                 dn = os.path.basename(dev)
                 if progress_queue is not None:
@@ -869,13 +880,17 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                         pass
 
             # New devices: present in current but not yet in known
-            new_devices = sorted(current - known)
-            known.update(new_devices)
+            new_devices = sorted(current_keys - known_keys)
 
             for dev in new_devices:
+                if is_linux:
+                    known[dev] = current[dev]
+                else:
+                    known.add(dev)
                 pending_removals.pop(dev, None)
+                mp = current[dev] if is_linux else None
                 print(f"  New USB: {dev}", flush=True)
-                active[dev] = submit(executor, dev, None, None)
+                active[dev] = submit(executor, dev, mp, None, None)
 
     except KeyboardInterrupt:
         print("\nStopped.")

@@ -82,25 +82,25 @@ class PartitionDiscoveryTest(unittest.TestCase):
              "children": [{"name": "sda1", "type": "part"}]}
         ]}
         with mock.patch.object(um.subprocess, "run", return_value=_cp(json.dumps(data))):
-            self.assertEqual(um._get_lsblk_partitions(), ["sda1"])
+            self.assertEqual(um._get_lsblk_partitions(), {"sda1": None})
 
     def test_get_lsblk_partitions_returns_empty_on_error(self):
         with mock.patch.object(um.subprocess, "run", side_effect=OSError):
-            self.assertEqual(um._get_lsblk_partitions(), [])
+            self.assertEqual(um._get_lsblk_partitions(), {})
 
     def test_get_sys_block_partitions_swallows_errors(self):
         with mock.patch.object(um.os, "listdir", side_effect=OSError):
-            self.assertEqual(um._get_sys_block_partitions(), [])
+            self.assertEqual(um._get_sys_block_partitions(), {})
 
     def test_get_linux_partitions_prefers_lsblk(self):
-        with mock.patch.object(um, "_get_lsblk_partitions", return_value=["sda1"]), \
-             mock.patch.object(um, "_get_sys_block_partitions", return_value=["sdb1"]):
-            self.assertEqual(um._get_linux_partitions(), ["sda1"])
+        with mock.patch.object(um, "_get_lsblk_partitions", return_value={"sda1": None}), \
+             mock.patch.object(um, "_get_sys_block_partitions", return_value={"sdb1": None}):
+            self.assertEqual(um._get_linux_partitions(), {"sda1": None})
 
     def test_get_linux_partitions_falls_back_to_sys_block(self):
-        with mock.patch.object(um, "_get_lsblk_partitions", return_value=[]), \
-             mock.patch.object(um, "_get_sys_block_partitions", return_value=["sdb1"]):
-            self.assertEqual(um._get_linux_partitions(), ["sdb1"])
+        with mock.patch.object(um, "_get_lsblk_partitions", return_value={}), \
+             mock.patch.object(um, "_get_sys_block_partitions", return_value={"sdb1": None}):
+            self.assertEqual(um._get_linux_partitions(), {"sdb1": None})
 
 
 class MountUnmountTest(unittest.TestCase):

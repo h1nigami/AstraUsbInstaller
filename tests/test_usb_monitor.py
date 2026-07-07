@@ -68,13 +68,13 @@ class LsblkParseTest(unittest.TestCase):
                 {"name": "sda2", "type": "part"},
             ]}
         ]}
-        self.assertEqual(um._parse_lsblk_tree(data), ["sda1", "sda2"])
+        self.assertEqual(um._parse_lsblk_tree(data), {"sda1": None, "sda2": None})
 
     def test_usb_whole_disk_no_partitions(self):
         data = {"blockdevices": [
             {"name": "sdb", "tran": "usb", "type": "disk"}
         ]}
-        self.assertEqual(um._parse_lsblk_tree(data), ["sdb"])
+        self.assertEqual(um._parse_lsblk_tree(data), {"sdb": None})
 
     def test_non_usb_disk_ignored(self):
         data = {"blockdevices": [
@@ -82,7 +82,7 @@ class LsblkParseTest(unittest.TestCase):
                 {"name": "nvme0n1p1", "type": "part"},
             ]}
         ]}
-        self.assertEqual(um._parse_lsblk_tree(data), [])
+        self.assertEqual(um._parse_lsblk_tree(data), {})
 
     def test_usb_whole_disk_with_non_partition_child(self):
         # Whole-disk container (e.g. LUKS) — no partition table, child is not
@@ -92,7 +92,7 @@ class LsblkParseTest(unittest.TestCase):
                 {"name": "sdd_crypt", "type": "crypt"},
             ]}
         ]}
-        self.assertEqual(um._parse_lsblk_tree(data), ["sdd"])
+        self.assertEqual(um._parse_lsblk_tree(data), {"sdd": None})
 
     def test_partition_inherits_usb_from_parent(self):
         # Some lsblk versions only set tran on the disk, not the partition.
@@ -101,7 +101,15 @@ class LsblkParseTest(unittest.TestCase):
                 {"name": "sdc1", "type": "part", "tran": None},
             ]}
         ]}
-        self.assertEqual(um._parse_lsblk_tree(data), ["sdc1"])
+        self.assertEqual(um._parse_lsblk_tree(data), {"sdc1": None})
+
+    def test_mountpoint_extracted_when_present(self):
+        data = {"blockdevices": [
+            {"name": "sda", "tran": "usb", "type": "disk", "children": [
+                {"name": "sda1", "type": "part", "mountpoint": "/run/user/1000/media/USB"},
+            ]}
+        ]}
+        self.assertEqual(um._parse_lsblk_tree(data), {"sda1": "/run/user/1000/media/USB"})
 
 
 class ScanDriveTest(unittest.TestCase):

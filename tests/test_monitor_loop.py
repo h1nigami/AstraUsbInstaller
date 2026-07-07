@@ -24,8 +24,8 @@ class MonitorLoopTest(unittest.TestCase):
     def test_detects_new_device_then_confirms_removal_after_debounce(self):
         seen_devices = []
 
-        def fake_copy_task_linux(device_path, progress_obj, task_id, progress_queue=None):
-            seen_devices.append(device_path)
+        def fake_copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
+            seen_devices.append(devname)
             return (0, 0, 0)
 
         # Poll sequence: absent -> appears -> still present -> disappears -> stays absent.
@@ -33,8 +33,8 @@ class MonitorLoopTest(unittest.TestCase):
 
         def fake_get_partitions():
             if len(poll_sequence) > 1:
-                return poll_sequence.pop(0)
-            return poll_sequence[0]
+                return {d: None for d in poll_sequence.pop(0)}
+            return {d: None for d in poll_sequence[0]}
 
         pq = queue.Queue()
         stop_event = threading.Event()
@@ -78,8 +78,8 @@ class MonitorLoopTest(unittest.TestCase):
         back must never trigger a removal notification (debounce)."""
         seen_devices = []
 
-        def fake_copy_task_linux(device_path, progress_obj, task_id, progress_queue=None):
-            seen_devices.append(device_path)
+        def fake_copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
+            seen_devices.append(devname)
             return (0, 0, 0)
 
         # Long poll interval relative to the blip: one missing poll, then back,
@@ -89,7 +89,7 @@ class MonitorLoopTest(unittest.TestCase):
         def fake_get_partitions():
             state["i"] += 1
             # Present on every poll except the 3rd one (a single-poll blip).
-            return [] if state["i"] == 3 else ["sda1"]
+            return {} if state["i"] == 3 else {"sda1": None}
 
         pq = queue.Queue()
         stop_event = threading.Event()

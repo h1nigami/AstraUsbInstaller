@@ -159,27 +159,27 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
         with mock.patch.object(um.os.path, "ismount", return_value=False), \
              mock.patch.object(um, "_mount_device", return_value="/mnt/usb_backup/sda1") as mount_mock, \
              mock.patch.object(um, "copy_task", return_value=(1, 2, 3)) as copy_mock:
-            result = um.copy_task_linux("sda1", None, None)
+            result = um.copy_task_linux("sda1", None, None, None)
         self.assertEqual(result, (1, 2, 3))
         mount_mock.assert_called_once_with("sda1")
         args, _kwargs = copy_mock.call_args
         self.assertEqual(args[1], "/mnt/usb_backup/sda1")  # mountpoint
-        self.assertEqual(args[2], "sda1")  # devname derived from mountpoint basename
+        self.assertEqual(args[2], "sda1")  # devname
         self.assertTrue(args[5])  # should_unmount
 
     def test_mount_failure_returns_zero_tuple(self):
         with mock.patch.object(um.os.path, "ismount", return_value=False), \
              mock.patch.object(um, "_mount_device", return_value=None):
-            result = um.copy_task_linux("sda1", None, None)
+            result = um.copy_task_linux("sda1", None, None, None)
         self.assertEqual(result, (0, 0, 0))
 
     def test_already_mounted_path_used_directly_without_unmount_flag(self):
         with mock.patch.object(um.os.path, "ismount", return_value=True), \
              mock.patch.object(um, "copy_task", return_value=(5, 6, 7)) as copy_mock:
-            result = um.copy_task_linux("/mnt/usb_backup/sda1", None, None)
+            result = um.copy_task_linux("sda1", "/mnt/usb_backup/sda1", None, None)
         self.assertEqual(result, (5, 6, 7))
         args, _kwargs = copy_mock.call_args
-        self.assertFalse(args[5])  # should_unmount False: caller already owns the mount
+        self.assertFalse(args[5])  # should_unmount False: system already owns the mount
 
     def test_destination_drive_is_skipped_and_kept_mounted(self):
         """Regression: the drive hosting the backup destination used to be
@@ -195,7 +195,7 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
                  mock.patch.object(um, "_CONFIG_PATH", os.path.join(mnt, "no_config.json")), \
                  mock.patch.object(um, "_unmount") as unmount_mock, \
                  mock.patch.object(um, "copy_task") as copy_mock:
-                result = um.copy_task_linux("sdb1", None, None, progress_queue=pq)
+                result = um.copy_task_linux("sdb1", None, None, None, progress_queue=pq)
         self.assertEqual(result, (0, 0, 0))
         copy_mock.assert_not_called()
         unmount_mock.assert_not_called()
@@ -213,7 +213,7 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
                  mock.patch.object(um, "_mount_device", return_value=mnt), \
                  mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
                  mock.patch.object(um, "copy_task") as copy_mock:
-                um.copy_task_linux("sdb1", None, None)
+                um.copy_task_linux("sdb1", None, None, None)
             copy_mock.assert_not_called()
             self.assertTrue(os.path.isfile(os.path.join(dest, um.DEST_MARKER_FILE)),
                             "reconnecting the dest drive must (re)stamp the marker")
@@ -243,14 +243,14 @@ class MakeSubmitFnTest(unittest.TestCase):
         executor = self._FakeExecutor()
         with mock.patch.object(um.platform, "system", return_value="Windows"):
             submit = um._make_submit_fn(None)
-            submit(executor, "E", None, None)
+            submit(executor, "E", None, None, None)
         self.assertIs(executor.calls[0][0], um.copy_task_windows)
 
     def test_selects_linux_impl_off_windows(self):
         executor = self._FakeExecutor()
         with mock.patch.object(um.platform, "system", return_value="Linux"):
             submit = um._make_submit_fn(None)
-            submit(executor, "sda1", None, None)
+            submit(executor, "sda1", None, None, None)
         self.assertIs(executor.calls[0][0], um.copy_task_linux)
 
 
