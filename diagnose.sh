@@ -3,7 +3,6 @@
 # командой. Запуск:  sudo bash diagnose.sh
 # Вывод целиком отправьте разработчику — по нему видно, на каком шаге затык.
 
-SERVICE_NAME="astra-usb-monitor"
 APP_DIR="/opt/astra-usb-monitor"
 
 echo "================ ДИАГНОСТИКА USB Backup Manager ================"
@@ -11,21 +10,44 @@ echo "Дата: $(date)"
 echo "Пользователь: $(id)"
 
 echo ""
-echo "=== 1. Systemd-сервис ==="
-echo "включён в автозагрузку: $(systemctl is-enabled $SERVICE_NAME 2>&1)"
-echo "текущее состояние:      $(systemctl is-active $SERVICE_NAME 2>&1)"
-systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | head -15
+echo "=== 1. XDG autostart ==="
+for f in /home/*/.config/autostart/usb-backup-manager.desktop \
+         /root/.config/autostart/usb-backup-manager.desktop; do
+    if [ -f "$f" ]; then
+        echo "  найден: $f"
+        head -5 "$f"
+    fi
+done
+echo "  (если файла нет — автозапуск после входа не сработает)"
 
 echo ""
-echo "=== 2. Логи сервиса (последние 60 строк) ==="
-journalctl -u "$SERVICE_NAME" -n 60 --no-pager 2>&1
+echo "=== 2. Sudoers ==="
+if [ -f /etc/sudoers.d/astra-usb-monitor ]; then
+    echo "  sudoers-правило: /etc/sudoers.d/astra-usb-monitor"
+    cat /etc/sudoers.d/astra-usb-monitor
+else
+    echo "  НЕТ /etc/sudoers.d/astra-usb-monitor — GUI не сможет mount/umount"
+fi
 
 echo ""
-echo "=== 3. Файлы приложения ==="
+echo "=== 3. Процессы ==="
+if pgrep -f "start_native.sh" >/dev/null 2>&1; then
+    echo "  start_native.sh: ЗАПУЩЕН"
+else
+    echo "  start_native.sh: НЕ ЗАПУЩЕН (ждёт логина пользователя)"
+fi
+if pgrep -f "python3.*(gui|main)" >/dev/null 2>&1; then
+    echo "  GUI (python3): ЗАПУЩЕН"
+else
+    echo "  GUI (python3): НЕ ЗАПУЩЕН"
+fi
+
+echo ""
+echo "=== 4. Файлы приложения ==="
 ls -la "$APP_DIR" 2>&1
 
 echo ""
-echo "=== 4. Графическая сессия ==="
+echo "=== 5. Графическая сессия ==="
 echo "X-сокеты:"
 ls -la /tmp/.X11-unix 2>&1
 echo "кто вошёл в систему:"
@@ -38,7 +60,7 @@ else
 fi
 
 echo ""
-echo "=== 5. Python и зависимости ==="
+echo "=== 6. Python и зависимости ==="
 python3 --version 2>&1 || echo "НЕТ python3"
 python3 -c "import tkinter; print('tkinter: OK')" 2>&1
 python3 -c "import rich; print('rich: OK')" 2>&1 || echo "rich: нет (не критично)"
@@ -46,7 +68,7 @@ command -v lsblk >/dev/null 2>&1 && echo "lsblk: OK" || echo "НЕТ lsblk (util
 command -v mount >/dev/null 2>&1 && echo "mount: OK" || echo "НЕТ mount"
 
 echo ""
-echo "=== 6. Диски и точки монтирования ==="
+echo "=== 7. Диски и точки монтирования ==="
 lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT 2>&1
 
 echo ""

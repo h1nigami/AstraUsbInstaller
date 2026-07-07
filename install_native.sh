@@ -4,16 +4,16 @@
 # Что делает скрипт:
 #   1. Ставит все зависимости через apt (python3, tkinter, утилиты монтирования).
 #   2. Копирует приложение в /opt/astra-usb-monitor.
-#   3. Ставит один systemd-сервис (start_native.sh), который ждёт X-сервер,
-#      находит cookie сессии через /proc и поднимает GUI, как только
-#      графическая сессия готова. Мониторинг USB работает внутри GUI
-#      (gui.py сам запускает monitor_usb фоновым потоком). Парольный
-#      «Выход» из GUI останавливает сервис до следующей перезагрузки.
-#      Автозапуск рабочего стола (fly/.config/autostart) НЕ используется —
-#      он в Astra срабатывает не во всех конфигурациях; systemd надёжнее,
-#      и все логи видны через journalctl.
+#   3. Добавляет sudoers-правило для запуска GUI от root (нужен mount/umount
+#      флешек) без пароля.
+#   4. Устанавливает XDG autostart (.desktop в ~/.config/autostart/) — GUI
+#      запускается после входа пользователя в графическую сессию, а не при
+#      загрузке системы. start_native.sh ждёт X-сервер, находит cookie сессии
+#      через /proc и поднимает GUI. Мониторинг USB работает внутри GUI
+#      (gui.py сам запускает monitor_usb фоновым потоком). Парольный «Выход»
+#      из GUI останавливает процесс до следующего входа.
 #
-# Сервис работает от root: приложение само вызывает mount/umount для флешек
+# Приложение работает от root: само вызывает mount/umount для флешек
 # (в Docker это решалось privileged). Запуск без Docker означает, что
 # приложение видит те же точки монтирования, что и файловый менеджер —
 # никакие volume пробрасывать не нужно.
@@ -25,7 +25,7 @@ set -e
 cd "$(dirname "$0")"
 SRC_DIR="$(pwd)"
 APP_DIR="/opt/astra-usb-monitor"
-SERVICE_NAME="astra-usb-monitor"
+
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=""
@@ -136,52 +136,52 @@ else
     echo "ВНИМАНИЕ: $SRC_DIR/data/LOGO-1.png не найден — GUI покажет заглушку вместо логотипа"
 fi
 
-# --- 4. Systemd-сервис --------------------------------------------------------
-echo "--- Настройка systemd-сервиса..."
-$SUDO tee "/etc/systemd/system/$SERVICE_NAME.service" > /dev/null << EOF
-[Unit]
-Description=Astra USB Monitor (GUI, мониторинг USB работает внутри GUI)
-After=multi-user.target
-
-[Service]
-Type=simple
-WorkingDirectory=$APP_DIR
-ExecStart=$APP_DIR/start_native.sh
-# on-failure: парольный «Выход» из GUI завершает сервис с кодом 0, и systemd
-# НЕ перезапускает его — иначе kiosk-выход был бы бессмысленным.
-Restart=on-failure
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-
-[Install]
-WantedBy=multi-user.target
+# --- 4. Sudoers для запуска GUI от root без пароля -------------------------
+echo "--- Настройка sudoers..."
+$SUDO tee /etc/sudoers.d/astra-usb-monitor > /dev/null << 'EOF'
+Defaults!/opt/astra-usb-monitor/start_native.sh env_keep += "DISPLAY XAUTHORITY"
+ALL ALL=(root) NOPASSWD: /opt/astra-usb-monitor/start_native.sh
 EOF
-$SUDO systemctl daemon-reload
-$SUDO systemctl enable "$SERVICE_NAME.service"
-$SUDO systemctl restart "$SERVICE_NAME.service"
+$SUDO chmod 440 /etc/sudoers.d/astra-usb-monitor
 
-# Не рапортуем «Готово», не убедившись, что сервис действительно жив.
-sleep 3
-if ! $SUDO systemctl is-active --quiet "$SERVICE_NAME.service"; then
-    echo ""
-    echo "ОШИБКА: сервис не запустился. Последние строки лога:"
-    $SUDO journalctl -u "$SERVICE_NAME" -n 20 --no-pager 2>/dev/null || true
-    echo ""
-    echo "Соберите полную диагностику: sudo bash $SRC_DIR/diagnose.sh"
-    exit 1
+# --- 5. XDG autostart (после входа в сессию, а не при загрузке) ------------
+echo "--- Настройка автозапуска после входа в систему..."
+if [ -n "$SUDO_USER" ]; then
+    REAL_USER="$SUDO_USER"
+else
+    REAL_USER="${USER:-root}"
+fi
+REAL_HOME="$(getent passwd "$REAL_USER" | cut -d: -f6)"
+AUTOSTART_DIR="$REAL_HOME/.config/autostart"
+$SUDO mkdir -p "$AUTOSTART_DIR"
+$SUDO tee "$AUTOSTART_DIR/usb-backup-manager.desktop" > /dev/null << 'EOF'
+[Desktop Entry]
+Type=Application
+Name=USB Backup Manager
+Comment=USB device backup with device tracking
+Exec=/usr/bin/sudo /opt/astra-usb-monitor/start_native.sh
+Terminal=false
+X-GNOME-Autostart-enabled=true
+EOF
+$SUDO chown "$REAL_USER:$REAL_USER" "$AUTOSTART_DIR/usb-backup-manager.desktop" 2>/dev/null || true
+
+# --- 6. Запуск GUI сейчас (после установки) --------------------------------
+if [ -n "$SUDO_USER" ]; then
+    echo "--- Запуск GUI для $SUDO_USER..."
+    su - "$SUDO_USER" -c "/usr/bin/sudo /opt/astra-usb-monitor/start_native.sh" &
+    sleep 2
 fi
 
 echo ""
 echo "=== Готово ==="
-echo "Сервис запущен. GUI появится сам, как только будет доступна графическая"
-echo "сессия — т.е. после входа пользователя в систему (и после перезагрузки"
-echo "тоже). Мониторинг USB работает внутри GUI."
-echo ""
-echo "Статус:  systemctl status $SERVICE_NAME"
-echo "Логи:    journalctl -u $SERVICE_NAME -f"
+echo "GUI запущен. При следующем входе в систему он запустится автоматически"
+echo "(автозапуск через XDG: ~/.config/autostart/usb-backup-manager.desktop)."
+echo "Мониторинг USB работает внутри GUI."
 echo ""
 echo "База и настройки: $APP_DIR/data"
 echo "Папку назначения выбирайте в GUI на вкладке «Настройки» —"
 echo "диски видны как в файловом менеджере, пробрасывать ничего не нужно."
 echo ""
-echo "Удаление: systemctl disable --now $SERVICE_NAME"
+echo "Удаление: sudo rm -f /etc/sudoers.d/astra-usb-monitor"
+echo "          sudo rm -f $AUTOSTART_DIR/usb-backup-manager.desktop"
+echo "          sudo rm -rf $APP_DIR"
