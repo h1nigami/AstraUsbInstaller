@@ -1,0 +1,10 @@
+# Astra USB Monitor native install:
+# prevent the desktop auto-mounter from racing us on newly attached USB media.
+#
+# `usb_monitor.py` either reuses an existing mount or mounts the filesystem
+# itself. A late desktop auto-mount after that would create a second RW mount
+# of the same FAT/exFAT stick and can corrupt it.
+#
+# Use UDISKS_AUTO=0, not UDISKS_IGNORE=1: the device still appears in the
+# desktop UI and can be mounted manually if an operator explicitly wants that.
+ACTION=="add|change", SUBSYSTEM=="block", SUBSYSTEMS=="usb", ENV{ID_FS_USAGE}=="filesystem", ENV{UDISKS_AUTO}="0"
