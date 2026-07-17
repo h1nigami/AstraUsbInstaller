@@ -734,13 +734,25 @@ class App:
     def _get_db(self):
         return sqlite3.connect(DB_PATH)
 
+    def _device_label(self, dev_id):
+        """Human-facing label for a device: its custom name (if set) plus the
+        stable Device{id}, which is never renamed and still names the backup
+        folder on disk."""
+        conn = self._get_db()
+        try:
+            row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
+        finally:
+            conn.close()
+        name = (row[0] if row else "") or ""
+        return f"{name} (Device{dev_id})" if name else f"Device{dev_id}"
+
     def _refresh_search_filters(self):
         conn = self._get_db()
         try:
             devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
             self._device_filter_ids = {
-                (f"Device{r[0]} — {r[1]}" if r[1] else f"Device{r[0]}"): r[0] for r in devices
+                (f"{r[1]} (Device{r[0]})" if r[1] else f"Device{r[0]}"): r[0] for r in devices
             }
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
@@ -830,7 +842,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": f"Device{dev_id} — {dev_name}" if dev_name else f"Device{dev_id}",
+                            "device": f"{dev_name} (Device{dev_id})" if dev_name else f"Device{dev_id}",
                             "person": person or "",
                             "datetime": dt_str,
                         })
@@ -1075,11 +1087,12 @@ class App:
         if not dev_id:
             messagebox.showwarning("Ошибка", "Выберите устройство из списка")
             return
+        label = self._device_label(dev_id)
         conn = self._get_db()
         try:
             conn.execute("UPDATE devices SET person = ? WHERE id = ?", (person, int(dev_id)))
             conn.commit()
-            messagebox.showinfo("Готово", f"Device{dev_id} назначен на {person or '(не указан)'}")
+            messagebox.showinfo("Готово", f"{label} назначен на {person or '(не указан)'}")
             self._refresh_devices()
             self._refresh_search_filters()
         except Exception as e:
@@ -1096,9 +1109,10 @@ class App:
             messagebox.showwarning("Ошибка", "Некорректный Device ID")
             return
 
+        label = self._device_label(dev_id)
         dev_dir = os.path.join(get_dest_base(), f"Device{dev_id}")
         if not os.path.isdir(dev_dir):
-            messagebox.showinfo("Нет данных", f"Папка устройства Device{dev_id} не найдена")
+            messagebox.showinfo("Нет данных", f"Папка устройства {label} не найдена")
             return
 
         videos = []
@@ -1114,14 +1128,14 @@ class App:
                     videos.append(fp)
 
         if not videos:
-            messagebox.showinfo("Нет видео", f"В Device{dev_id} нет видеофайлов")
+            messagebox.showinfo("Нет видео", f"В {label} нет видеофайлов")
             return
 
         size_mb = total_size / (1024 * 1024)
         if not messagebox.askyesno(
             "Подтверждение",
             f"Удалить {len(videos)} видеофайлов "
-            f"({size_mb:.1f} МБ) из папки Device{dev_id}?\n\n"
+            f"({size_mb:.1f} МБ) из папки {label}?\n\n"
             f"Это действие необратимо."
         ):
             return
