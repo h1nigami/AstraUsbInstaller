@@ -735,16 +735,16 @@ class App:
         return sqlite3.connect(DB_PATH)
 
     def _device_label(self, dev_id):
-        """Human-facing label for a device: its custom name (if set) plus the
-        stable Device{id}, which is never renamed and still names the backup
-        folder on disk."""
+        """Human-facing label for a device: its custom name if set, else the
+        stable Device{id} (which is never renamed and still names the backup
+        folder on disk)."""
         conn = self._get_db()
         try:
             row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
         finally:
             conn.close()
         name = (row[0] if row else "") or ""
-        return f"{name} (Device{dev_id})" if name else f"Device{dev_id}"
+        return name if name else f"Device{dev_id}"
 
     def _refresh_search_filters(self):
         conn = self._get_db()
@@ -752,7 +752,7 @@ class App:
             devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
             self._device_filter_ids = {
-                (f"{r[1]} (Device{r[0]})" if r[1] else f"Device{r[0]}"): r[0] for r in devices
+                (r[1] if r[1] else f"Device{r[0]}"): r[0] for r in devices
             }
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
@@ -842,7 +842,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": f"{dev_name} (Device{dev_id})" if dev_name else f"Device{dev_id}",
+                            "device": dev_name if dev_name else f"Device{dev_id}",
                             "person": person or "",
                             "datetime": dt_str,
                         })
