@@ -32,6 +32,7 @@ class InitDbTest(unittest.TestCase):
                 self.assertTrue({"devices", "backups"} <= tables)
                 cols = {r[1] for r in conn2.execute("PRAGMA table_info(devices)")}
                 self.assertIn("person", cols)
+                self.assertIn("name", cols)
                 self.assertIn("serial", cols)
             finally:
                 conn2.close()
@@ -115,6 +116,25 @@ class ResolveDeviceIdTest(unittest.TestCase):
         self.assertIsNone(um._get_device_id_by_serial(self.conn, None))
         self.assertIsNone(um._get_device_id_by_serial(None, "x"))
         self.assertIsNone(um._get_device_id_by_serial(self.conn, "unknown-serial"))
+
+    def test_rename_survives_reconnect_and_label_refresh(self):
+        # A user-assigned "name" is a separate column from "label" (which is
+        # refreshed from the filesystem on every reconnect) and from "id"
+        # (the stable .astra_id). Renaming must not disturb either, and a
+        # later reconnect must not silently wipe the custom name.
+        with tempfile.TemporaryDirectory() as mp:
+            dev_id = um._resolve_device_id(self.conn, mp, "SERNAME", "LABEL1", "sda1")
+            self.conn.execute("UPDATE devices SET name = ? WHERE id = ?", ("Kiosk-1", dev_id))
+            self.conn.commit()
+
+            # Reconnect: label refreshes, id (.astra_id) stays the same.
+            dev_id2 = um._resolve_device_id(self.conn, mp, "SERNAME", "NEWLABEL", "sda1")
+            self.assertEqual(dev_id2, dev_id)
+
+            row = self.conn.execute(
+                "SELECT label, name FROM devices WHERE id=?", (dev_id,)).fetchone()
+            self.assertEqual(row[0], "NEWLABEL")
+            self.assertEqual(row[1], "Kiosk-1")
 
     def test_create_device_falls_back_to_devname_when_no_label(self):
         dev_id = um._create_device(self.conn, "", "", "sdz1")

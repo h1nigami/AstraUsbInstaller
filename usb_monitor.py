@@ -346,8 +346,8 @@ def _format_time(seconds):
 
 _docker_progress_cache = {}
 
-def _docker_progress(dev_id, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time):
-    key = dev_id
+def _docker_progress(label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time):
+    key = label
     now = time.time()
     last = _docker_progress_cache.get(key, {"time": 0, "pct": -1})
     pct = (copied_bytes / total_bytes * 100) if total_bytes else 0
@@ -364,7 +364,7 @@ def _docker_progress(dev_id, copied_files, total_files, copied_bytes, total_byte
     eta_str = _format_time(eta) if pct > 0.5 else "--:--"
     fname = file_name[:45] if file_name else ""
     line = (
-        f"[{datetime.now().strftime('%H:%M:%S')}] Device{dev_id}: "
+        f"[{datetime.now().strftime('%H:%M:%S')}] {label}: "
         f"{pct:5.1f}% | {copied_files}/{total_files} files "
         f"| {_format_size(copied_bytes)}/{_format_size(total_bytes)} "
         f"| ETA {eta_str} | {fname}"
@@ -390,6 +390,7 @@ def _init_db():
             serial      TEXT UNIQUE NOT NULL,
             label       TEXT DEFAULT '',
             person      TEXT DEFAULT '',
+            name        TEXT DEFAULT '',
             first_seen  TEXT NOT NULL,
             last_seen   TEXT NOT NULL
         )
@@ -407,6 +408,10 @@ def _init_db():
     """)
     try:
         conn.execute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''")
     except Exception:
         pass
     conn.commit()
@@ -471,6 +476,20 @@ def _get_device_id_by_serial(conn, serial):
     cur = conn.execute("SELECT id FROM devices WHERE serial = ?", (serial,))
     row = cur.fetchone()
     return row[0] if row else None
+
+
+def _get_device_name(conn, device_id):
+    if not conn or device_id is None:
+        return ""
+    row = conn.execute("SELECT name FROM devices WHERE id = ?", (device_id,)).fetchone()
+    return (row[0] or "") if row else ""
+
+
+def _friendly_device_label(device_id, name):
+    """Human-facing label for a device: its custom name when set, else the
+    stable Device{id} (which is always the backup folder name and never
+    renamed)."""
+    return name if name else f"Device{device_id}"
 
 
 def _create_device(conn, serial, label, devname):
@@ -801,7 +820,7 @@ def _unmount(mountpoint):
         pass
 
 
-def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
+def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     copied_files = 0
     copied_bytes = 0
     failed = 0
@@ -845,7 +864,7 @@ def _copy_files(src_root, dest_root, timestamp, device_id, total_files, total_by
                 if USE_RICH and progress_obj:
                     progress_obj.update(task_id, advance=file_size)
                 elif not IS_TTY:
-                    _docker_progress(device_id, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
+                    _docker_progress(progress_label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
                 if emit_fn is not None:
                     now = time.time()
                     if now - last_emit_t >= 1.0:
@@ -873,7 +892,10 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     conn = _connect()
     try:
         device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
+        # display_id names the backup folder and must stay stable across
+        # renames; friendly is the human-facing label shown in messages/GUI.
         display_id = f"Device{device_id}"
+        friendly = _friendly_device_label(device_id, _get_device_name(conn, device_id))
         started_at = datetime.now()
 
         ts = started_at.strftime("%Y%m%d_%H%M%S")
@@ -882,7 +904,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         def _emit(state, current=0, total=0, msg=""):
             if progress_queue is not None:
                 try:
-                    progress_queue.put_nowait((device_id, display_id, state, current, total, msg, devname))
+                    progress_queue.put_nowait((device_id, friendly, state, current, total, msg, devname))
                 except Exception:
                     pass
 
@@ -896,7 +918,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
             else:
-                print(f"[{started_at.strftime('%H:%M:%S')}] {msg} — {display_id} не скопирован", flush=True)
+                print(f"[{started_at.strftime('%H:%M:%S')}] {msg} — {friendly} не скопирован", flush=True)
             if should_unmount:
                 _unmount(mountpoint)
             return device_id, 0, 0
@@ -904,17 +926,17 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         dest = os.path.join(dest_base, display_id)
         os.makedirs(dest, exist_ok=True)
 
-        _emit("scanning", 0, 0, f"Scanning {display_id}...")
+        _emit("scanning", 0, 0, f"Scanning {friendly}...")
 
         if USE_RICH and progress_obj:
-            progress_obj.update(task_id, description=f"[cyan]Scanning {display_id}...")
+            progress_obj.update(task_id, description=f"[cyan]Scanning {friendly}...")
         else:
-            print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {display_id} ({label or 'no label'})...", flush=True)
+            print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {friendly} ({label or 'no label'})...", flush=True)
 
         total_files, total_bytes = _scan_drive(mountpoint)
 
         if total_files == 0:
-            msg = f"Empty: {display_id}"
+            msg = f"Empty: {friendly}"
             _emit("done", 0, 0, msg)
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
@@ -924,16 +946,16 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 _unmount(mountpoint)
             return device_id, 0, 0
 
-        _emit("copying", 0, total_bytes, f"Copying {display_id}...")
+        _emit("copying", 0, total_bytes, f"Copying {friendly}...")
 
         if USE_RICH and progress_obj:
-            progress_obj.update(task_id, description=f"[green]{display_id} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
+            progress_obj.update(task_id, description=f"[green]{friendly} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {display_id}: {total_files} files, {_format_size(total_bytes)}", flush=True)
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
         copied_files, copied_bytes, backed_up, failed = _copy_files(
-            mountpoint, dest, ts, device_id, total_files, total_bytes,
+            mountpoint, dest, ts, friendly, total_files, total_bytes,
             progress_obj, task_id, start_time, emit_fn=_emit)
 
         # Only delete videos that were actually backed up successfully.
@@ -944,11 +966,11 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         finished_at = datetime.now()
         if failed:
-            msg = f"Ошибки: {display_id} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
+            msg = f"Ошибки: {friendly} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
             _emit("error", copied_bytes, total_bytes, msg)
         else:
-            msg = f"Done: {display_id} ({copied_files} files, {_format_size(copied_bytes)})"
-            _emit("done", copied_bytes, total_bytes, f"Done: {display_id}")
+            msg = f"Done: {friendly} ({copied_files} files, {_format_size(copied_bytes)})"
+            _emit("done", copied_bytes, total_bytes, f"Done: {friendly}")
 
         if USE_RICH and progress_obj:
             color = "red" if failed else "green"
