@@ -364,7 +364,7 @@ class App:
             "datetime": "Дата изм.", "device": "Устройство", "person": "Человек",
             "filename": "Файл", "ext": "Тип", "size": "Размер", "path": "Путь",
         }
-        col_widths = {"datetime": 140, "device": 90, "person": 130,
+        col_widths = {"datetime": 140, "device": 160, "person": 130,
                       "filename": 200, "ext": 60, "size": 80, "path": 320}
         for c in cols:
             self.search_tree.heading(c, text=headings[c])
@@ -414,11 +414,11 @@ class App:
         f = ttk.Frame(nb)
         nb.add(f, text="Устройства")
 
-        cols = ("id", "serial", "label", "person", "first_seen", "last_seen")
+        cols = ("id", "serial", "label", "name", "person", "first_seen", "last_seen")
         self.dev_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
-        headings = {"id": "ID", "serial": "Серийный", "label": "Метка",
+        headings = {"id": "ID", "serial": "Серийный", "label": "Метка", "name": "Имя",
                     "person": "Человек", "first_seen": "Впервые", "last_seen": "Последний раз"}
-        dev_col_widths = {"id": 50, "serial": 200, "label": 150, "person": 150,
+        dev_col_widths = {"id": 50, "serial": 200, "label": 150, "name": 150, "person": 150,
                           "first_seen": 160, "last_seen": 160}
         for c in cols:
             self.dev_tree.heading(c, text=headings[c])
@@ -430,6 +430,10 @@ class App:
         ttk.Label(edit_frame, text="Device ID:").pack(side="left", padx=2)
         self.edit_dev_id = ttk.Entry(edit_frame, width=6)
         self.edit_dev_id.pack(side="left", padx=2)
+        ttk.Label(edit_frame, text="Имя:").pack(side="left", padx=2)
+        self.edit_name = ttk.Entry(edit_frame, width=20)
+        self.edit_name.pack(side="left", padx=2)
+        ttk.Button(edit_frame, text="Переименовать", command=self._rename_device).pack(side="left", padx=4)
         ttk.Label(edit_frame, text="Человек:").pack(side="left", padx=2)
         self.edit_person = ttk.Entry(edit_frame, width=20)
         self.edit_person.pack(side="left", padx=2)
@@ -733,9 +737,11 @@ class App:
     def _refresh_search_filters(self):
         conn = self._get_db()
         try:
-            devices = conn.execute("SELECT id FROM devices ORDER BY id").fetchall()
+            devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
-            self._device_filter_ids = {f"Device{r[0]}": r[0] for r in devices}
+            self._device_filter_ids = {
+                (f"Device{r[0]} — {r[1]}" if r[1] else f"Device{r[0]}"): r[0] for r in devices
+            }
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
             self.search_device["values"] = dev_list
@@ -769,7 +775,7 @@ class App:
             conn = self._get_db()
             try:
                 sql = """
-                    SELECT d.id, d.person, b.dest_path
+                    SELECT d.id, d.person, d.name, b.dest_path
                     FROM backups b
                     JOIN devices d ON d.id = b.device_id
                     WHERE 1=1
@@ -795,7 +801,7 @@ class App:
             fn_filter = p["filename"]
 
             seen_paths = set()
-            for dev_id, person, dest_path in sessions:
+            for dev_id, person, dev_name, dest_path in sessions:
                 if not dest_path or not os.path.isdir(dest_path):
                     continue
                 for root, _dirs, files in os.walk(dest_path):
@@ -824,7 +830,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": f"Device{dev_id}",
+                            "device": f"Device{dev_id} — {dev_name}" if dev_name else f"Device{dev_id}",
                             "person": person or "",
                             "datetime": dt_str,
                         })
@@ -1027,9 +1033,9 @@ class App:
             self.dev_tree.delete(row)
         conn = self._get_db()
         try:
-            for row in conn.execute("SELECT id, serial, label, person, first_seen, last_seen FROM devices ORDER BY id"):
+            for row in conn.execute("SELECT id, serial, label, name, person, first_seen, last_seen FROM devices ORDER BY id"):
                 self.dev_tree.insert("", "end", values=(
-                    row[0], row[1], row[2], row[3], row[4][:19], row[5][:19],
+                    row[0], row[1], row[2], row[3], row[4], row[5][:19], row[6][:19],
                 ))
         finally:
             conn.close()
@@ -1040,8 +1046,28 @@ class App:
             vals = self.dev_tree.item(sel[0], "values")
             self.edit_dev_id.delete(0, "end")
             self.edit_dev_id.insert(0, vals[0])
+            self.edit_name.delete(0, "end")
+            self.edit_name.insert(0, vals[3])
             self.edit_person.delete(0, "end")
-            self.edit_person.insert(0, vals[3])
+            self.edit_person.insert(0, vals[4])
+
+    def _rename_device(self):
+        dev_id = self.edit_dev_id.get().strip()
+        name = self.edit_name.get().strip()
+        if not dev_id:
+            messagebox.showwarning("Ошибка", "Выберите устройство из списка")
+            return
+        conn = self._get_db()
+        try:
+            conn.execute("UPDATE devices SET name = ? WHERE id = ?", (name, int(dev_id)))
+            conn.commit()
+            messagebox.showinfo("Готово", f"Device{dev_id} переименован в {name or '(без имени)'}")
+            self._refresh_devices()
+            self._refresh_search_filters()
+        except Exception as e:
+            messagebox.showerror("Ошибка", str(e))
+        finally:
+            conn.close()
 
     def _assign_person(self):
         dev_id = self.edit_dev_id.get().strip()

@@ -390,6 +390,7 @@ def _init_db():
             serial      TEXT UNIQUE NOT NULL,
             label       TEXT DEFAULT '',
             person      TEXT DEFAULT '',
+            name        TEXT DEFAULT '',
             first_seen  TEXT NOT NULL,
             last_seen   TEXT NOT NULL
         )
@@ -407,6 +408,10 @@ def _init_db():
     """)
     try:
         conn.execute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''")
     except Exception:
         pass
     conn.commit()
