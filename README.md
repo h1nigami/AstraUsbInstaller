@@ -40,9 +40,22 @@ docker compose up -d --build
 
 ## Нативная установка на Astra Linux
 
+Git не нужен — ставится из архива релиза:
+
 ```bash
+curl -s https://api.github.com/repos/h1nigami/AstraUsbInstaller/releases/latest \
+  | grep -o 'https://[^"]*\.tar\.gz' | head -1 \
+  | xargs curl -sL -o astra-usb-monitor.tar.gz
+
+mkdir -p ~/astra-usb && tar xzf astra-usb-monitor.tar.gz -C ~/astra-usb
+cd ~/astra-usb
 ./install_native.sh
 ```
+
+Первая команда всегда берёт последний релиз, версию указывать не нужно.
+Подробная инструкция с первой настройкой и полезными командами приложена к
+каждому релизу на [странице релизов](https://github.com/h1nigami/AstraUsbInstaller/releases)
+и лежит в [`.github/release-install.md`](.github/release-install.md).
 
 Инсталлятор ставит `systemd`-сервис и `udev`-правило для native-mode: новые
 USB-носители больше не auto-mount'ятся рабочим столом сами, поэтому поздний

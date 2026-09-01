@@ -34,3 +34,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
+
+      # Инструкция по установке дописывается в конец описания каждого релиза,
+      # чтобы её не приходилось копировать руками. Текст описания, набранный
+      # при публикации, сохраняется — блок добавляется после него.
+      - name: Дописать инструкцию по установке
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$TAG" --json body -q .body > /tmp/body.md
+          if ! grep -q '^## Установка$' /tmp/body.md; then
+            printf '\n' >> /tmp/body.md
+            cat .github/release-install.md >> /tmp/body.md
+            gh release edit "$TAG" --notes-file /tmp/body.md
+          fi
