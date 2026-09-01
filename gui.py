@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt, read_version
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -544,6 +544,19 @@ class App:
         about.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Label(about, text="BestCam USB Backup Manager").pack(anchor="w")
         ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
+        ttk.Label(about, text=self._version_text(),
+                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(6, 0))
+
+    def _version_text(self):
+        v = read_version()
+        if not v:
+            return "Версия не определена"
+        tag, date = v
+        try:
+            shown = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%y")
+        except ValueError:
+            return "Версия не определена"
+        return f"Версия {tag.lstrip('v')} от {shown}"
 
     def _refresh_timeout_status(self):
         m = int(self._lock_timeout / 60)
