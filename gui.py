@@ -56,6 +56,16 @@ def _set_exit_password(new_pw):
     _save_config(cfg)
 
 
+def _is_busy(workers_data):
+    """True while any tracked device is scanning or copying.
+
+    Tests the raw state ("scanning"/"copying"), not the localized display
+    string — renaming a label must not silently disable the updater's busy
+    marker.
+    """
+    return any(d.get("state_raw") in ("scanning", "copying") for d in workers_data.values())
+
+
 class App:
     def __init__(self):
         self.root = tk.Tk()
@@ -1211,6 +1221,7 @@ class App:
                 self.workers_data[device_id] = {
                     "device": display_id,
                     "state": {"scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
+                    "state_raw": state,
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",
                     "size": self._fmt_size(total),
@@ -1220,6 +1231,13 @@ class App:
                 self._refresh_workers()
         except queue.Empty:
             pass
+
+        # Выполняется на каждом тике (раз в 200мс) независимо от того, было ли
+        # что-то в очереди — один большой файл может копироваться минутами без
+        # единого сообщения в очереди, и маркер не должен за это время устареть.
+        if _is_busy(self.workers_data):
+            touch_copying_marker()
+
         try:
             self.root.after(POLL_MS, self._poll_queue)
         except tk.TclError:
@@ -1227,9 +1245,6 @@ class App:
 
     def _refresh_workers(self):
         tracked = set()
-        if any(d["state"] in ("Сканирование", "Копирование")
-               for d in self.workers_data.values()):
-            touch_copying_marker()
         for dev_id, data in self.workers_data.items():
             tracked.add(dev_id)
             state = data["state"]
