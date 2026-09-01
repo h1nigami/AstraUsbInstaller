@@ -141,8 +141,10 @@ $SUDO chmod 755 "$APP_DIR/start_native.sh"
 
 # VERSION приезжает в архиве релиза. При установке из git-клона его нет —
 # собираем из тега, чтобы в Настройках было видно, что именно стоит.
+FROM_RELEASE=0
 if [ -f "$SRC_DIR/VERSION" ]; then
     $SUDO cp "$SRC_DIR/VERSION" "$APP_DIR/VERSION"
+    FROM_RELEASE=1
 elif [ -d "$SRC_DIR/.git" ] && command -v git >/dev/null 2>&1; then
     _tag=$(cd "$SRC_DIR" && git describe --tags --abbrev=0 2>/dev/null || true)
     if [ -n "$_tag" ]; then
@@ -207,7 +209,6 @@ Description=Проверять обновления Astra USB Monitor
 [Timer]
 OnBootSec=10min
 OnUnitActiveSec=6h
-Persistent=true
 
 [Install]
 WantedBy=timers.target
@@ -242,4 +243,12 @@ echo "Новые USB-носители рабочий стол теперь не 
 echo "это защищает от двойного mount. Если нужно выбрать НОВЫЙ USB-диск как"
 echo "диск назначения, сначала смонтируйте его вручную в файловом менеджере."
 echo ""
+if [ "$FROM_RELEASE" -ne 1 ]; then
+    echo "ВНИМАНИЕ: установка не из релизного архива GitHub (файла VERSION в"
+    echo "исходниках не было). Таймер автообновления включён и первый раз"
+    echo "сработает уже через 10 минут после загрузки — он заменит эту сборку"
+    echo "последним релизом с GitHub. Если сейчас это не нужно, отключите таймер:"
+    echo "  systemctl disable --now astra-usb-update.timer"
+    echo ""
+fi
 echo "Удаление: systemctl disable --now $SERVICE_NAME"

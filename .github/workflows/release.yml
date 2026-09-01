@@ -10,17 +10,19 @@ permissions:
 jobs:
   package:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Собрать VERSION и архив
+        env:
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          DATE="${{ github.event.release.published_at }}"
-          DATE="${DATE%%T*}"
+          DATE="${PUBLISHED_AT%%T*}"
           echo "$TAG $DATE" > VERSION
           NAME="astra-usb-monitor-${TAG}.tar.gz"
-          tar --exclude=.git --exclude=.github -czf "$NAME" \
+          tar -czf "$NAME" \
               main.py gui.py usb_monitor.py updater.py \
               start_native.sh install_native.sh update.sh diagnose.sh \
               start.sh Dockerfile docker-compose.yml requirements.txt \
@@ -29,8 +31,6 @@ jobs:
           echo "ASSET=$NAME" >> "$GITHUB_ENV"
 
       - name: Прикрепить к релизу
-        run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
-             "$ASSET" "${ASSET}.sha256" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
