@@ -487,9 +487,9 @@ def _get_device_name(conn, device_id):
 
 def _friendly_device_label(device_id, name):
     """Human-facing label for a device: its custom name when set, else the
-    stable Device{id} (which is always the backup folder name and never
-    renamed)."""
-    return name if name else f"Device{device_id}"
+    bare number. The backup folder is named Device{id} regardless and is
+    never renamed."""
+    return name if name else str(device_id)
 
 
 def _create_device(conn, serial, label, devname):

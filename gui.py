@@ -427,7 +427,7 @@ class App:
 
         edit_frame = ttk.Frame(f)
         edit_frame.pack(fill="x", padx=5, pady=(0, 5))
-        ttk.Label(edit_frame, text="Device ID:").pack(side="left", padx=2)
+        ttk.Label(edit_frame, text="Номер устройства:").pack(side="left", padx=2)
         self.edit_dev_id = ttk.Entry(edit_frame, width=6)
         self.edit_dev_id.pack(side="left", padx=2)
         ttk.Label(edit_frame, text="Имя:").pack(side="left", padx=2)
@@ -736,15 +736,15 @@ class App:
 
     def _device_label(self, dev_id):
         """Human-facing label for a device: its custom name if set, else the
-        stable Device{id} (which is never renamed and still names the backup
-        folder on disk)."""
+        bare number. The backup folder is named Device{id} regardless and is
+        never renamed."""
         conn = self._get_db()
         try:
             row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
         finally:
             conn.close()
         name = (row[0] if row else "") or ""
-        return name if name else f"Device{dev_id}"
+        return name if name else str(dev_id)
 
     def _refresh_search_filters(self):
         conn = self._get_db()
@@ -752,7 +752,7 @@ class App:
             devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
             self._device_filter_ids = {
-                (r[1] if r[1] else f"Device{r[0]}"): r[0] for r in devices
+                (r[1] if r[1] else str(r[0])): r[0] for r in devices
             }
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
@@ -842,7 +842,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": dev_name if dev_name else f"Device{dev_id}",
+                            "device": dev_name if dev_name else str(dev_id),
                             "person": person or "",
                             "datetime": dt_str,
                         })
@@ -1073,7 +1073,7 @@ class App:
         try:
             conn.execute("UPDATE devices SET name = ? WHERE id = ?", (name, int(dev_id)))
             conn.commit()
-            messagebox.showinfo("Готово", f"Device{dev_id} переименован в {name or '(без имени)'}")
+            messagebox.showinfo("Готово", f"Устройство {dev_id} переименовано в {name or '(без имени)'}")
             self._refresh_devices()
             self._refresh_search_filters()
         except Exception as e:
@@ -1106,7 +1106,7 @@ class App:
             messagebox.showwarning("Ошибка", "Выберите устройство из списка")
             return
         if not dev_id.isdigit():
-            messagebox.showwarning("Ошибка", "Некорректный Device ID")
+            messagebox.showwarning("Ошибка", "Некорректный номер устройства")
             return
 
         label = self._device_label(dev_id)
