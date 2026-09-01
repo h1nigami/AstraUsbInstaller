@@ -16,7 +16,7 @@ docker compose up -d --build
 docker compose logs -f
 
 # Syntax check
-python3 -m py_compile gui.py usb_monitor.py main.py
+python3 -m py_compile gui.py usb_monitor.py main.py updater.py
 
 # Tests (pure stdlib unittest, no GUI/X11 needed)
 python3 -m unittest discover -s tests -v
@@ -32,7 +32,7 @@ safety guarantees) — extend them when you touch that logic.
 
 ## Architecture
 
-Three layers:
+Four top-level modules:
 
 **`usb_monitor.py`** — core engine (no GUI dependency)
 - `monitor_usb(interval, stop_event, progress_queue)` — main loop; detects USB attach/detach via polling `lsblk` (Linux) or `GetDriveTypeW` (Windows). Removal is debounced: a device must be missing for ≥1.5× the poll interval before it is confirmed gone.
@@ -46,16 +46,24 @@ Three layers:
 - SQLite DB at `data/devices.db`: tables `devices` (serial, label, person) and `backups` (per-session stats). `started_at`/`finished_at` are stored via `datetime.isoformat()` (`T` separator).
 - `format_filter_dt()` — builds search range bounds with the same `T` separator as stored `started_at` so lexicographic SQL comparisons are correct (a space would sort before `T` and wrongly exclude same-day backups).
 - Progress emission: when `progress_queue` is provided, puts tuples `(device_id, display_id, state, current, total, msg, devname)` for GUI consumption; special sentinel device_ids `"_removed_"` and `"_status_"` signal device removal and status updates.
+- `read_version()` — parses the `VERSION` file (`<tag> <YYYY-MM-DD>`, written by the release workflow / `install_native.sh`, never by hand) into `(tag, date)`, or `None` if it's missing or malformed. Read by the GUI (Настройки tab) and by `updater.py`.
+- `touch_copying_marker()` / `is_copying()` — `data/.copying` is the interface between the GUI and `updater.py`: the GUI stamps its mtime whenever a device is scanning or copying, and `updater.py` treats the point as busy while the marker is younger than 60s. A stale or missing marker means idle, so a crashed GUI doesn't block updates forever.
 
 **`gui.py`** — Tkinter fullscreen GUI
 - `App` class owns the notebook (4 tabs: Загрузка, Поиск, Устройства, Настройки)
-- Runs `monitor_usb` in a daemon thread; polls `progress_queue` every 200ms via `root.after`
+- Runs `monitor_usb` in a daemon thread; polls `progress_queue` every 200ms via `root.after`; `_poll_queue` also stamps `touch_copying_marker()` on every tick (via the pure `_is_busy(workers_data)` helper, keyed off the raw `scanning`/`copying` state, not the localized label) — this runs regardless of queue traffic, since a single large file can copy for minutes with no progress message in between.
 - Tab access protection: tabs at indices 1–3 require a password; `_prompt_unlock()` is modal, sized to 1/4 screen. Unlocked tabs re-lock after `lock_timeout_minutes` of inactivity (`_check_lock_timeout`).
 - Search tab runs queries in a background thread (`_search_worker`, generation-guarded), walks the matched backup folders on disk, and can export the matched files (`_export_worker`). Results are capped at 500.
 - Exit is password-protected: the header has a visible "⏻ Выход" button (only way out in fullscreen kiosk mode, since the window has no close button); it calls `_on_close()`, a modal password dialog that on success runs `stop_event.set()` + `root.destroy()`. Same dialog is bound to `WM_DELETE_WINDOW`.
 - Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run; change via Настройки tab (`_change_password`). The Настройки tab also configures the backup destination, lock timeout, and auto-cleanup of old videos.
 
 **`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`.
+
+**`updater.py`** — auto-update, run by a systemd timer (`astra-usb-update.timer`), not from inside the GUI service (so the installer's final `systemctl restart` of the GUI service can't kill an update mid-file-swap)
+- `main()`: reads `VERSION`, polls `releases/latest` of the public `h1nigami/AstraUsbInstaller` repo, compares tags for inequality (not ordering — the point is always brought to whatever GitHub marks latest), skips while `usb_monitor.is_copying()` or while the latest tag is the one already recorded as failed, downloads the release asset + `.sha256` and refuses to install on a mismatch, then hands off to `_apply()`.
+- `_apply()`: snapshots `APP_DIR` to `APP_DIR.prev` (excluding `data/`, `USB_Backups/`), re-runs `install_native.sh` from the unpacked archive, then verifies the new code actually imports (`python3 -c "import gui, usb_monitor, main"`) before trusting `systemctl is-active`/`NRestarts` — `start_native.sh` is an infinite retry loop that never exits on a Python crash, so those alone would call a broken release "healthy". Any failure in that chain rolls back via `_rollback()` and records the tag in `FAILED_TAG_FILE` first (so a rollback that itself throws doesn't lose the memory). A successful install whose `VERSION` doesn't match the tag just installed also gets recorded as failed, so a hand-built archive can't cause the same "update" to reapply every 6 hours forever.
+- `_rollback()` restores only `APP_DIR`; the systemd units and udev rule it installs are not reverted (deliberate — see the comment in the function and the spec's rollback section for the ceiling this implies).
+- Only stdlib (`urllib`, `hashlib`, `tarfile`, `shutil`, `subprocess`); no secrets on the point since the repo is public.
 
 ## Key environment variables
 
@@ -92,10 +100,34 @@ etc. for mounting USB filesystems, plus `python3-tk` and `x11-utils` for the GUI
   relaunch loop continues.
 
 `.gitattributes` enforces LF endings; `start.sh` is also stripped of CR at build
-time. CI: two GitHub Actions workflows (`pr-docker-build.yml`,
-`main-docker-build.yml`) build the image via `docker/build-push-action` with
-`type=gha` cache.
+time. CI: three GitHub Actions workflows — `pr-docker-build.yml` and
+`main-docker-build.yml` build the Docker image via `docker/build-push-action`
+with `type=gha` cache; `release.yml` runs on a published GitHub release, writes
+`VERSION` (`<tag> <published-date>`), packages `astra-usb-monitor-<tag>.tar.gz`
+plus a `.sha256`, and uploads both as release assets — this is the archive
+`updater.py` downloads.
+
+## Version and auto-update
+
+- `VERSION` (one line, `<tag> <YYYY-MM-DD>`) is the only interface between a
+  GitHub release and the running app. It ships inside the release archive and
+  is never hand-edited; `install_native.sh` also derives it from
+  `git describe --tags` when installing from a git clone that has no
+  `VERSION` file (best-effort — a tagless clone installs with no version, not
+  an error). Shown in Настройки via `usb_monitor.read_version()`; the GUI
+  never fails over a missing/malformed version.
+- `install_native.sh` also installs `astra-usb-update.{service,timer}`, a
+  systemd timer that runs `updater.py` 10 minutes after boot and every 6h
+  after that, `enable --now`. Installing from a git clone with no tags means
+  no `VERSION`, so the very first tick treats the point as needing an update
+  and replaces the local build with whatever is latest on GitHub — the
+  installer prints a warning about this when it detects a non-release install.
+- A bad release cannot be fixed by re-publishing the same tag: the failed tag
+  is remembered (`APP_DIR.failed`) and skipped on every later tick. Publish a
+  new tag instead. See `README.md`'s "Обновления" section and
+  `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md` for
+  the full design.
 
 ## Development branch
 
-Active feature branch: `claude/project-review-bugs-k0neon`. Base: `master`.
+Active feature branch: `claude/version-and-auto-update`. Base: `master`.
