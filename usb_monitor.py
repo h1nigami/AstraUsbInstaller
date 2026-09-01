@@ -455,6 +455,23 @@ def _init_db():
         conn.execute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''")
     except Exception:
         pass
+
+    # Устройства, потерянные прежней ошибкой регистрации: бэкапы на них есть,
+    # а строки нет. Без неё устройство не видно в списке, ему нельзя задать имя,
+    # и поиск не находит его файлы — он связывает файлы с устройствами джойном.
+    try:
+        conn.execute("""
+            INSERT INTO devices (id, serial, label, first_seen, last_seen)
+            SELECT b.device_id, 'RECOVERED_' || b.device_id, '',
+                   MIN(b.started_at), MAX(b.finished_at)
+            FROM backups b
+            LEFT JOIN devices d ON d.id = b.device_id
+            WHERE d.id IS NULL
+            GROUP BY b.device_id
+        """)
+    except Exception:
+        pass
+
     conn.commit()
     return conn
 
@@ -487,14 +504,35 @@ def _write_device_id_to_usb(mountpoint, device_id):
         pass
 
 
+def _register_id_from_usb(conn, device_id, serial, label, now):
+    """Register a device under the id its own medium carries in .astra_id.
+
+    devices.serial is UNIQUE, and USB gadgets hand out one and the same serial
+    to every unit. A plain INSERT OR IGNORE therefore silently created nothing
+    for the second such device: it stayed out of the device list, and its
+    backups pointed at a row that did not exist. Fall back to a serial made
+    unique by the device id — the id itself is the primary key, so it cannot
+    collide.
+    """
+    for candidate in (serial or "", f"{serial or 'NOSERIAL'}#{device_id}"):
+        try:
+            conn.execute(
+                "INSERT INTO devices (id, serial, label, first_seen, last_seen)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (device_id, candidate, label, now, now),
+            )
+            return
+        except sqlite3.IntegrityError:
+            continue
+
+
 def _resolve_device_id(conn, mountpoint, serial, label, devname):
     id_from_usb = _read_device_id_from_usb(mountpoint)
     if id_from_usb is not None:
         now = datetime.now().isoformat()
-        conn.execute(
-            "INSERT OR IGNORE INTO devices (id, serial, label, first_seen, last_seen) VALUES (?, ?, ?, ?, ?)",
-            (id_from_usb, serial or "", label or devname, now, now),
-        )
+        if not conn.execute("SELECT 1 FROM devices WHERE id = ?",
+                            (id_from_usb,)).fetchone():
+            _register_id_from_usb(conn, id_from_usb, serial, label or devname, now)
         conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
                      (now, label or devname, id_from_usb))
         conn.commit()

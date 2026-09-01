@@ -152,5 +152,57 @@ class FriendlyLabelTest(unittest.TestCase):
         self.assertEqual(um._friendly_device_label(3, None), "3")
 
 
+class SharedSerialTest(unittest.TestCase):
+    """USB-эмуляторы отдают один серийник на все экземпляры. Носитель при этом
+    приносит свой номер в .astra_id, и устройство обязано попасть в список."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        with mock.patch.object(um, "DB_PATH", os.path.join(self.tmp.name, "t.db")):
+            self.conn = um._init_db()
+
+    def tearDown(self):
+        self.conn.close()
+        self.tmp.cleanup()
+
+    def _mount(self, name, astra_id=None):
+        mp = os.path.join(self.tmp.name, name)
+        os.makedirs(mp, exist_ok=True)
+        if astra_id is not None:
+            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w") as f:
+                f.write(f"{astra_id}\n")
+        return mp
+
+    def test_device_with_taken_serial_still_gets_a_row(self):
+        serial = "Linux_File-Stor_Gadget_123456789ABC-0:0"
+        first = um._resolve_device_id(self.conn, self._mount("a"), serial, "sdb1", "sdb1")
+
+        second = um._resolve_device_id(
+            self.conn, self._mount("b", astra_id=3666666), serial, "sdc1", "sdc1")
+
+        self.assertEqual(second, 3666666)
+        self.assertNotEqual(first, second)
+        row = self.conn.execute(
+            "SELECT id FROM devices WHERE id=?", (second,)).fetchone()
+        self.assertIsNotNone(
+            row, "устройство с занятым серийником должно попадать в список")
+
+    def test_recovers_devices_that_only_exist_in_backups(self):
+        now = "2026-09-01T10:00:00"
+        self.conn.execute(
+            "INSERT INTO backups (device_id, dest_path, total_files, total_bytes,"
+            " started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (777, "/dest/Device777", 3, 100, now, now))
+        self.conn.commit()
+        self.conn.close()
+
+        with mock.patch.object(um, "DB_PATH", os.path.join(self.tmp.name, "t.db")):
+            self.conn = um._init_db()
+
+        row = self.conn.execute("SELECT id FROM devices WHERE id=777").fetchone()
+        self.assertIsNotNone(
+            row, "устройство, у которого остались только бэкапы, должно восстанавливаться")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
