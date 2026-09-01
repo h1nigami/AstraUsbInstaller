@@ -356,8 +356,10 @@ class App:
         ttk.Entry(top, textvariable=self.search_filename_var, width=20).grid(
             row=2, column=3, padx=2, pady=(5, 0), sticky="w")
 
+        # Кнопки отдельной строкой, а не пятой колонкой: на экране 1024 пикселя
+        # пятая колонка не помещалась и «Сброс» с «Выгрузить» уезжали за край.
         btn_frame = ttk.Frame(top)
-        btn_frame.grid(row=2, column=4, padx=8, pady=(5, 0), sticky="w")
+        btn_frame.grid(row=3, column=0, columnspan=4, padx=2, pady=(8, 0), sticky="w")
         ttk.Button(btn_frame, text="Найти", command=self._do_search).pack(side="left", padx=2)
         ttk.Button(btn_frame, text="Сброс", command=self._reset_search).pack(side="left", padx=2)
         self._export_btn = ttk.Button(btn_frame, text="Выгрузить (0)", command=self._export_found_files, state="disabled")
@@ -369,7 +371,10 @@ class App:
                   font=("Segoe UI", 10)).pack(anchor="w", padx=8)
 
         cols = ("datetime", "device", "person", "filename", "ext", "size", "path")
-        self.search_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
+        # height=5 — это минимум, а не фактический размер: таблица упакована с
+        # expand=True и занимает весь остаток вкладки. Прежние 16 строк задирали
+        # требуемую высоту так, что кнопки и статус уходили за нижний край.
+        self.search_tree = ttk.Treeview(f, columns=cols, show="headings", height=5)
         headings = {
             "datetime": "Дата изм.", "device": "Устройство", "person": "Человек",
             "filename": "Файл", "ext": "Тип", "size": "Размер", "path": "Путь",
@@ -425,7 +430,7 @@ class App:
         nb.add(f, text="Устройства")
 
         cols = ("id", "serial", "label", "name", "person", "first_seen", "last_seen")
-        self.dev_tree = ttk.Treeview(f, columns=cols, show="headings", height=16)
+        self.dev_tree = ttk.Treeview(f, columns=cols, show="headings", height=5)
         headings = {"id": "ID", "serial": "Серийный", "label": "Метка", "name": "Имя",
                     "person": "Человек", "first_seen": "Впервые", "last_seen": "Последний раз"}
         dev_col_widths = {"id": 50, "serial": 200, "label": 150, "name": 150, "person": 150,
@@ -433,23 +438,33 @@ class App:
         for c in cols:
             self.dev_tree.heading(c, text=headings[c])
             self.dev_tree.column(c, width=dev_col_widths[c])
-        self.dev_tree.pack(fill="both", expand=True, padx=5, pady=5)
 
+        # Панель с кнопками пакуется раньше таблицы и прижата к низу: pack
+        # отдаёт место в порядке упаковки, поэтому при нехватке высоты
+        # ужимается таблица, а кнопки остаются на экране.
         edit_frame = ttk.Frame(f)
-        edit_frame.pack(fill="x", padx=5, pady=(0, 5))
-        ttk.Label(edit_frame, text="Номер устройства:").pack(side="left", padx=2)
-        self.edit_dev_id = ttk.Entry(edit_frame, width=6)
+        edit_frame.pack(side="bottom", fill="x", padx=5, pady=(0, 5))
+        self.dev_tree.pack(fill="both", expand=True, padx=5, pady=5)
+        # Два ряда, а не один: в ширину 1024 весь набор полей и кнопок не
+        # помещался, и «Очистить видео» с «Обновить список» уезжали за край.
+        row1 = ttk.Frame(edit_frame)
+        row1.pack(fill="x")
+        ttk.Label(row1, text="Номер устройства:").pack(side="left", padx=2)
+        self.edit_dev_id = ttk.Entry(row1, width=6)
         self.edit_dev_id.pack(side="left", padx=2)
-        ttk.Label(edit_frame, text="Имя:").pack(side="left", padx=2)
-        self.edit_name = ttk.Entry(edit_frame, width=20)
+        ttk.Label(row1, text="Имя:").pack(side="left", padx=2)
+        self.edit_name = ttk.Entry(row1, width=20)
         self.edit_name.pack(side="left", padx=2)
-        ttk.Button(edit_frame, text="Переименовать", command=self._rename_device).pack(side="left", padx=4)
-        ttk.Label(edit_frame, text="Человек:").pack(side="left", padx=2)
-        self.edit_person = ttk.Entry(edit_frame, width=20)
+        ttk.Button(row1, text="Переименовать", command=self._rename_device).pack(side="left", padx=4)
+        ttk.Label(row1, text="Человек:").pack(side="left", padx=2)
+        self.edit_person = ttk.Entry(row1, width=20)
         self.edit_person.pack(side="left", padx=2)
-        ttk.Button(edit_frame, text="Назначить", command=self._assign_person).pack(side="left", padx=4)
-        ttk.Button(edit_frame, text="Очистить видео", command=self._clean_device_videos, style="Danger.TButton").pack(side="left", padx=4)
-        ttk.Button(edit_frame, text="Обновить список", command=self._refresh_devices).pack(side="right", padx=4)
+        ttk.Button(row1, text="Назначить", command=self._assign_person).pack(side="left", padx=4)
+
+        row2 = ttk.Frame(edit_frame)
+        row2.pack(fill="x", pady=(6, 0))
+        ttk.Button(row2, text="Очистить видео", command=self._clean_device_videos, style="Danger.TButton").pack(side="left", padx=2)
+        ttk.Button(row2, text="Обновить список", command=self._refresh_devices).pack(side="left", padx=4)
 
         self.dev_tree.bind("<<TreeviewSelect>>", self._on_device_select)
         self._refresh_devices()
@@ -491,18 +506,28 @@ class App:
         f = ttk.Frame(nb)
         nb.add(f, text="Настройки")
 
-        folder_frame = ttk.LabelFrame(f, text="Папка для резервных копий", padding=10)
-        folder_frame.pack(fill="x", padx=10, pady=10)
+        # Две колонки. В один столбец пять блоков просят 805 пикселей, а на
+        # док-станции вкладке достаётся 440: автоочистка и «О программе»
+        # оказывались за нижним краем и были недостижимы.
+        f.columnconfigure(0, weight=1, uniform="settings")
+        f.columnconfigure(1, weight=1, uniform="settings")
+        left = ttk.Frame(f)
+        left.grid(row=0, column=0, sticky="nsew")
+        right = ttk.Frame(f)
+        right.grid(row=0, column=1, sticky="nsew")
+
+        folder_frame = ttk.LabelFrame(left, text="Папка для резервных копий", padding=10)
+        folder_frame.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(folder_frame, text="Текущая папка:").pack(anchor="w")
         self.backup_dest_var = tk.StringVar(value=get_dest_base())
         ttk.Label(folder_frame, textvariable=self.backup_dest_var,
-                  foreground=self.C["brand"], wraplength=900,
+                  foreground=self.C["brand"], wraplength=420,
                   font=("Segoe UI", 11)).pack(anchor="w", pady=(2, 8))
         ttk.Button(folder_frame, text="Выбрать папку", command=self._change_backup_dest).pack(anchor="w")
 
-        frame = ttk.LabelFrame(f, text="Защита выхода", padding=10)
-        frame.pack(fill="x", padx=10, pady=10)
+        frame = ttk.LabelFrame(left, text="Защита выхода", padding=10)
+        frame.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(frame, text="Выход из программы защищён паролем.").pack(anchor="w")
         self.pw_status = tk.StringVar()
@@ -512,8 +537,8 @@ class App:
 
         self._refresh_pw_status()
 
-        lock_frame = ttk.LabelFrame(f, text="Автоблокировка разделов", padding=10)
-        lock_frame.pack(fill="x", padx=10, pady=(0, 10))
+        lock_frame = ttk.LabelFrame(right, text="Автоблокировка разделов", padding=10)
+        lock_frame.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(lock_frame, text="Время до блокировки (минут, 0 — отключено):").pack(anchor="w")
         self._timeout_var = tk.StringVar(value=str(int(self._lock_timeout / 60)))
@@ -525,8 +550,8 @@ class App:
         ttk.Label(lock_frame, textvariable=self._timeout_status, foreground="gray").pack(anchor="w", pady=(4, 0))
         self._refresh_timeout_status()
 
-        cleanup_frame = ttk.LabelFrame(f, text="Автоочистка старых видео", padding=10)
-        cleanup_frame.pack(fill="x", padx=10, pady=(0, 10))
+        cleanup_frame = ttk.LabelFrame(right, text="Автоочистка старых видео", padding=10)
+        cleanup_frame.pack(fill="x", padx=10, pady=5)
 
         self._cleanup_enabled_var = tk.BooleanVar(value=self._cleanup_enabled)
         ttk.Checkbutton(
@@ -550,8 +575,8 @@ class App:
         ttk.Label(cleanup_frame, textvariable=self._cleanup_status_var,
                   foreground=self.C["fg_muted"]).pack(anchor="w", pady=(6, 0))
 
-        about = ttk.LabelFrame(f, text="О программе", padding=16)
-        about.pack(fill="x", padx=10, pady=(0, 10))
+        about = ttk.LabelFrame(left, text="О программе", padding=10)
+        about.pack(fill="x", padx=10, pady=5)
         ttk.Label(about, text="BestCam USB Backup Manager").pack(anchor="w")
         ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
         ttk.Label(about, text=self._version_text(),
