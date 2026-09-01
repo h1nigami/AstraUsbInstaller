@@ -1,0 +1,36 @@
+name: Release — сборка архива с версией
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать VERSION и архив
+        env:
+          PUBLISHED_AT: ${{ github.event.release.published_at }}
+        run: |
+          DATE="${PUBLISHED_AT%%T*}"
+          echo "$TAG $DATE" > VERSION
+          NAME="astra-usb-monitor-${TAG}.tar.gz"
+          tar -czf "$NAME" \
+              main.py gui.py usb_monitor.py updater.py \
+              start_native.sh install_native.sh update.sh diagnose.sh \
+              start.sh Dockerfile docker-compose.yml requirements.txt \
+              99-astra-usb-monitor-udisks.rules VERSION data tests
+          sha256sum "$NAME" > "${NAME}.sha256"
+          echo "ASSET=$NAME" >> "$GITHUB_ENV"
+
+      - name: Прикрепить к релизу
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber

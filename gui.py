@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt, read_version, touch_copying_marker
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -54,6 +54,16 @@ def _set_exit_password(new_pw):
     cfg = _load_config()
     cfg["exit_password"] = new_pw
     _save_config(cfg)
+
+
+def _is_busy(workers_data):
+    """True while any tracked device is scanning or copying.
+
+    Tests the raw state ("scanning"/"copying"), not the localized display
+    string — renaming a label must not silently disable the updater's busy
+    marker.
+    """
+    return any(d.get("state_raw") in ("scanning", "copying") for d in workers_data.values())
 
 
 class App:
@@ -427,7 +437,7 @@ class App:
 
         edit_frame = ttk.Frame(f)
         edit_frame.pack(fill="x", padx=5, pady=(0, 5))
-        ttk.Label(edit_frame, text="Device ID:").pack(side="left", padx=2)
+        ttk.Label(edit_frame, text="Номер устройства:").pack(side="left", padx=2)
         self.edit_dev_id = ttk.Entry(edit_frame, width=6)
         self.edit_dev_id.pack(side="left", padx=2)
         ttk.Label(edit_frame, text="Имя:").pack(side="left", padx=2)
@@ -544,6 +554,19 @@ class App:
         about.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Label(about, text="BestCam USB Backup Manager").pack(anchor="w")
         ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
+        ttk.Label(about, text=self._version_text(),
+                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(6, 0))
+
+    def _version_text(self):
+        v = read_version()
+        if not v:
+            return "Версия не определена"
+        tag, date = v
+        try:
+            shown = datetime.strptime(date, "%Y-%m-%d").strftime("%d.%m.%y")
+        except ValueError:
+            return "Версия не определена"
+        return f"Версия {tag.lstrip('v')} от {shown}"
 
     def _refresh_timeout_status(self):
         m = int(self._lock_timeout / 60)
@@ -736,15 +759,15 @@ class App:
 
     def _device_label(self, dev_id):
         """Human-facing label for a device: its custom name if set, else the
-        stable Device{id} (which is never renamed and still names the backup
-        folder on disk)."""
+        bare number. The backup folder is named Device{id} regardless and is
+        never renamed."""
         conn = self._get_db()
         try:
             row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
         finally:
             conn.close()
         name = (row[0] if row else "") or ""
-        return name if name else f"Device{dev_id}"
+        return name if name else str(dev_id)
 
     def _refresh_search_filters(self):
         conn = self._get_db()
@@ -752,7 +775,7 @@ class App:
             devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
             self._device_filter_ids = {
-                (r[1] if r[1] else f"Device{r[0]}"): r[0] for r in devices
+                (r[1] if r[1] else str(r[0])): r[0] for r in devices
             }
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
@@ -842,7 +865,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": dev_name if dev_name else f"Device{dev_id}",
+                            "device": dev_name if dev_name else str(dev_id),
                             "person": person or "",
                             "datetime": dt_str,
                         })
@@ -1073,7 +1096,7 @@ class App:
         try:
             conn.execute("UPDATE devices SET name = ? WHERE id = ?", (name, int(dev_id)))
             conn.commit()
-            messagebox.showinfo("Готово", f"Device{dev_id} переименован в {name or '(без имени)'}")
+            messagebox.showinfo("Готово", f"Устройство {dev_id} переименовано в {name or '(без имени)'}")
             self._refresh_devices()
             self._refresh_search_filters()
         except Exception as e:
@@ -1106,7 +1129,7 @@ class App:
             messagebox.showwarning("Ошибка", "Выберите устройство из списка")
             return
         if not dev_id.isdigit():
-            messagebox.showwarning("Ошибка", "Некорректный Device ID")
+            messagebox.showwarning("Ошибка", "Некорректный номер устройства")
             return
 
         label = self._device_label(dev_id)
@@ -1198,6 +1221,7 @@ class App:
                 self.workers_data[device_id] = {
                     "device": display_id,
                     "state": {"scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
+                    "state_raw": state,
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",
                     "size": self._fmt_size(total),
@@ -1207,6 +1231,13 @@ class App:
                 self._refresh_workers()
         except queue.Empty:
             pass
+
+        # Выполняется на каждом тике (раз в 200мс) независимо от того, было ли
+        # что-то в очереди — один большой файл может копироваться минутами без
+        # единого сообщения в очереди, и маркер не должен за это время устареть.
+        if _is_busy(self.workers_data):
+            touch_copying_marker()
+
         try:
             self.root.after(POLL_MS, self._poll_queue)
         except tk.TclError:

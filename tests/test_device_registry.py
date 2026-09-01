@@ -143,5 +143,14 @@ class ResolveDeviceIdTest(unittest.TestCase):
         self.assertEqual(row[0], "sdz1")
 
 
+class FriendlyLabelTest(unittest.TestCase):
+    def test_custom_name_wins(self):
+        self.assertEqual(um._friendly_device_label(3, "Проходная"), "Проходная")
+
+    def test_falls_back_to_bare_number(self):
+        self.assertEqual(um._friendly_device_label(3, ""), "3")
+        self.assertEqual(um._friendly_device_label(3, None), "3")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -62,5 +62,23 @@ class GuiConfigTest(unittest.TestCase):
         self.assertEqual(cfg["backup_dest"], "/x")
 
 
+@unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
+class BusyMarkerTest(unittest.TestCase):
+    """_is_busy drives the updater's busy marker — it must key off the raw
+    state, not the localized label, so renaming a label can't silently
+    disable it."""
+
+    def test_idle_when_no_workers(self):
+        self.assertFalse(gui_mod._is_busy({}))
+
+    def test_busy_while_scanning_or_copying(self):
+        self.assertTrue(gui_mod._is_busy({1: {"state_raw": "scanning"}}))
+        self.assertTrue(gui_mod._is_busy({1: {"state_raw": "copying"}}))
+
+    def test_idle_when_done_or_error(self):
+        self.assertFalse(gui_mod._is_busy({1: {"state_raw": "done"}}))
+        self.assertFalse(gui_mod._is_busy({1: {"state_raw": "error"}}))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

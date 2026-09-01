@@ -31,6 +31,7 @@ USE_RICH = HAS_RICH and IS_TTY
 
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 DEST_MARKER_FILE = ".astra_dest"
+VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
 _DEST_CFG_RELPATH = "backup_mount_relpath"
 _DEST_CFG_UUID = "backup_fs_uuid"
 _DEST_CFG_SERIAL = "backup_device_serial"
@@ -38,6 +39,46 @@ _DEST_CFG_KEYS = (_DEST_CFG_RELPATH, _DEST_CFG_UUID, _DEST_CFG_SERIAL)
 
 VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
               ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
+
+
+def read_version(path=None):
+    """Return (tag, date) from the VERSION file, or None when unavailable.
+
+    The file is written by the release workflow and by install_native.sh; a
+    missing or malformed file is normal for a source checkout and must never
+    break the app.
+    """
+    try:
+        with open(path or VERSION_FILE) as f:
+            parts = f.read().split()
+    except Exception:
+        return None
+    if len(parts) != 2:
+        return None
+    return parts[0], parts[1]
+
+
+COPYING_MARKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "data", ".copying")
+
+
+def touch_copying_marker():
+    """Stamp the marker the updater reads to know a backup is in flight."""
+    try:
+        os.makedirs(os.path.dirname(COPYING_MARKER), exist_ok=True)
+        with open(COPYING_MARKER, "w") as f:
+            f.write("")
+    except OSError:
+        pass
+
+
+def is_copying(path=None, max_age=60):
+    """True while a backup is running. A stale or missing marker means idle —
+    a crashed GUI must not block updates forever."""
+    try:
+        return (time.time() - os.path.getmtime(path or COPYING_MARKER)) < max_age
+    except OSError:
+        return False
 
 
 def _load_config():
@@ -487,9 +528,9 @@ def _get_device_name(conn, device_id):
 
 def _friendly_device_label(device_id, name):
     """Human-facing label for a device: its custom name when set, else the
-    stable Device{id} (which is always the backup folder name and never
-    renamed)."""
-    return name if name else f"Device{device_id}"
+    bare number. The backup folder is named Device{id} regardless and is
+    never renamed."""
+    return name if name else str(device_id)
 
 
 def _create_device(conn, serial, label, devname):
@@ -505,7 +546,7 @@ def _create_device(conn, serial, label, devname):
     )
     conn.commit()
     did = cur.lastrowid
-    print(f"  New device registered: Device{did} ({label or devname or serial})", flush=True)
+    print(f"  New device registered: {did} ({label or devname or serial})", flush=True)
     return did
 
 

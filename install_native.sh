@@ -136,8 +136,24 @@ fi
 echo "--- Установка приложения в $APP_DIR..."
 $SUDO mkdir -p "$APP_DIR"
 $SUDO cp "$SRC_DIR/main.py" "$SRC_DIR/gui.py" "$SRC_DIR/usb_monitor.py" \
-         "$SRC_DIR/start_native.sh" "$APP_DIR/"
+         "$SRC_DIR/updater.py" "$SRC_DIR/start_native.sh" "$APP_DIR/"
 $SUDO chmod 755 "$APP_DIR/start_native.sh"
+
+# VERSION приезжает в архиве релиза. При установке из git-клона его нет —
+# собираем из тега, чтобы в Настройках было видно, что именно стоит.
+FROM_RELEASE=0
+if [ -f "$SRC_DIR/VERSION" ]; then
+    $SUDO cp "$SRC_DIR/VERSION" "$APP_DIR/VERSION"
+    FROM_RELEASE=1
+elif [ -d "$SRC_DIR/.git" ] && command -v git >/dev/null 2>&1; then
+    _tag=$(cd "$SRC_DIR" && git describe --tags --abbrev=0 2>/dev/null || true)
+    if [ -n "$_tag" ]; then
+        _date=$(cd "$SRC_DIR" && git log -1 --format=%cd --date=format:%Y-%m-%d "$_tag" 2>/dev/null || true)
+        if [ -n "$_date" ]; then
+            echo "$_tag $_date" | $SUDO tee "$APP_DIR/VERSION" > /dev/null
+        fi
+    fi
+fi
 # data/ (база и конфиг) при переустановке не трогаем, но логотип — часть
 # приложения, его кладём/обновляем всегда (GUI ищет data/LOGO-1.png рядом
 # с gui.py).
@@ -172,6 +188,34 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE_NAME.service"
 $SUDO systemctl restart "$SERVICE_NAME.service"
 
+# --- 6. Автообновление --------------------------------------------------------
+echo "--- Настройка автообновления с GitHub..."
+$SUDO tee "/etc/systemd/system/astra-usb-update.service" > /dev/null << EOF
+[Unit]
+Description=Astra USB Monitor — проверка и установка обновлений с GitHub
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+ExecStart=/usr/bin/python3 $APP_DIR/updater.py
+Environment=PYTHONUNBUFFERED=1
+EOF
+
+$SUDO tee "/etc/systemd/system/astra-usb-update.timer" > /dev/null << 'EOF'
+[Unit]
+Description=Проверять обновления Astra USB Monitor
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+
+[Install]
+WantedBy=timers.target
+EOF
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable --now astra-usb-update.timer
+
 # Не рапортуем «Готово», не убедившись, что сервис действительно жив.
 sleep 3
 if ! $SUDO systemctl is-active --quiet "$SERVICE_NAME.service"; then
@@ -199,4 +243,12 @@ echo "Новые USB-носители рабочий стол теперь не 
 echo "это защищает от двойного mount. Если нужно выбрать НОВЫЙ USB-диск как"
 echo "диск назначения, сначала смонтируйте его вручную в файловом менеджере."
 echo ""
+if [ "$FROM_RELEASE" -ne 1 ]; then
+    echo "ВНИМАНИЕ: установка не из релизного архива GitHub (файла VERSION в"
+    echo "исходниках не было). Таймер автообновления включён и первый раз"
+    echo "сработает уже через 10 минут после загрузки — он заменит эту сборку"
+    echo "последним релизом с GitHub. Если сейчас это не нужно, отключите таймер:"
+    echo "  systemctl disable --now astra-usb-update.timer"
+    echo ""
+fi
 echo "Удаление: systemctl disable --now $SERVICE_NAME"
