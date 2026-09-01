@@ -51,7 +51,7 @@ def read_version(path=None):
     try:
         with open(path or VERSION_FILE) as f:
             parts = f.read().split()
-    except OSError:
+    except Exception:
         return None
     if len(parts) != 2:
         return None

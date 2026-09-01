@@ -34,3 +34,10 @@ class ReadVersionTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = self._write(d, "  v2.0   2026-09-01  \n")
             self.assertEqual(um.read_version(path), ("v2.0", "2026-09-01"))
+
+    def test_invalid_utf8_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "VERSION")
+            with open(path, "wb") as f:
+                f.write(b"\xff\xfe\x00binary")
+            self.assertIsNone(um.read_version(path))
