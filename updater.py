@@ -143,6 +143,13 @@ def _clear_failed_tag(path=None):
 
 
 def _rollback():
+    """
+    ponytail: откатывается только APP_DIR — юниты systemd
+    (astra-usb-monitor.service, astra-usb-update.{service,timer}) и
+    udev-правило не восстанавливаются. Обе версии сейчас используют один
+    и тот же ExecStart, поэтому это не страшно; но релиз, меняющий unit-файл
+    или точку входа, так откатить не получится — понадобится ручной визит.
+    """
     _log("новая версия не поднялась — откат на предыдущую")
     _restore_app_dir(PREV_DIR, APP_DIR)
     subprocess.run(["systemctl", "restart", SERVICE], timeout=120)
@@ -164,18 +171,41 @@ def _apply(src_dir, tag):
         if result.returncode != 0:
             raise RuntimeError(f"установщик вернул {result.returncode}")
 
+        # start_native.sh — бесконечный цикл: он ловит падение python и просто
+        # перезапускает GUI каждые 5 секунд, сам никогда не завершаясь. Из-за
+        # этого systemctl is-active остаётся "active", а NRestarts — 0 даже
+        # для битого релиза, и _service_healthy() ничего не замечает. Поэтому
+        # сначала проверяем напрямую, что новый код вообще импортируется.
+        probe = subprocess.run([sys.executable, "-c", "import gui, usb_monitor, main"],
+                               cwd=APP_DIR, timeout=60)
+        if probe.returncode != 0:
+            raise RuntimeError("новая версия не импортируется")
+
         subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
         time.sleep(60)
         if not _service_healthy():
             raise RuntimeError("сервис не поднялся после обновления")
     except Exception as e:
         _log(f"установка не удалась ({e})")
-        _rollback()
         _write_failed_tag(tag)
+        _rollback()
         return 1
 
     shutil.rmtree(PREV_DIR, ignore_errors=True)
-    _clear_failed_tag()
+
+    # Установка прошла и сервис жив, но VERSION мог не совпасть с ожидаемым
+    # тегом (архив собран не релизным workflow) — тогда без этой проверки
+    # каждый тик таймера видел бы current != latest и ставил бы то же самое
+    # заново до бесконечности.
+    installed = usb_monitor.read_version()
+    installed_tag = installed[0] if installed else None
+    if installed_tag != tag:
+        _log(f"после установки VERSION даёт {installed_tag}, а не {tag} — "
+             "повторные попытки этого релиза остановлены")
+        _write_failed_tag(tag)
+    else:
+        _clear_failed_tag()
+
     _log("обновление установлено")
     return 0
 
