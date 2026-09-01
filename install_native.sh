@@ -146,8 +146,10 @@ if [ -f "$SRC_DIR/VERSION" ]; then
 elif [ -d "$SRC_DIR/.git" ] && command -v git >/dev/null 2>&1; then
     _tag=$(cd "$SRC_DIR" && git describe --tags --abbrev=0 2>/dev/null || true)
     if [ -n "$_tag" ]; then
-        _date=$(cd "$SRC_DIR" && git log -1 --format=%cd --date=format:%Y-%m-%d "$_tag")
-        echo "$_tag $_date" | $SUDO tee "$APP_DIR/VERSION" > /dev/null
+        _date=$(cd "$SRC_DIR" && git log -1 --format=%cd --date=format:%Y-%m-%d "$_tag" 2>/dev/null || true)
+        if [ -n "$_date" ]; then
+            echo "$_tag $_date" | $SUDO tee "$APP_DIR/VERSION" > /dev/null
+        fi
     fi
 fi
 # data/ (база и конфиг) при переустановке не трогаем, но логотип — часть
