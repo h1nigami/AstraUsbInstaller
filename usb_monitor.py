@@ -58,6 +58,29 @@ def read_version(path=None):
     return parts[0], parts[1]
 
 
+COPYING_MARKER = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "data", ".copying")
+
+
+def touch_copying_marker():
+    """Stamp the marker the updater reads to know a backup is in flight."""
+    try:
+        os.makedirs(os.path.dirname(COPYING_MARKER), exist_ok=True)
+        with open(COPYING_MARKER, "w") as f:
+            f.write("")
+    except OSError:
+        pass
+
+
+def is_copying(path=None, max_age=60):
+    """True while a backup is running. A stale or missing marker means idle —
+    a crashed GUI must not block updates forever."""
+    try:
+        return (time.time() - os.path.getmtime(path or COPYING_MARKER)) < max_age
+    except OSError:
+        return False
+
+
 def _load_config():
     try:
         with open(_CONFIG_PATH) as f:

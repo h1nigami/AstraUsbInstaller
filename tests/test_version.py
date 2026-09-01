@@ -3,7 +3,9 @@
 import os
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -41,3 +43,25 @@ class ReadVersionTest(unittest.TestCase):
             with open(path, "wb") as f:
                 f.write(b"\xff\xfe\x00binary")
             self.assertIsNone(um.read_version(path))
+
+
+class CopyingMarkerTest(unittest.TestCase):
+    def test_absent_marker_means_idle(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(um.is_copying(os.path.join(d, ".copying")))
+
+    def test_fresh_marker_means_busy(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, ".copying")
+            with mock.patch.object(um, "COPYING_MARKER", path):
+                um.touch_copying_marker()
+            self.assertTrue(um.is_copying(path))
+
+    def test_stale_marker_means_idle(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, ".copying")
+            with open(path, "w"):
+                pass
+            old = time.time() - 3600
+            os.utime(path, (old, old))
+            self.assertFalse(um.is_copying(path))
