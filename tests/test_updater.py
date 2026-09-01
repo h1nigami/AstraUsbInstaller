@@ -139,3 +139,38 @@ class RestoreAppDirTest(unittest.TestCase):
             with open(os.path.join(app_dir, "data", "devices.db")) as f:
                 self.assertEqual(f.read(), "история устройств — не трогать")
             self.assertTrue(os.path.isdir(app_dir))
+
+
+class FailedTagTest(unittest.TestCase):
+    """Тег провалившегося релиза переживает откат, чтобы апдейтер не
+    пытался ставить его же на каждом следующем тике таймера."""
+
+    def test_write_then_read_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "app.failed")
+            updater._write_failed_tag("v1.3", path)
+            self.assertEqual(updater._read_failed_tag(path), "v1.3")
+
+    def test_read_missing_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "missing.failed")
+            self.assertIsNone(updater._read_failed_tag(path))
+
+    def test_read_unreadable_content_returns_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            # Каталог вместо файла — open() падает, как и на битом файле.
+            path = os.path.join(d, "app.failed")
+            os.makedirs(path)
+            self.assertIsNone(updater._read_failed_tag(path))
+
+    def test_clear_removes_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "app.failed")
+            updater._write_failed_tag("v1.3", path)
+            updater._clear_failed_tag(path)
+            self.assertIsNone(updater._read_failed_tag(path))
+
+    def test_clear_missing_file_does_not_raise(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "missing.failed")
+            updater._clear_failed_tag(path)

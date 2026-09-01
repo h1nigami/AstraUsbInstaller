@@ -25,6 +25,10 @@ REPO = "h1nigami/AstraUsbInstaller"
 LATEST_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 PREV_DIR = APP_DIR + ".prev"
+# Вне APP_DIR: откат восстанавливает APP_DIR из PREV_DIR, а тег провалившегося
+# релиза должен пережить этот откат, иначе тот же релиз ставится заново на
+# каждом тике таймера.
+FAILED_TAG_FILE = APP_DIR + ".failed"
 SERVICE = "astra-usb-monitor"
 
 
@@ -114,30 +118,64 @@ def _restore_app_dir(prev_dir, app_dir):
     shutil.copytree(prev_dir, app_dir, symlinks=True, dirs_exist_ok=True)
 
 
+def _read_failed_tag(path=None):
+    """Тег релиза, который уже пробовали ставить и откатили, или None."""
+    try:
+        with open(path or FAILED_TAG_FILE) as f:
+            return f.read().strip() or None
+    except Exception:
+        return None
+
+
+def _write_failed_tag(tag, path=None):
+    try:
+        with open(path or FAILED_TAG_FILE, "w") as f:
+            f.write(tag)
+    except Exception:
+        pass
+
+
+def _clear_failed_tag(path=None):
+    try:
+        os.remove(path or FAILED_TAG_FILE)
+    except Exception:
+        pass
+
+
 def _rollback():
     _log("новая версия не поднялась — откат на предыдущую")
     _restore_app_dir(PREV_DIR, APP_DIR)
     subprocess.run(["systemctl", "restart", SERVICE], timeout=120)
 
 
-def _apply(src_dir):
+def _apply(src_dir, tag):
     """Снять копию текущей установки, запустить установщик, проверить,
-    при неудаче откатиться."""
+    при неудаче откатиться.
+
+    Установщик может зависнуть (TimeoutExpired) или не найтись (нет bash/
+    systemctl) — оба случая ловятся общим except, а не только неверный код
+    возврата, иначе точка останется на середине подмены файлов и без отката.
+    """
     _backup_app_dir(APP_DIR, PREV_DIR)
 
-    installer = os.path.join(src_dir, "install_native.sh")
-    result = subprocess.run(["bash", installer], cwd=src_dir, timeout=1800)
-    if result.returncode != 0:
-        _rollback()
-        return 1
+    try:
+        installer = os.path.join(src_dir, "install_native.sh")
+        result = subprocess.run(["bash", installer], cwd=src_dir, timeout=1800)
+        if result.returncode != 0:
+            raise RuntimeError(f"установщик вернул {result.returncode}")
 
-    subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
-    time.sleep(60)
-    if not _service_healthy():
+        subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
+        time.sleep(60)
+        if not _service_healthy():
+            raise RuntimeError("сервис не поднялся после обновления")
+    except Exception as e:
+        _log(f"установка не удалась ({e})")
         _rollback()
+        _write_failed_tag(tag)
         return 1
 
     shutil.rmtree(PREV_DIR, ignore_errors=True)
+    _clear_failed_tag()
     _log("обновление установлено")
     return 0
 
@@ -155,6 +193,10 @@ def main():
     latest_tag = release.get("tag_name")
     if not needs_update(current_tag, latest_tag):
         _log(f"актуальная версия: {current_tag}")
+        return 0
+
+    if latest_tag == _read_failed_tag():
+        _log(f"релиз {latest_tag} уже откатывали — пропуск")
         return 0
 
     if usb_monitor.is_copying():
@@ -187,8 +229,15 @@ def main():
         roots = [os.path.join(unpacked, n) for n in os.listdir(unpacked)]
         src_dir = roots[0] if len(roots) == 1 and os.path.isdir(roots[0]) else unpacked
 
+        # is_copying() проверялся ещё до скачивания архива — за это время
+        # (до 300с на архив + время на сумму и распаковку) могла начаться
+        # запись флешки, которую снесёт systemctl restart из install_native.sh.
+        if usb_monitor.is_copying():
+            _log("копирование началось во время загрузки — обновление отложено")
+            return 0
+
         _log(f"ставим {latest_tag} (было {current_tag})")
-        return _apply(src_dir)
+        return _apply(src_dir, latest_tag)
 
 
 if __name__ == "__main__":
