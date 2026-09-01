@@ -433,7 +433,7 @@ class App:
         self.dev_tree = ttk.Treeview(f, columns=cols, show="headings", height=5)
         headings = {"id": "ID", "serial": "Серийный", "label": "Метка", "name": "Имя",
                     "person": "Человек", "first_seen": "Впервые", "last_seen": "Последний раз"}
-        dev_col_widths = {"id": 50, "serial": 200, "label": 150, "name": 150, "person": 150,
+        dev_col_widths = {"id": 90, "serial": 200, "label": 150, "name": 150, "person": 150,
                           "first_seen": 160, "last_seen": 160}
         for c in cols:
             self.dev_tree.heading(c, text=headings[c])
