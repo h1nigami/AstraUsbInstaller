@@ -16,6 +16,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={autopf}\BestCam Station
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+VersionInfoVersion={#AppVersion}
 OutputBaseFilename=BestCamStationSetup
 Compression=lzma2/max
 SolidCompression=yes
