@@ -37,16 +37,20 @@ def pick_asset(release):
 
     Оба файла обязательны: без контрольной суммы устанавливать ничего не будем.
     """
-    tarball = checksum = None
-    for asset in release.get("assets", []):
-        name = asset.get("name", "")
-        url = asset.get("browser_download_url")
-        if name.endswith(".sha256"):
-            checksum = url
-        elif name.endswith(".tar.gz"):
-            tarball = url
-    if tarball and checksum:
-        return tarball, checksum
+    # Сумма ищется по имени именно этого архива. В релизе может лежать сборка
+    # для другой платформы со своим .sha256, и если брать любой попавшийся файл
+    # с таким расширением, точка скачает свой архив и сверит его с чужой суммой —
+    # обновления встанут на всех точках сразу.
+    urls = {
+        a.get("name", ""): a.get("browser_download_url")
+        for a in release.get("assets", [])
+    }
+    for name, url in urls.items():
+        if not name.endswith(".tar.gz") or not url:
+            continue
+        checksum = urls.get(name + ".sha256")
+        if checksum:
+            return url, checksum
     return None
 
 

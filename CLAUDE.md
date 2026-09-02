@@ -128,6 +128,29 @@ plus a `.sha256`, and uploads both as release assets — this is the archive
   `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md` for
   the full design.
 
+## Releases while the Avalonia rewrite is in progress
+
+Deployed kiosks run the Python version and pull `releases/latest` on a timer.
+Anything that becomes `latest` is installed on every point automatically, so
+the rewrite must not reach them by accident. Three rules keep that from
+happening:
+
+1. **Publish rewrite builds as pre-releases.** GitHub's `releases/latest`
+   endpoint skips pre-releases, and that endpoint is exactly what `updater.py`
+   queries — so a pre-release is invisible to deployed points. Only mark a
+   rewrite release as a full release once it is meant to replace the Python
+   version everywhere.
+2. **Keep the rewrite out of `master` until it ships.** `release.yml` builds
+   the Python archive from an explicit file list; the `avalonia/` directory is
+   not in it, but a release published from a branch that reorganises the
+   project would still change what points receive.
+3. **Never ship a Windows archive as `.tar.gz`.** `pick_asset` selects the
+   `.tar.gz` asset and the checksum named after it. A second `.tar.gz` in the
+   same release would be ambiguous; a `.zip` is ignored, which is what we want.
+
+`tests/test_updater.py::MixedAssetsTest` pins rule 3: a release carrying both
+platforms must still hand a Python point its own archive and its own checksum.
+
 ## Development branch
 
-Active feature branch: `claude/version-and-auto-update`. Base: `master`.
+Active feature branch: `claude/avalonia-rewrite`. Base: `master`.
