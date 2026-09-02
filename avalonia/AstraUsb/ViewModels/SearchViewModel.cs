@@ -88,6 +88,15 @@ public sealed partial class SearchViewModel : ObservableObject
     [ObservableProperty] private string _noteInput = "";
     [ObservableProperty] private FoundFile? _current;
 
+    /// <summary>Формат, в который переводить выбранную запись.</summary>
+    [ObservableProperty] private string _format = "";
+
+    /// <summary>Форматы, доступные для выбранной записи.</summary>
+    public ObservableCollection<string> Formats { get; } = new();
+
+    /// <summary>Преобразование идёт: второй раз запускать не нужно.</summary>
+    [ObservableProperty] private bool _converting;
+
     /// <summary>Сколько строк отобрано: число выносится в подписи действий.</summary>
     public int SelectedCount => Results.Count(r => r.Selected);
 
@@ -134,7 +143,89 @@ public sealed partial class SearchViewModel : ObservableObject
         Department = Departments.FirstOrDefault(d => d.Id == kept) ?? Departments[0];
     }
 
-    partial void OnCurrentChanged(FoundFile? value) => NoteInput = value?.Note ?? "";
+    partial void OnCurrentChanged(FoundFile? value)
+    {
+        NoteInput = value?.Note ?? "";
+
+        // Форматы зависят от рода записи: видео не переводят в звук.
+        Format = "";
+        Formats.Clear();
+        if (value is not null)
+            foreach (var format in MediaTools.FormatsFor(value.Row.Kind))
+                Formats.Add(format);
+
+        Format = Formats.FirstOrDefault() ?? "";
+    }
+
+    /// <summary>
+    /// Открывает запись тем, чем система открывает такие файлы. Своего
+    /// проигрывателя у станции нет: он потребовал бы кодеки в сборке.
+    /// </summary>
+    [RelayCommand]
+    private void Play()
+    {
+        if (Current is not { } file)
+        {
+            Hint = "выберите запись в списке";
+            return;
+        }
+
+        var result = MediaTools.Open(file.Path);
+        Hint = result.Message;
+
+        if (result.Ok)
+            new ActionLog(_dbPath).Write(ActionLog.Export,
+                $"просмотр записи {Path.GetFileName(file.Path)}");
+    }
+
+    /// <summary>
+    /// Переводит запись в другой формат рядом с исходной. Исходная остаётся:
+    /// она собрана с регистратора, и рисковать ею ради копии нельзя.
+    /// </summary>
+    [RelayCommand]
+    private async Task ConvertFile()
+    {
+        if (Converting)
+            return;
+
+        if (Current is not { } file)
+        {
+            Hint = "выберите запись в списке";
+            return;
+        }
+
+        if (Format.Length == 0)
+        {
+            Hint = "выберите формат";
+            return;
+        }
+
+        var path = file.Path;
+        var format = Format;
+
+        Converting = true;
+        Hint = $"переводим в {format}";
+
+        try
+        {
+            var result = await Task.Run(() => MediaTools.Convert(path, format));
+            Hint = result.Ok
+                ? $"готова копия: {result.Message}"
+                : result.Message;
+
+            if (result.Ok)
+                new ActionLog(_dbPath).Write(ActionLog.Export,
+                    $"запись {Path.GetFileName(path)} переведена в {format}");
+        }
+        catch (Exception e)
+        {
+            Hint = $"преобразование не удалось: {e.Message}";
+        }
+        finally
+        {
+            Converting = false;
+        }
+    }
 
     /// <summary>
     /// Ищет записи. Запрос уходит в сторону от интерфейса: по журналу за год он

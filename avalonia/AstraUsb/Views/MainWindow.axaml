@@ -458,22 +458,36 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-            <Button Content="Отобрать все" Height="46" FontSize="12"
-                    Command="{Binding Search.SelectAllCommand}" />
-            <TextBox Text="{Binding Search.NoteInput}" Width="150" Height="46"
-                     Watermark="заметка" />
-            <Button Content="Заметка" Height="46" FontSize="12"
-                    Command="{Binding Search.SaveNoteCommand}" />
-            <Button Content="Защита" Height="46" FontSize="12"
-                    Command="{Binding Search.ToggleImportantCommand}" />
-            <TextBox Text="{Binding Search.ExportTarget}" Width="150" Height="46"
-                     Watermark="куда выгрузить" />
-            <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="46"
-                    FontSize="12" IsEnabled="{Binding !Search.Exporting}"
-                    Command="{Binding Search.ExportCommand}" />
-            <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="46"
-                    FontSize="12" Command="{Binding Search.DeleteCommand}" />
+          <StackPanel Grid.Row="2" Spacing="6" Margin="0,8,0,0">
+            <!-- Действия над выбранной записью -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="Смотреть" Height="46" FontSize="12"
+                      Command="{Binding Search.PlayCommand}" />
+              <ComboBox ItemsSource="{Binding Search.Formats}"
+                        SelectedItem="{Binding Search.Format}" Width="96" Height="46" />
+              <Button Content="Перевести" Height="46" FontSize="12"
+                      IsEnabled="{Binding !Search.Converting}"
+                      Command="{Binding Search.ConvertFileCommand}" />
+              <TextBox Text="{Binding Search.NoteInput}" Width="160" Height="46"
+                       Watermark="заметка" />
+              <Button Content="Заметка" Height="46" FontSize="12"
+                      Command="{Binding Search.SaveNoteCommand}" />
+              <Button Content="Защита" Height="46" FontSize="12"
+                      Command="{Binding Search.ToggleImportantCommand}" />
+            </StackPanel>
+
+            <!-- Действия над отобранными галочками -->
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="Отобрать все" Height="46" FontSize="12"
+                      Command="{Binding Search.SelectAllCommand}" />
+              <TextBox Text="{Binding Search.ExportTarget}" Width="230" Height="46"
+                       Watermark="куда выгрузить: папка или флешка" />
+              <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="46"
+                      FontSize="12" IsEnabled="{Binding !Search.Exporting}"
+                      Command="{Binding Search.ExportCommand}" />
+              <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="46"
+                      FontSize="12" Command="{Binding Search.DeleteCommand}" />
+            </StackPanel>
           </StackPanel>
         </Grid>
       </TabItem>
