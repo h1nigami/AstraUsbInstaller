@@ -43,6 +43,10 @@ echo "--- Проверка системных библиотек..."
 NEEDED_LIBS="libfontconfig.so.1 libX11.so.6 libSM.so.6 libICE.so.6"
 PACKAGES="libfontconfig1 libx11-6 libsm6 libice6"
 
+# Не обязательны, но без них молчат тревога и подсказки: alsa-utils играет
+# сигнал, speech-dispatcher произносит фразы. Ставим, если репозиторий доступен.
+OPTIONAL_PACKAGES="alsa-utils speech-dispatcher ffmpeg"
+
 missing_libs() {
     local lib found=""
     for lib in $NEEDED_LIBS; do
@@ -70,6 +74,11 @@ if [ -n "$MISSING" ]; then
         echo "    sudo apt-get install $PACKAGES"
         exit 1
     fi
+fi
+
+echo "--- Необязательные пакеты: звук, речь, преобразование форматов..."
+if command -v apt-get >/dev/null 2>&1; then
+    $SUDO apt-get install -y $OPTIONAL_PACKAGES ||         echo "Не поставились: без них молчат тревога и подсказки, а форматы не переводятся"
 fi
 
 # --- 2. Python-версия на той же станции --------------------------------------
@@ -145,4 +154,9 @@ echo "Установлено в $APP_DIR"
 echo "Состояние:  systemctl status $SERVICE_NAME"
 echo "Журнал:     journalctl -u $SERVICE_NAME -f"
 echo
-echo "Пароль станции по умолчанию: exit. Смените его в разделе «Настройки»."
+echo "Учётная запись по умолчанию: admin, пароль 888888."
+echo "Смените их в разделе «Настройки», подраздел «Доступ»."
+echo
+echo "Веб-панель выключена. Включается в разделе «Настройки», подраздел"
+echo "«Веб-панель»; после включения нужен перезапуск программы, а порт"
+echo "придётся открыть в брандмауэре станции вручную."

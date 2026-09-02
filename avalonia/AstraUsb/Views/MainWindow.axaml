@@ -838,6 +838,11 @@
                   <CheckBox Content="Звуковая тревога при нехватке места и обрыве сети"
                             IsChecked="{Binding Settings.AlarmSound}" />
 
+                  <CheckBox Content="Голосовые подсказки о готовности отсеков"
+                            IsChecked="{Binding Settings.VoiceHints}" />
+                  <TextBlock Classes="hint"
+                             Text="Синтез речи берётся системный. Если его в системе нет, подсказки молчат, а работа станции не меняется." />
+
                   <Button Classes="primary" Content="Сохранить" Height="52" Width="180"
                           HorizontalAlignment="Left"
                           Command="{Binding Settings.SaveStorageCommand}" />

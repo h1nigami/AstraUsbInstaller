@@ -793,7 +793,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             };
 
             if (report.Stage is BackupStage.Done or BackupStage.Failed)
+            {
                 _finished[mountPoint] = report.Stage;
+
+                if (_stationSettings.VoiceHints)
+                    Voice.Say(report.Stage == BackupStage.Done
+                        ? $"Отсек {port.Slot + 1}, можно забирать регистратор"
+                        : $"Отсек {port.Slot + 1}, ошибка загрузки", DateTime.Now);
+            }
         });
 
         _ = Task.Run(async () =>
