@@ -1,0 +1,1336 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/organic-04d377a8-3c73-421c-8b45-badc6e95c76e/styles.css">
+  <script src="_ds/organic-04d377a8-3c73-421c-8b45-badc6e95c76e/_ds_bundle.js"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&family=Manrope:wght@400;500;600;700&display=swap&subset=cyrillic,latin">
+  <style>
+    :root {
+      --font-heading: "Nunito", system-ui, sans-serif;
+      --font-heading-weight: 800;
+      --font-body: "Manrope", system-ui, sans-serif;
+      --color-bg: #eef3f9;
+      --color-surface: #dde7f2;
+      --color-text: #16202c;
+      --color-accent: #2f77ad;
+      --color-accent-2: #3f9ba6;
+      --color-divider: color-mix(in srgb, #16202c 16%, transparent);
+      --color-neutral-100: #f7fafd;
+      --color-neutral-200: #e9f0f7;
+      --color-neutral-300: #d3dee9;
+      --color-neutral-400: #b2c1d1;
+      --color-neutral-500: #90a1b5;
+      --color-neutral-600: #71839a;
+      --color-neutral-700: #56677e;
+      --color-neutral-800: #3a495c;
+      --color-neutral-900: #212d3b;
+      --color-accent-100: #eaf3fc;
+      --color-accent-200: #d0e4f8;
+      --color-accent-300: #a7caee;
+      --color-accent-400: #72a9de;
+      --color-accent-500: #3f84c5;
+      --color-accent-600: #2a68a6;
+      --color-accent-700: #1d4f83;
+      --color-accent-800: #143a61;
+      --color-accent-900: #0d2740;
+      --color-accent-2-100: #e6f6f8;
+      --color-accent-2-200: #c8eaee;
+      --color-accent-2-300: #9dd7de;
+      --color-accent-2-400: #69bcc6;
+      --color-accent-2-500: #3f9ba6;
+      --color-accent-2-600: #2c7d88;
+      --color-accent-2-700: #1f6069;
+      --color-accent-2-800: #16454c;
+      --color-accent-2-900: #0f2f34;
+    }
+    html, body { margin: 0; padding: 0; background: var(--color-bg); font-family: var(--font-body); }
+    * { box-sizing: border-box; }
+    button, input, textarea { font-family: var(--font-body); }
+    a { color: var(--color-accent-700); text-decoration: none; }
+    a:hover { color: var(--color-accent-600); }
+    ::-webkit-scrollbar { width: 12px; height: 12px; }
+    ::-webkit-scrollbar-thumb { background: var(--color-neutral-400); border-radius: 999px; border: 3px solid var(--color-bg); }
+  </style>
+</helmet>
+
+<div style="display:flex;flex-direction:column;height:100vh;min-height:0;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);overflow:hidden">
+
+  <div style="display:flex;align-items:center;gap:var(--space-4);padding:12px 20px;background:var(--color-neutral-100);border-bottom:1px solid var(--color-divider);flex:none">
+    <div style="display:flex;align-items:center;gap:12px;flex:none">
+      <div style="width:52px;height:52px;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);display:grid;place-items:center;font-family:var(--font-heading);font-size:19px;box-shadow:var(--shadow-sm)">BC</div>
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <div style="font-family:var(--font-heading);font-size:21px;line-height:1">BestCam BC-10</div>
+        <div style="font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--color-neutral-600)">Терминал сбора и хранения данных</div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:baseline;gap:10px;margin-left:14px;padding:6px 18px;border-radius:999px;background:var(--color-bg);border:1px solid var(--color-divider);flex:none">
+      <span style="font-family:var(--font-heading);font-size:26px;line-height:1">{{ clock }}</span>
+      <span style="font-size:13px;color:var(--color-neutral-600)">{{ today }}</span>
+    </div>
+
+    <div style="flex:1;min-width:0"></div>
+
+    <div style="display:flex;gap:10px;flex:none">
+      <button class="btn" onClick="{{ askExit }}" style="min-height:52px;padding:0 20px;font-size:15px;font-weight:600;background:var(--color-accent-800);color:var(--color-neutral-100)" style-hover="background:var(--color-accent-900)">Выход</button>
+    </div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:10px;padding:10px 20px;background:var(--color-bg);border-bottom:1px solid var(--color-divider);flex:none;flex-wrap:wrap">
+    <sc-for list="{{ navItems }}" as="t" hint-placeholder-count="3">
+      <button onClick="{{ t.on }}" style="min-height:54px;padding:0 26px;border:1px solid {{ t.bd }};border-radius:999px;background:{{ t.bg }};color:{{ t.fg }};font-size:16px;font-weight:700;cursor:pointer" style-hover="border-color:var(--color-accent)">{{ t.label }}</button>
+    </sc-for>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <sc-for list="{{ statusPills }}" as="p" hint-placeholder-count="3">
+        <span style="display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;font-size:13px;font-weight:600;background:{{ p.bg }};color:{{ p.fg }}">
+          <span style="width:9px;height:9px;border-radius:999px;background:{{ p.dot }}"></span>{{ p.label }}
+        </span>
+      </sc-for>
+    </div>
+    <div style="flex:1;min-width:0"></div>
+    <span style="font-size:13px;color:var(--color-neutral-700)">{{ summary }}</span>
+  </div>
+
+  <sc-if value="{{ restartNeeded }}" hint-placeholder-val="{{ false }}">
+    <div style="display:flex;align-items:center;gap:14px;padding:12px 20px;background:var(--color-accent-200);color:var(--color-accent-900);font-size:14px;font-weight:600;flex:none">
+      <span style="flex:1">Настройки сохранены. Изменения вступят в силу после перезапуска программы.</span>
+      <button class="btn btn-primary" onClick="{{ doRestart }}" style="min-height:44px;padding:0 18px;font-size:14px">Перезапустить</button>
+    </div>
+  </sc-if>
+
+  <div style="flex:1;min-height:0;overflow:auto;padding:var(--space-6) 20px 26px">
+
+    <sc-if value="{{ isCollect }}" hint-placeholder-val="{{ true }}">
+      <div data-screen-label="Сбор данных" style="display:flex;flex-direction:column;gap:var(--space-4);max-width:1680px;margin:0 auto">
+        <div style="display:flex;align-items:flex-end;gap:var(--space-4);flex-wrap:wrap">
+          <div style="flex:1;min-width:280px">
+            <h1 style="margin:0;font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:clamp(30px,3.4vw,44px);line-height:1.05">Сбор данных</h1>
+            <p style="margin:8px 0 0;font-size:15px;max-width:62ch;color:var(--color-neutral-700);text-wrap:pretty">Вставьте видеорегистратор в отсек — станция распознает его, синхронизирует время, начнёт зарядку и загрузку файлов. Регистратор можно забирать, когда окно стало зелёно-бирюзовым.</p>
+          </div>
+          <div style="display:flex;gap:8px;padding:6px;border-radius:999px;background:var(--color-neutral-200)">
+            <sc-for list="{{ layoutOpts }}" as="l" hint-placeholder-count="3">
+              <button onClick="{{ l.on }}" style="min-height:46px;padding:0 20px;border:none;border-radius:999px;background:{{ l.bg }};color:{{ l.fg }};font-size:14px;font-weight:700;cursor:pointer">{{ l.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+
+        <sc-if value="{{ isGrid }}" hint-placeholder-val="{{ true }}">
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:var(--space-4)">
+            <sc-for list="{{ bays }}" as="b" hint-placeholder-count="10">
+              <button onClick="{{ b.open }}" style="display:flex;flex-direction:column;gap:10px;min-height:212px;padding:16px 18px 18px;text-align:left;border:2px solid {{ b.bd }};border-radius:30px;background:{{ b.bg }};color:{{ b.fg }};font:inherit;cursor:pointer" style-hover="box-shadow:var(--shadow-md)">
+                <div style="display:flex;align-items:center;gap:12px">
+                  <span style="width:46px;height:46px;flex:none;border-radius:999px;display:grid;place-items:center;background:{{ b.numBg }};color:{{ b.numFg }};font-size:19px;font-weight:700">{{ b.n }}</span>
+                  <span style="flex:1;min-width:0;font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ b.person }}</span>
+                  <span style="flex:none;font-size:13px;font-weight:700;opacity:.75">{{ b.charge }}</span>
+                </div>
+                <div style="font-family:var(--font-heading);font-size:24px;line-height:1.05">{{ b.state }}</div>
+                <div style="font-size:13px;opacity:.8;line-height:1.35">{{ b.sub }}</div>
+                <div style="margin-top:auto;display:flex;flex-direction:column;gap:7px">
+                  <div style="height:12px;border-radius:999px;background:{{ b.track }};overflow:hidden">
+                    <div style="height:100%;border-radius:999px;background:{{ b.barBg }};width:{{ b.barW }}"></div>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;font-weight:600;opacity:.8">
+                    <span>{{ b.files }}</span><span>{{ b.pctText }}</span>
+                  </div>
+                </div>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isList }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <sc-for list="{{ bays }}" as="b" hint-placeholder-count="10">
+              <button onClick="{{ b.open }}" style="display:flex;align-items:center;gap:18px;min-height:78px;padding:12px 20px;text-align:left;border:1px solid {{ b.bd }};border-radius:999px;background:{{ b.bg }};color:{{ b.fg }};font:inherit;cursor:pointer" style-hover="box-shadow:var(--shadow-sm)">
+                <span style="width:48px;height:48px;flex:none;border-radius:999px;display:grid;place-items:center;background:{{ b.numBg }};color:{{ b.numFg }};font-size:19px;font-weight:700">{{ b.n }}</span>
+                <span style="width:210px;flex:none;display:flex;flex-direction:column;gap:2px">
+                  <span style="font-size:15px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ b.person }}</span>
+                  <span style="font-size:12px;opacity:.7">{{ b.dept }}</span>
+                </span>
+                <span style="width:150px;flex:none;font-family:var(--font-heading);font-size:18px">{{ b.state }}</span>
+                <span style="flex:1;min-width:120px;height:14px;border-radius:999px;background:{{ b.track }};overflow:hidden">
+                  <span style="display:block;height:100%;border-radius:999px;background:{{ b.barBg }};width:{{ b.barW }}"></span>
+                </span>
+                <span style="width:130px;flex:none;text-align:right;font-size:13px;font-weight:600">{{ b.files }}</span>
+                <span style="width:64px;flex:none;text-align:right;font-size:15px;font-weight:700">{{ b.pctText }}</span>
+                <span style="width:74px;flex:none;text-align:right;font-size:13px;font-weight:700;opacity:.75">{{ b.charge }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isRack }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:26px;border-radius:36px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap">
+              <span class="tag tag-neutral" style="font-size:12px">Схема отсеков</span>
+              <span style="font-size:13px;color:var(--color-neutral-700)">Номера соответствуют физическим отсекам после сопоставления портов</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(148px,1fr));gap:18px">
+              <sc-for list="{{ bays }}" as="b" hint-placeholder-count="10">
+                <button onClick="{{ b.open }}" style="display:flex;flex-direction:column;align-items:center;gap:10px;padding:0 0 16px;text-align:center;border:none;border-radius:26px;background:{{ b.bg }};color:{{ b.fg }};font:inherit;cursor:pointer;box-shadow:inset 0 0 0 2px {{ b.bd }}" style-hover="box-shadow:inset 0 0 0 2px var(--color-accent)">
+                  <span style="width:100%;height:22px;border-radius:26px 26px 0 0;background:{{ b.numBg }};display:grid;place-items:center">
+                    <span style="width:52px;height:7px;border-radius:999px;background:{{ b.bg }};opacity:.6"></span>
+                  </span>
+                  <span style="width:40px;height:40px;border-radius:999px;display:grid;place-items:center;background:{{ b.numBg }};color:{{ b.numFg }};font-size:17px;font-weight:700">{{ b.n }}</span>
+                  <span style="font-family:var(--font-heading);font-size:16px;line-height:1.1;padding:0 8px">{{ b.state }}</span>
+                  <span style="font-size:12px;opacity:.75;padding:0 10px;line-height:1.3">{{ b.person }}</span>
+                  <span style="width:72%;height:9px;border-radius:999px;background:{{ b.track }};overflow:hidden">
+                    <span style="display:block;height:100%;border-radius:999px;background:{{ b.barBg }};width:{{ b.barW }}"></span>
+                  </span>
+                </button>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:20px;border-radius:28px;background:var(--color-accent-2-100)">
+            <sc-for list="{{ notesCollect }}" as="n" hint-placeholder-count="4">
+              <div style="display:flex;gap:12px">
+                <span style="width:30px;height:30px;flex:none;border-radius:999px;background:var(--color-accent-2-600);color:var(--color-neutral-100);display:grid;place-items:center;font-size:14px;font-weight:700">{{ n.i }}</span>
+                <span style="font-size:13.5px;line-height:1.45;color:var(--color-accent-2-900);text-wrap:pretty">{{ n.t }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isQuery }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Запрос данных" style="display:flex;flex-direction:column;gap:var(--space-4);max-width:1680px;margin:0 auto">
+        <h1 style="margin:0;font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:clamp(28px,3vw,40px);line-height:1.05">Запрос данных</h1>
+
+        <div style="padding:20px 22px;border-radius:30px;background:var(--color-surface);display:flex;flex-direction:column;gap:16px">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px">
+            <label style="display:block">
+              <span style="display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:6px">Отдел</span>
+              <input class="input" value="{{ fDept }}" onChange="{{ setFDept }}" placeholder="Все отделы" style="min-height:52px;font-size:15px;background:var(--color-neutral-100)">
+            </label>
+            <label style="display:block">
+              <span style="display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:6px">Табельный номер</span>
+              <input class="input" value="{{ fPers }}" onChange="{{ setFPers }}" placeholder="Например 10482" style="min-height:52px;font-size:15px;background:var(--color-neutral-100)">
+            </label>
+            <label style="display:block">
+              <span style="display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:6px">Номер устройства</span>
+              <input class="input" value="{{ fDev }}" onChange="{{ setFDev }}" placeholder="BC-10-04" style="min-height:52px;font-size:15px;background:var(--color-neutral-100)">
+            </label>
+            <label style="display:block">
+              <span style="display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:6px">Имя файла</span>
+              <input class="input" value="{{ fName }}" onChange="{{ setFName }}" placeholder="VID_" style="min-height:52px;font-size:15px;background:var(--color-neutral-100)">
+            </label>
+          </div>
+
+          <div style="display:flex;gap:26px;flex-wrap:wrap;align-items:flex-end">
+            <div>
+              <span style="display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:6px">Тип файла</span>
+              <div style="display:flex;gap:6px;padding:5px;border-radius:999px;background:var(--color-neutral-200);flex-wrap:wrap">
+                <sc-for list="{{ typeOpts }}" as="o" hint-placeholder-count="5">
+                  <button onClick="{{ o.on }}" style="min-height:44px;padding:0 18px;border:none;border-radius:999px;background:{{ o.bg }};color:{{ o.fg }};font-size:14px;font-weight:700;cursor:pointer">{{ o.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+            <div>
+              <span style="display:block;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--color-neutral-700);margin-bottom:6px">Время съёмки</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <input class="input" value="{{ fFrom }}" onChange="{{ setFFrom }}" style="min-height:52px;width:186px;font-size:15px;background:var(--color-neutral-100)">
+                <span style="opacity:.6">—</span>
+                <input class="input" value="{{ fTo }}" onChange="{{ setFTo }}" style="min-height:52px;width:186px;font-size:15px;background:var(--color-neutral-100)">
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;margin-left:auto">
+              <button class="btn btn-primary" onClick="{{ runQuery }}" style="min-height:52px;padding:0 30px;font-size:16px;font-weight:700">Запрос</button>
+              <button class="btn btn-secondary" onClick="{{ resetQuery }}" style="min-height:52px;padding:0 24px;font-size:16px;background:var(--color-neutral-100)">Сброс</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:14px;font-weight:600;color:var(--color-neutral-700)">{{ queryCount }}</span>
+          <div style="flex:1"></div>
+          <button class="btn btn-secondary" onClick="{{ openPlayer }}" style="min-height:52px;padding:0 22px;font-size:15px;font-weight:600;background:var(--color-neutral-100)">Воспроизвести</button>
+          <button class="btn btn-secondary" onClick="{{ openConvert }}" style="min-height:52px;padding:0 22px;font-size:15px;font-weight:600;background:var(--color-neutral-100)">Конвертация формата</button>
+          <button class="btn btn-secondary" onClick="{{ openNote }}" style="min-height:52px;padding:0 22px;font-size:15px;font-weight:600;background:var(--color-neutral-100)">Примечания</button>
+          <button class="btn btn-primary" onClick="{{ openDownload }}" style="min-height:52px;padding:0 22px;font-size:15px;font-weight:700">{{ dlLabel }}</button>
+          <button class="btn" onClick="{{ askDelete }}" style="min-height:52px;padding:0 22px;font-size:15px;font-weight:700;background:var(--color-accent-800);color:var(--color-neutral-100)" style-hover="background:var(--color-accent-900)">{{ delLabel }}</button>
+        </div>
+
+        <div style="border-radius:30px;background:var(--color-neutral-100);padding:8px 18px 14px;overflow:auto">
+          <table class="table" style="font-size:14.5px">
+            <thead>
+              <tr>
+                <th style="width:56px"></th>
+                <th>Время съёмки</th>
+                <th>Время сбора</th>
+                <th>Сотрудник</th>
+                <th>Отдел</th>
+                <th>Устройство</th>
+                <th>Файл</th>
+                <th>Тип</th>
+                <th>Размер</th>
+                <th>Защита</th>
+              </tr>
+            </thead>
+            <tbody>
+              <sc-for list="{{ rows }}" as="r" hint-placeholder-count="8">
+                <tr onClick="{{ r.toggle }}" style="cursor:pointer;background:{{ r.rowBg }}">
+                  <td>
+                    <span style="width:30px;height:30px;border-radius:10px;display:grid;place-items:center;border:2px solid {{ r.boxBd }};background:{{ r.boxBg }};color:var(--color-neutral-100);font-size:16px;font-weight:700">{{ r.check }}</span>
+                  </td>
+                  <td style="white-space:nowrap">{{ r.shot }}</td>
+                  <td style="white-space:nowrap;color:var(--color-neutral-700)">{{ r.got }}</td>
+                  <td style="font-weight:600">{{ r.person }}</td>
+                  <td style="color:var(--color-neutral-700)">{{ r.dept }}</td>
+                  <td style="white-space:nowrap">{{ r.dev }}</td>
+                  <td style="font-weight:600;white-space:nowrap">{{ r.file }}</td>
+                  <td><span class="tag {{ r.typeCls }}" style="font-size:12px">{{ r.type }}</span></td>
+                  <td style="white-space:nowrap">{{ r.size }}</td>
+                  <td style="font-weight:600;color:{{ r.protFg }}">{{ r.prot }}</td>
+                </tr>
+              </sc-for>
+            </tbody>
+          </table>
+        </div>
+
+        <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ false }}">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:20px;border-radius:28px;background:var(--color-accent-2-100)">
+            <sc-for list="{{ notesQuery }}" as="n" hint-placeholder-count="4">
+              <div style="display:flex;gap:12px">
+                <span style="width:30px;height:30px;flex:none;border-radius:999px;background:var(--color-accent-2-600);color:var(--color-neutral-100);display:grid;place-items:center;font-size:14px;font-weight:700">{{ n.i }}</span>
+                <span style="font-size:13.5px;line-height:1.45;color:var(--color-accent-2-900);text-wrap:pretty">{{ n.t }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Настройки" style="display:flex;gap:var(--space-6);max-width:1680px;margin:0 auto;align-items:flex-start">
+        <div style="width:262px;flex:none;display:flex;flex-direction:column;gap:8px">
+          <sc-for list="{{ stabs }}" as="s" hint-placeholder-count="7">
+            <button onClick="{{ s.on }}" style="min-height:56px;padding:0 20px;text-align:left;border:1px solid {{ s.bd }};border-radius:999px;background:{{ s.bg }};color:{{ s.fg }};font-size:15.5px;font-weight:700;cursor:pointer" style-hover="border-color:var(--color-accent)">{{ s.label }}</button>
+          </sc-for>
+          <button onClick="{{ lockNow }}" style="min-height:52px;margin-top:14px;padding:0 20px;border:1px dashed var(--color-neutral-400);border-radius:999px;background:transparent;color:var(--color-neutral-700);font-size:14px;font-weight:600;cursor:pointer">Заблокировать разделы</button>
+        </div>
+
+        <div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:var(--space-4)">
+          <h1 style="margin:0;font-family:var(--font-heading);font-weight:var(--font-heading-weight);font-size:clamp(26px,2.6vw,36px);line-height:1.05">{{ stabTitle }}</h1>
+
+          <sc-if value="{{ sDept }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;gap:var(--space-4);flex-wrap:wrap">
+              <div style="flex:1;min-width:320px;padding:18px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:8px">
+                <sc-for list="{{ depts }}" as="d" hint-placeholder-count="5">
+                  <button onClick="{{ d.on }}" style="display:flex;align-items:center;gap:14px;min-height:56px;padding-right:18px;padding-left:{{ d.pad }};text-align:left;border:1px solid {{ d.bd }};border-radius:999px;background:{{ d.bg }};color:{{ d.fg }};font:inherit;cursor:pointer">
+                    <span style="flex:1;font-size:15.5px;font-weight:700">{{ d.name }}</span>
+                    <span style="font-size:13px;opacity:.7">{{ d.code }}</span>
+                    <span style="font-size:13px;opacity:.7">{{ d.count }}</span>
+                  </button>
+                </sc-for>
+              </div>
+              <div style="width:280px;flex:none;display:flex;flex-direction:column;gap:10px">
+                <button class="btn btn-primary" onClick="{{ addDept }}" style="min-height:56px;font-size:16px;font-weight:700">Добавить отдел</button>
+                <button class="btn btn-secondary" onClick="{{ editDept }}" style="min-height:56px;font-size:16px;background:var(--color-neutral-100)">Редактировать</button>
+                <button class="btn btn-secondary" onClick="{{ delDept }}" style="min-height:56px;font-size:16px;background:var(--color-neutral-100);color:var(--color-accent-800)">Удалить</button>
+                <p style="margin:6px 0 0;font-size:13px;line-height:1.45;color:var(--color-neutral-700);text-wrap:pretty">Подчинённый отдел добавляется к выделенному. Отдел с сотрудниками удалить нельзя.</p>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ sUsers }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;gap:10px;flex-wrap:wrap">
+                <button class="btn btn-primary" onClick="{{ addUser }}" style="min-height:56px;padding:0 26px;font-size:16px;font-weight:700">Добавить пользователя</button>
+                <button class="btn btn-secondary" onClick="{{ editUser }}" style="min-height:56px;padding:0 24px;font-size:16px;background:var(--color-neutral-100)">Редактировать</button>
+                <button class="btn btn-secondary" onClick="{{ delUser }}" style="min-height:56px;padding:0 24px;font-size:16px;background:var(--color-neutral-100);color:var(--color-accent-800)">Удалить</button>
+                <div style="flex:1"></div>
+                <span class="tag tag-accent-2" style="align-self:center;font-size:13px;padding:8px 16px">Новый регистратор создаёт учётную запись автоматически</span>
+              </div>
+              <div style="border-radius:30px;background:var(--color-neutral-100);padding:8px 18px 14px;overflow:auto">
+                <table class="table" style="font-size:14.5px">
+                  <thead>
+                    <tr>
+                      <th>Сотрудник</th>
+                      <th>Табельный</th>
+                      <th>Устройство</th>
+                      <th>Отдел</th>
+                      <th>Роль</th>
+                      <th>Телефон</th>
+                      <th>Статус</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ users }}" as="u" hint-placeholder-count="6">
+                      <tr onClick="{{ u.on }}" style="cursor:pointer;background:{{ u.rowBg }}">
+                        <td>
+                          <span style="display:flex;align-items:center;gap:12px">
+                            <span style="width:38px;height:38px;flex:none;border-radius:999px;background:{{ u.avBg }};color:{{ u.avFg }};display:grid;place-items:center;font-size:14px;font-weight:700">{{ u.ini }}</span>
+                            <span style="font-weight:600">{{ u.name }}</span>
+                          </span>
+                        </td>
+                        <td>{{ u.pers }}</td>
+                        <td style="white-space:nowrap">{{ u.dev }}</td>
+                        <td style="color:var(--color-neutral-700)">{{ u.dept }}</td>
+                        <td>{{ u.role }}</td>
+                        <td style="white-space:nowrap;color:var(--color-neutral-700)">{{ u.phone }}</td>
+                        <td><span class="tag {{ u.stCls }}" style="font-size:12px">{{ u.status }}</span></td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ sStation }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:var(--space-4)">
+              <div style="padding:22px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:16px">
+                <div style="font-family:var(--font-heading);font-size:20px">Окна сбора</div>
+                <div style="display:flex;gap:14px;flex-wrap:wrap">
+                  <label style="display:block;flex:1;min-width:130px">
+                    <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Всего окон</span>
+                    <input class="input" value="{{ cfgBays }}" onChange="{{ setCfgBays }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                  </label>
+                  <label style="display:block;flex:1;min-width:130px">
+                    <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Окон в строке</span>
+                    <input class="input" value="{{ cfgCols }}" onChange="{{ setCfgCols }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                  </label>
+                </div>
+                <p style="margin:0;font-size:13px;color:var(--color-neutral-700)">Допустимо от 6 до 30 окон. Применяется после перезапуска.</p>
+                <button class="btn btn-primary" onClick="{{ saveStation }}" style="min-height:56px;font-size:16px;font-weight:700">Сохранить</button>
+              </div>
+
+              <div style="padding:22px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:16px">
+                <div style="font-family:var(--font-heading);font-size:20px">Файловое хранилище</div>
+                <sc-for list="{{ storeOpts }}" as="o" hint-placeholder-count="2">
+                  <button onClick="{{ o.on }}" style="display:flex;align-items:flex-start;gap:14px;padding:16px 18px;text-align:left;border:2px solid {{ o.bd }};border-radius:24px;background:{{ o.bg }};font:inherit;color:var(--color-text);cursor:pointer">
+                    <span style="width:24px;height:24px;flex:none;margin-top:2px;border-radius:999px;border:2px solid {{ o.dotBd }};background:{{ o.dotBg }};box-shadow:{{ o.dotSh }}"></span>
+                    <span style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:15.5px;font-weight:700">{{ o.title }}</span>
+                      <span style="font-size:13px;line-height:1.4;color:var(--color-neutral-700)">{{ o.desc }}</span>
+                    </span>
+                  </button>
+                </sc-for>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Порог свободного места</span>
+                  <input class="input" value="{{ cfgThreshold }}" onChange="{{ setCfgThreshold }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+              </div>
+
+              <div style="padding:22px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:16px">
+                <div style="font-family:var(--font-heading);font-size:20px">Файлы на регистраторе</div>
+                <sc-for list="{{ wipeOpts }}" as="o" hint-placeholder-count="2">
+                  <button onClick="{{ o.on }}" style="display:flex;align-items:flex-start;gap:14px;padding:16px 18px;text-align:left;border:2px solid {{ o.bd }};border-radius:24px;background:{{ o.bg }};font:inherit;color:var(--color-text);cursor:pointer">
+                    <span style="width:24px;height:24px;flex:none;margin-top:2px;border-radius:999px;border:2px solid {{ o.dotBd }};background:{{ o.dotBg }};box-shadow:{{ o.dotSh }}"></span>
+                    <span style="display:flex;flex-direction:column;gap:4px">
+                      <span style="font-size:15.5px;font-weight:700">{{ o.title }}</span>
+                      <span style="font-size:13px;line-height:1.4;color:var(--color-neutral-700)">{{ o.desc }}</span>
+                    </span>
+                  </button>
+                </sc-for>
+              </div>
+
+              <div style="padding:22px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:14px">
+                <div style="font-family:var(--font-heading);font-size:20px">Оповещения</div>
+                <sc-for list="{{ toggles }}" as="t" hint-placeholder-count="3">
+                  <button onClick="{{ t.on }}" style="display:flex;align-items:center;gap:16px;min-height:64px;padding:0 18px;text-align:left;border:1px solid var(--color-divider);border-radius:24px;background:var(--color-bg);font:inherit;color:var(--color-text);cursor:pointer">
+                    <span style="flex:1;display:flex;flex-direction:column;gap:3px">
+                      <span style="font-size:15.5px;font-weight:700">{{ t.title }}</span>
+                      <span style="font-size:12.5px;color:var(--color-neutral-700)">{{ t.desc }}</span>
+                    </span>
+                    <span style="width:64px;height:36px;flex:none;border-radius:999px;background:{{ t.trackBg }};padding:4px;display:flex;justify-content:{{ t.just }}">
+                      <span style="width:28px;height:28px;border-radius:999px;background:var(--color-neutral-100);box-shadow:var(--shadow-sm)"></span>
+                    </span>
+                  </button>
+                </sc-for>
+              </div>
+
+              <div style="padding:22px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:14px">
+                <div style="font-family:var(--font-heading);font-size:20px">Конфигурация архива</div>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Том архива</span>
+                  <input class="input" value="{{ cfgDisk }}" onChange="{{ setCfgDisk }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Путь в текущей системе</span>
+                  <input class="input" value="{{ cfgPath }}" onChange="{{ setCfgPath }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <p style="margin:0;font-size:13px;line-height:1.45;color:var(--color-neutral-700);text-wrap:pretty">Том выбирается из списка подключённых и запоминается по идентификатору файловой системы, а не по букве или точке монтирования: в Linux это /mnt/bcdata/archive, в Windows — D:\BestCam\Archive. Папка архива помечается служебным файлом; метки нет — том не смонтирован, сбор останавливается с ошибкой и не пишет данные в системный раздел.</p>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ sPorts }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <div style="padding:18px 22px;border-radius:26px;background:var(--color-accent-100);color:var(--color-accent-900);font-size:14px;line-height:1.5;max-width:80ch;text-wrap:pretty">Отключите все регистраторы. Вставляйте по одному: станция покажет обнаруженный диск, выберите номер отсека и нажмите «Сопоставить». Повторяйте, пока номера окон не совпадут с физическими отсеками.</div>
+              <div style="border-radius:30px;background:var(--color-neutral-100);padding:8px 18px 14px;overflow:auto">
+                <table class="table" style="font-size:14.5px">
+                  <thead>
+                    <tr>
+                      <th style="width:110px">Отсек</th>
+                      <th>Обнаруженный диск</th>
+                      <th>Серийный номер</th>
+                      <th>Метка</th>
+                      <th>Состояние</th>
+                      <th style="width:190px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ ports }}" as="p" hint-placeholder-count="10">
+                      <tr>
+                        <td>
+                          <span style="width:44px;height:44px;border-radius:999px;display:grid;place-items:center;background:{{ p.numBg }};color:{{ p.numFg }};font-size:17px;font-weight:700">{{ p.n }}</span>
+                        </td>
+                        <td style="font-weight:600;white-space:nowrap">{{ p.disk }}</td>
+                        <td style="white-space:nowrap;color:var(--color-neutral-700)">{{ p.serial }}</td>
+                        <td>{{ p.label }}</td>
+                        <td><span class="tag {{ p.cls }}" style="font-size:12px">{{ p.state }}</span></td>
+                        <td>
+                          <button class="btn btn-secondary" onClick="{{ p.map }}" style="min-height:46px;padding:0 18px;font-size:14px;font-weight:600;background:var(--color-bg)">{{ p.action }}</button>
+                        </td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ sFtp }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:780px;padding:24px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:18px">
+              <button onClick="{{ toggleFtp }}" style="display:flex;align-items:center;gap:16px;min-height:64px;padding:0 18px;text-align:left;border:1px solid var(--color-divider);border-radius:24px;background:var(--color-bg);font:inherit;color:var(--color-text);cursor:pointer">
+                <span style="flex:1;font-size:16px;font-weight:700">Отправлять файлы на сервер FTP</span>
+                <span style="width:64px;height:36px;flex:none;border-radius:999px;background:{{ ftpTrack }};padding:4px;display:flex;justify-content:{{ ftpJust }}">
+                  <span style="width:28px;height:28px;border-radius:999px;background:var(--color-neutral-100);box-shadow:var(--shadow-sm)"></span>
+                </span>
+              </button>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;opacity:{{ ftpOpacity }}">
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Адрес сервера</span>
+                  <input class="input" value="{{ ftpHost }}" onChange="{{ setFtpHost }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Порт</span>
+                  <input class="input" value="{{ ftpPort }}" onChange="{{ setFtpPort }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Учётная запись</span>
+                  <input class="input" value="{{ ftpUser }}" onChange="{{ setFtpUser }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Пароль</span>
+                  <input class="input" type="password" value="{{ ftpPass }}" onChange="{{ setFtpPass }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+              </div>
+              <div>
+                <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:8px">Шифрование</span>
+                <div style="display:flex;gap:6px;padding:5px;border-radius:999px;background:var(--color-neutral-200);width:fit-content">
+                  <sc-for list="{{ cryptoOpts }}" as="o" hint-placeholder-count="3">
+                    <button onClick="{{ o.on }}" style="min-height:46px;padding:0 22px;border:none;border-radius:999px;background:{{ o.bg }};color:{{ o.fg }};font-size:14.5px;font-weight:700;cursor:pointer">{{ o.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <button class="btn btn-secondary" onClick="{{ testFtp }}" style="min-height:56px;padding:0 24px;font-size:16px;background:var(--color-bg)">Проверить подключение</button>
+                <button class="btn btn-primary" onClick="{{ saveStation }}" style="min-height:56px;padding:0 28px;font-size:16px;font-weight:700">Сохранить</button>
+                <span style="font-size:14px;font-weight:600;color:var(--color-accent-2-700)">{{ ftpTest }}</span>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ sSql }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:780px;padding:24px;border-radius:30px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:18px">
+              <p style="margin:0;font-size:14px;line-height:1.5;color:var(--color-neutral-700);max-width:70ch;text-wrap:pretty">SQL настраивается только при работе с внешним сервером. Локальная база работает без настройки.</p>
+              <button onClick="{{ toggleSql }}" style="display:flex;align-items:center;gap:16px;min-height:64px;padding:0 18px;text-align:left;border:1px solid var(--color-divider);border-radius:24px;background:var(--color-bg);font:inherit;color:var(--color-text);cursor:pointer">
+                <span style="flex:1;font-size:16px;font-weight:700">Подключаться к серверу SQL</span>
+                <span style="width:64px;height:36px;flex:none;border-radius:999px;background:{{ sqlTrack }};padding:4px;display:flex;justify-content:{{ sqlJust }}">
+                  <span style="width:28px;height:28px;border-radius:999px;background:var(--color-neutral-100);box-shadow:var(--shadow-sm)"></span>
+                </span>
+              </button>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;opacity:{{ sqlOpacity }}">
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">IP-адрес</span>
+                  <input class="input" value="{{ sqlHost }}" onChange="{{ setSqlHost }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Имя базы</span>
+                  <input class="input" value="{{ sqlDb }}" onChange="{{ setSqlDb }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Учётная запись</span>
+                  <input class="input" value="{{ sqlUser }}" onChange="{{ setSqlUser }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Пароль</span>
+                  <input class="input" type="password" value="{{ sqlPass }}" onChange="{{ setSqlPass }}" style="min-height:52px;font-size:16px;background:var(--color-bg)">
+                </label>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+                <button class="btn btn-secondary" onClick="{{ testSql }}" style="min-height:56px;padding:0 24px;font-size:16px;background:var(--color-bg)">Проверить подключение</button>
+                <button class="btn btn-primary" onClick="{{ saveStation }}" style="min-height:56px;padding:0 28px;font-size:16px;font-weight:700">Сохранить</button>
+                <span style="font-size:14px;font-weight:600;color:var(--color-accent-2-700)">{{ sqlTest }}</span>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ sLog }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap;padding:18px 22px;border-radius:30px;background:var(--color-surface)">
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Дата начала</span>
+                  <input class="input" value="{{ logFrom }}" onChange="{{ setLogFrom }}" style="min-height:52px;width:200px;font-size:16px;background:var(--color-neutral-100)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Дата окончания</span>
+                  <input class="input" value="{{ logTo }}" onChange="{{ setLogTo }}" style="min-height:52px;width:200px;font-size:16px;background:var(--color-neutral-100)">
+                </label>
+                <button class="btn btn-primary" onClick="{{ runQuery }}" style="min-height:52px;padding:0 30px;font-size:16px;font-weight:700">Запрос</button>
+              </div>
+              <div style="border-radius:30px;background:var(--color-neutral-100);padding:8px 18px 14px;overflow:auto">
+                <table class="table" style="font-size:14.5px">
+                  <thead>
+                    <tr>
+                      <th style="width:190px">Время</th>
+                      <th style="width:170px">Событие</th>
+                      <th>Описание</th>
+                      <th style="width:170px">Пользователь</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ logs }}" as="l" hint-placeholder-count="8">
+                      <tr>
+                        <td style="white-space:nowrap;color:var(--color-neutral-700)">{{ l.time }}</td>
+                        <td><span class="tag {{ l.cls }}" style="font-size:12px">{{ l.kind }}</span></td>
+                        <td>{{ l.text }}</td>
+                        <td style="font-weight:600">{{ l.who }}</td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ showNotes }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:20px;border-radius:28px;background:var(--color-accent-2-100)">
+              <sc-for list="{{ notesSettings }}" as="n" hint-placeholder-count="4">
+                <div style="display:flex;gap:12px">
+                  <span style="width:30px;height:30px;flex:none;border-radius:999px;background:var(--color-accent-2-600);color:var(--color-neutral-100);display:grid;place-items:center;font-size:14px;font-weight:700">{{ n.i }}</span>
+                  <span style="font-size:13.5px;line-height:1.45;color:var(--color-accent-2-900);text-wrap:pretty">{{ n.t }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:var(--space-4);padding:10px 20px;background:var(--color-neutral-100);border-top:1px solid var(--color-divider);flex:none;flex-wrap:wrap">
+    <span style="font-size:13px;color:var(--color-neutral-600)">© BestCam · ПО v.03.02</span>
+    <span style="font-size:13px;font-weight:600">{{ diskLabel }}</span>
+    <span style="flex:1;min-width:140px;max-width:420px;height:12px;border-radius:999px;background:var(--color-neutral-300);overflow:hidden">
+      <span style="display:block;height:100%;border-radius:999px;background:var(--color-accent-2-500);width:{{ diskW }}"></span>
+    </span>
+    <span style="font-size:13px;color:var(--color-neutral-700)">{{ monStatus }}</span>
+    <div style="flex:1"></div>
+    <button onClick="{{ toggleNotes }}" style="min-height:44px;padding:0 18px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-bg);color:var(--color-neutral-700);font-size:13px;font-weight:600;cursor:pointer">{{ notesBtn }}</button>
+  </div>
+
+  <sc-if value="{{ modal }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:24px;background:color-mix(in srgb, var(--color-neutral-900) 55%, transparent)">
+      <div style="width:{{ modalW }};max-width:96vw;max-height:92vh;overflow:auto;padding:28px;border-radius:36px;background:var(--color-surface);box-shadow:var(--shadow-lg)">
+
+        <sc-if value="{{ mAuth }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="font-family:var(--font-heading);font-size:28px;line-height:1.1">{{ authTitle }}</div>
+            <div style="font-size:14.5px;color:var(--color-neutral-700)">{{ authHint }}</div>
+            <div style="display:flex;gap:24px;flex-wrap:wrap">
+              <div style="flex:1;min-width:250px;display:flex;flex-direction:column;gap:14px">
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Учётная запись</span>
+                  <input class="input" value="{{ login }}" onChange="{{ setLogin }}" style="min-height:56px;font-size:17px;background:var(--color-neutral-100)">
+                </label>
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">Пароль</span>
+                  <input class="input" type="password" value="{{ pw }}" onChange="{{ setPw }}" style="min-height:56px;font-size:17px;letter-spacing:.2em;background:var(--color-neutral-100)">
+                </label>
+                <div style="min-height:22px;font-size:14px;font-weight:600;color:var(--color-accent-800)">{{ authErr }}</div>
+                <div style="display:flex;gap:12px">
+                  <button class="btn btn-primary" onClick="{{ submitAuth }}" style="flex:1;min-height:58px;font-size:17px;font-weight:700">{{ authBtn }}</button>
+                  <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 24px;font-size:16px;background:var(--color-neutral-100)">Отмена</button>
+                </div>
+              </div>
+              <div style="width:246px;flex:none;display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+                <sc-for list="{{ keys }}" as="k" hint-placeholder-count="12">
+                  <button onClick="{{ k.on }}" style="min-height:62px;border:1px solid var(--color-divider);border-radius:22px;background:{{ k.bg }};color:{{ k.fg }};font-size:20px;font-weight:700;cursor:pointer" style-hover="border-color:var(--color-accent)">{{ k.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mBay }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:20px">
+            <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+              <span style="width:60px;height:60px;flex:none;border-radius:999px;display:grid;place-items:center;background:{{ bayNumBg }};color:{{ bayNumFg }};font-size:24px;font-weight:700">{{ bayN }}</span>
+              <div style="flex:1;min-width:180px">
+                <div style="font-family:var(--font-heading);font-size:26px;line-height:1.1">{{ bayPerson }}</div>
+                <div style="font-size:14px;color:var(--color-neutral-700)">{{ bayDept }}</div>
+              </div>
+              <span class="tag {{ bayCls }}" style="font-size:14px;padding:10px 18px;font-weight:700">{{ bayState }}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
+              <sc-for list="{{ bayFacts }}" as="f" hint-placeholder-count="6">
+                <div style="padding:14px 16px;border-radius:22px;background:var(--color-neutral-100)">
+                  <div style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--color-neutral-600)">{{ f.k }}</div>
+                  <div style="margin-top:4px;font-size:17px;font-weight:700">{{ f.v }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="height:16px;border-radius:999px;background:var(--color-neutral-300);overflow:hidden">
+                <div style="height:100%;border-radius:999px;background:var(--color-accent);width:{{ bayBarW }}"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:13.5px;font-weight:600;color:var(--color-neutral-700)">
+                <span>{{ bayFiles }}</span><span>{{ bayPct }}</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <button class="btn btn-primary" onClick="{{ setPriority }}" style="min-height:58px;padding:0 24px;font-size:16px;font-weight:700">Приоритетная загрузка</button>
+              <button class="btn btn-secondary" onClick="{{ chargeOnly }}" style="min-height:58px;padding:0 24px;font-size:16px;background:var(--color-neutral-100)">Только зарядка</button>
+              <button class="btn btn-secondary" onClick="{{ syncTime }}" style="min-height:58px;padding:0 24px;font-size:16px;background:var(--color-neutral-100)">Синхронизировать время</button>
+              <div style="flex:1"></div>
+              <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 26px;font-size:16px;background:var(--color-neutral-100)">Закрыть</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mPlayer }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap">
+              <div style="font-family:var(--font-heading);font-size:24px">{{ playFile }}</div>
+              <div style="font-size:14px;color:var(--color-neutral-700)">{{ playMeta }}</div>
+            </div>
+            <div style="position:relative;aspect-ratio:16/9;border-radius:26px;background:var(--color-neutral-900);display:grid;place-items:center;overflow:hidden">
+              <div style="width:96px;height:96px;border-radius:999px;background:color-mix(in srgb, var(--color-neutral-100) 22%, transparent);display:grid;place-items:center">
+                <span style="width:0;height:0;margin-left:8px;border-style:solid;border-width:22px 0 22px 34px;border-color:transparent transparent transparent var(--color-neutral-100)"></span>
+              </div>
+              <div style="position:absolute;left:20px;top:18px;font-size:13px;font-weight:600;color:var(--color-neutral-300);letter-spacing:.04em">{{ playStamp }}</div>
+              <div style="position:absolute;right:20px;top:18px;font-size:13px;font-weight:600;color:var(--color-neutral-300)">1080p · 30 к/с</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px">
+              <span style="font-size:14px;font-weight:600;width:56px">00:41</span>
+              <span style="flex:1;height:12px;border-radius:999px;background:var(--color-neutral-300);overflow:hidden">
+                <span style="display:block;height:100%;width:32%;border-radius:999px;background:var(--color-accent)"></span>
+              </span>
+              <span style="font-size:14px;font-weight:600;width:56px;text-align:right">02:08</span>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <button class="btn btn-primary" onClick="{{ noop }}" style="min-height:58px;padding:0 30px;font-size:16px;font-weight:700">Пауза</button>
+              <button class="btn btn-secondary" onClick="{{ openConvert }}" style="min-height:58px;padding:0 22px;font-size:16px;background:var(--color-neutral-100)">Конвертация</button>
+              <button class="btn btn-secondary" onClick="{{ openNote }}" style="min-height:58px;padding:0 22px;font-size:16px;background:var(--color-neutral-100)">Примечание</button>
+              <div style="flex:1"></div>
+              <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 26px;font-size:16px;background:var(--color-neutral-100)">Закрыть</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mConvert }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <div style="font-family:var(--font-heading);font-size:26px">Преобразование формата</div>
+            <div style="font-size:14.5px;color:var(--color-neutral-700)">{{ convSubject }}</div>
+            <sc-for list="{{ convGroups }}" as="g" hint-placeholder-count="3">
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <span style="font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700)">{{ g.title }}</span>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                  <sc-for list="{{ g.opts }}" as="o" hint-placeholder-count="3">
+                    <button onClick="{{ o.on }}" style="min-height:52px;padding:0 24px;border:2px solid {{ o.bd }};border-radius:999px;background:{{ o.bg }};color:{{ o.fg }};font-size:15.5px;font-weight:700;cursor:pointer">{{ o.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <button class="btn btn-primary" onClick="{{ startConvert }}" style="min-height:58px;padding:0 28px;font-size:16px;font-weight:700">Преобразовать</button>
+              <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 26px;font-size:16px;background:var(--color-neutral-100)">Отмена</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mNote }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="font-family:var(--font-heading);font-size:26px">Примечание к файлу</div>
+            <div style="font-size:14.5px;color:var(--color-neutral-700)">{{ noteSubject }}</div>
+            <textarea class="input" value="{{ noteText }}" onChange="{{ setNoteText }}" placeholder="Обстоятельства съёмки, номер материала, кому передан файл" style="min-height:160px;border-radius:26px;padding:16px 18px;font-size:16px;line-height:1.5;background:var(--color-neutral-100);resize:vertical"></textarea>
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <button class="btn btn-primary" onClick="{{ saveNote }}" style="min-height:58px;padding:0 28px;font-size:16px;font-weight:700">Сохранить</button>
+              <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 26px;font-size:16px;background:var(--color-neutral-100)">Отмена</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mForm }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:18px">
+            <div style="font-family:var(--font-heading);font-size:26px">{{ formTitle }}</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px">
+              <sc-for list="{{ formFields }}" as="f" hint-placeholder-count="6">
+                <label style="display:block">
+                  <span style="display:block;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-neutral-700);margin-bottom:6px">{{ f.label }}</span>
+                  <input class="input" value="{{ f.value }}" onChange="{{ f.on }}" style="min-height:54px;font-size:16px;background:var(--color-neutral-100)">
+                </label>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:12px;flex-wrap:wrap">
+              <button class="btn btn-primary" onClick="{{ saveForm }}" style="min-height:58px;padding:0 28px;font-size:16px;font-weight:700">Сохранить</button>
+              <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 26px;font-size:16px;background:var(--color-neutral-100)">Отмена</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ mConfirm }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <div style="font-family:var(--font-heading);font-size:26px;line-height:1.15">{{ confTitle }}</div>
+            <div style="font-size:15px;line-height:1.5;color:var(--color-neutral-700);text-wrap:pretty">{{ confText }}</div>
+            <div style="display:flex;gap:12px;justify-content:flex-end;flex-wrap:wrap">
+              <button class="btn btn-secondary" onClick="{{ closeModal }}" style="min-height:58px;padding:0 26px;font-size:16px;background:var(--color-neutral-100)">Отмена</button>
+              <button class="btn btn-primary" onClick="{{ confirmOk }}" style="min-height:58px;padding:0 30px;font-size:16px;font-weight:700">{{ confBtn }}</button>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;specNotes&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Прототип&quot;},&quot;bayCount&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:10,&quot;min&quot;:6,&quot;max&quot;:30,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Станция&quot;},&quot;initialLayout&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;grid&quot;,&quot;list&quot;,&quot;rack&quot;],&quot;default&quot;:&quot;grid&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Станция&quot;},&quot;demoMotion&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Прототип&quot;}}">
+const BAY_STYLES = {
+  idle:     { label: 'Простой',         bg: 'var(--color-neutral-100)',  bd: 'var(--color-neutral-300)',  fg: 'var(--color-text)',           numBg: 'var(--color-neutral-300)',  numFg: 'var(--color-neutral-800)', track: 'var(--color-neutral-200)', bar: 'var(--color-neutral-400)',   cls: 'tag-neutral' },
+  scanning: { label: 'Сканирование',    bg: 'var(--color-accent-2-100)', bd: 'var(--color-accent-2-300)', fg: 'var(--color-accent-2-900)',   numBg: 'var(--color-accent-2-500)', numFg: 'var(--color-neutral-100)', track: 'var(--color-accent-2-200)',bar: 'var(--color-accent-2-500)',  cls: 'tag-accent-2' },
+  copying:  { label: 'Копирование',     bg: 'var(--color-accent-100)',   bd: 'var(--color-accent-400)',   fg: 'var(--color-accent-900)',     numBg: 'var(--color-accent)',       numFg: 'var(--color-neutral-100)', track: 'var(--color-accent-200)',  bar: 'var(--color-accent-500)',    cls: 'tag-accent' },
+  done:     { label: 'Готово',          bg: 'var(--color-accent-2-200)', bd: 'var(--color-accent-2-500)', fg: 'var(--color-accent-2-900)',   numBg: 'var(--color-accent-2-600)', numFg: 'var(--color-neutral-100)', track: 'var(--color-accent-2-300)',bar: 'var(--color-accent-2-600)',  cls: 'tag-accent-2' },
+  error:    { label: 'Ошибка',          bg: 'var(--color-accent-800)',   bd: 'var(--color-accent-900)',   fg: 'var(--color-neutral-100)',    numBg: 'var(--color-accent-300)',   numFg: 'var(--color-accent-900)',  track: 'var(--color-accent-700)',  bar: 'var(--color-accent-300)',    cls: 'tag-accent' },
+  charge:   { label: 'Только зарядка',  bg: 'var(--color-neutral-200)',  bd: 'var(--color-accent-300)',   fg: 'var(--color-text)',           numBg: 'var(--color-accent-300)',   numFg: 'var(--color-accent-900)',  track: 'var(--color-neutral-300)', bar: 'var(--color-accent-300)',    cls: 'tag-outline' }
+};
+
+const SUBS = {
+  idle: 'Нет передачи данных',
+  scanning: 'Чтение списка файлов',
+  copying: 'Не извлекайте регистратор',
+  done: 'Можно забирать регистратор',
+  error: 'Часть файлов не скопирована',
+  charge: 'Загрузка отменена оператором'
+};
+
+const PEOPLE = [
+  ['Смирнов А. В.', 'ППСП · Взвод 1', '10482', 'BC-10-01'],
+  ['Ковалёв Д. С.', 'ППСП · Взвод 1', '10517', 'BC-10-02'],
+  ['Мельник И. П.', 'ППСП · Взвод 2', '10633', 'BC-10-03'],
+  ['Гусева Е. А.',  'Дежурная часть', '10241', 'BC-10-04'],
+  ['Тимофеев Р. Н.','ГИБДД',          '10904', 'BC-10-05'],
+  ['Отсек свободен','—',              '—',     '—'],
+  ['Лазарев К. Ю.', 'ППСП · Взвод 2', '10688', 'BC-10-07'],
+  ['Шилов П. А.',   'ГИБДД',          '10951', 'BC-10-08'],
+  ['Отсек свободен','—',              '—',     '—'],
+  ['Юрченко С. М.', 'Дежурная часть', '10277', 'BC-10-10'],
+  ['Барсуков Н. Е.','ППСП · Взвод 1', '10493', 'BC-10-11'],
+  ['Отсек свободен','—',              '—',     '—']
+];
+
+const START = ['copying', 'copying', 'done', 'scanning', 'copying', 'idle', 'done', 'error', 'idle', 'copying', 'charge', 'idle'];
+
+const ROWS = [
+  ['02.09.2026 08:12:04', '02.09.2026 09:41:12', 'Смирнов А. В.', 'ППСП · Взвод 1', 'BC-10-01', 'VID_00231.MP4', 'Видео', '1,84 ГБ', 'Защищён'],
+  ['02.09.2026 08:44:51', '02.09.2026 09:41:30', 'Смирнов А. В.', 'ППСП · Взвод 1', 'VID_00232.MP4', 'VID_00232.MP4', 'Видео', '920 МБ', ''],
+  ['02.09.2026 07:03:19', '02.09.2026 09:12:58', 'Гусева Е. А.', 'Дежурная часть', 'BC-10-04', 'AUD_00088.WAV', 'Аудио', '48 МБ', ''],
+  ['01.09.2026 21:37:02', '02.09.2026 08:05:44', 'Тимофеев Р. Н.', 'ГИБДД', 'BC-10-05', 'IMG_00412.JPG', 'Фото', '6,2 МБ', ''],
+  ['01.09.2026 19:58:40', '02.09.2026 08:05:51', 'Тимофеев Р. Н.', 'ГИБДД', 'BC-10-05', 'VID_00187.MP4', 'Видео', '2,41 ГБ', 'Защищён'],
+  ['01.09.2026 16:22:11', '01.09.2026 18:40:03', 'Лазарев К. Ю.', 'ППСП · Взвод 2', 'BC-10-07', 'LOG_00023.TXT', 'Журнал', '112 КБ', ''],
+  ['01.09.2026 14:09:36', '01.09.2026 18:39:47', 'Мельник И. П.', 'ППСП · Взвод 2', 'BC-10-03', 'VID_00164.MP4', 'Видео', '1,12 ГБ', ''],
+  ['01.09.2026 11:41:55', '01.09.2026 13:02:19', 'Шилов П. А.', 'ГИБДД', 'BC-10-08', 'AUD_00081.MP3', 'Аудио', '31 МБ', '']
+];
+
+const TYPE_CLS = { 'Видео': 'tag-accent', 'Аудио': 'tag-accent-2', 'Фото': 'tag-neutral', 'Журнал': 'tag-outline' };
+
+const DEPTS = [
+  ['Управление МВД', 'UM-00', '84 сотрудника', 0],
+  ['ППСП', 'PPSP', '38 сотрудников', 1],
+  ['Взвод 1', 'PPSP-1', '19 сотрудников', 2],
+  ['Взвод 2', 'PPSP-2', '19 сотрудников', 2],
+  ['ГИБДД', 'GAI', '27 сотрудников', 1],
+  ['Дежурная часть', 'DCH', '19 сотрудников', 1]
+];
+
+const USERS = [
+  ['Смирнов А. В.', '10482', 'BC-10-01', 'ППСП · Взвод 1', 'Сотрудник', '+7 902 471-18-06', 'Активен'],
+  ['Ковалёв Д. С.', '10517', 'BC-10-02', 'ППСП · Взвод 1', 'Сотрудник', '+7 902 388-42-71', 'Активен'],
+  ['Мельник И. П.', '10633', 'BC-10-03', 'ППСП · Взвод 2', 'Сотрудник', '+7 912 604-77-15', 'Активен'],
+  ['Гусева Е. А.', '10241', 'BC-10-04', 'Дежурная часть', 'Оператор', '+7 912 221-90-33', 'Активен'],
+  ['Тимофеев Р. Н.', '10904', 'BC-10-05', 'ГИБДД', 'Сотрудник', '+7 950 118-25-40', 'Активен'],
+  ['Барсуков Н. Е.', '10493', 'BC-10-11', 'ППСП · Взвод 1', 'Сотрудник', '—', 'Создан автоматически']
+];
+
+const LOGS = [
+  ['02.09.2026 09:41:30', 'Сбор', 'Отсек 1 · загружено 128 файлов, 6,4 ГБ', 'Смирнов А. В.'],
+  ['02.09.2026 09:38:02', 'Ошибка', 'Отсек 8 · 3 файла не скопировано, повтор при следующем подключении', 'Шилов П. А.'],
+  ['02.09.2026 09:12:58', 'Сбор', 'Отсек 4 · загружено 41 файл, 1,2 ГБ', 'Гусева Е. А.'],
+  ['02.09.2026 08:55:14', 'Время', 'Отсек 4 · время регистратора синхронизировано', 'система'],
+  ['02.09.2026 08:31:47', 'Вход', 'Вход в системные настройки', 'admin'],
+  ['02.09.2026 08:05:51', 'Сбор', 'Отсек 5 · загружено 96 файлов, 4,8 ГБ', 'Тимофеев Р. Н.'],
+  ['02.09.2026 07:59:03', 'Хранилище', 'Свободно 23,6 ТБ из 32 ТБ', 'система'],
+  ['02.09.2026 07:02:11', 'Запуск', 'Программа запущена автоматически, монитор USB активен', 'система']
+];
+
+const STAB_TITLES = {
+  dept: 'Управление отделами',
+  users: 'Управление пользователями',
+  station: 'Настройки станции сбора',
+  ports: 'Сопоставление портов',
+  ftp: 'Управление FTP',
+  sql: 'Настройка SQL',
+  log: 'Журнал'
+};
+
+class Component extends DCLogic {
+  state = {
+    screen: 'collect', stab: 'station', layout: null, modal: null, authed: false, authMode: 'settings',
+    login: 'admin', pw: '', authErr: '',
+    bays: [], now: new Date(), sel: { 0: true },
+    notes: null, restart: false,
+    fDept: '', fPers: '', fDev: '', fName: '', fType: 'Все',
+    fFrom: '01.09.2026 00:00', fTo: '02.09.2026 23:59',
+    logFrom: '01.09.2026', logTo: '02.09.2026',
+    store: 'alarm', wipe: 'delete', voice: true, alarm: true, autoclean: false,
+    cfgBays: '', cfgCols: '5', cfgThreshold: '500 ГБ', cfgDisk: 'BCDATA · том 32 ТБ', cfgPath: '/mnt/bcdata/archive',
+    ftp: true, ftpHost: '10.20.0.14', ftpPort: '990', ftpUser: 'bestcam', ftpPass: 'secret', crypto: 'FTPS', ftpTest: '',
+    sql: false, sqlHost: '10.20.0.9', sqlDb: 'bestcam_archive', sqlUser: 'sa', sqlPass: 'secret', sqlTest: '',
+    deptSel: 1, userSel: 0, bayN: null,
+    convVideo: 'MP4', convAudio: 'MP3', convImg: 'JPG',
+    noteText: '', formKind: null, formVals: {}, conf: null
+  };
+
+  componentDidMount() {
+    const count = Math.max(6, Math.min(30, Number(this.props.bayCount) || 10));
+    const bays = [];
+    for (let i = 0; i < count; i++) {
+      const p = PEOPLE[i % PEOPLE.length];
+      const st = START[i % START.length];
+      const total = 40 + ((i * 37) % 260);
+      bays.push({
+        n: i + 1, person: p[0], dept: p[1], pers: p[2], dev: p[3],
+        st: p[0] === 'Отсек свободен' ? 'idle' : st,
+        total, pct: st === 'copying' ? 8 + ((i * 23) % 70) : (st === 'done' || st === 'error' ? 100 : 0),
+        battery: p[0] === 'Отсек свободен' ? '' : (46 + ((i * 13) % 52)) + '%',
+        ticks: 0
+      });
+    }
+    this.setState({ bays, cfgBays: String(count) });
+    this._clock = setInterval(() => this.setState({ now: new Date() }), 1000);
+    if (this.props.demoMotion !== false) this._tick = setInterval(this.advance, 900);
+  }
+
+  componentWillUnmount() { clearInterval(this._clock); clearInterval(this._tick); }
+
+  advance = () => {
+    this.setState(s => ({
+      bays: s.bays.map(b => {
+        if (b.st === 'copying') {
+          const pct = b.pct + 1 + Math.round(Math.random() * 4);
+          return pct >= 100 ? { ...b, pct: 100, st: 'done', ticks: 0 } : { ...b, pct };
+        }
+        if (b.st === 'scanning') {
+          const t = b.ticks + 1;
+          return t > 3 ? { ...b, st: 'copying', pct: 2, ticks: 0 } : { ...b, ticks: t };
+        }
+        if (b.st === 'done') {
+          const t = b.ticks + 1;
+          return t > 26 ? { ...b, st: 'idle', pct: 0, ticks: 0 } : { ...b, ticks: t };
+        }
+        if (b.st === 'idle' && b.person !== 'Отсек свободен') {
+          const t = b.ticks + 1;
+          return t > 12 ? { ...b, st: 'scanning', pct: 0, ticks: 0 } : { ...b, ticks: t };
+        }
+        return b;
+      })
+    }));
+  };
+
+  set = (k) => (e) => this.setState({ [k]: e.target.value });
+  put = (k, v) => () => this.setState({ [k]: v });
+  closeModal = () => this.setState({ modal: null, authErr: '', pw: '' });
+  noop = () => {};
+
+  goto = (screen) => () => {
+    if (screen === 'settings' && !this.state.authed) {
+      this.setState({ modal: 'auth', authMode: 'settings', pw: '', authErr: '' });
+    } else this.setState({ screen });
+  };
+  openSettings = this.goto('settings');
+  askExit = () => this.setState({ modal: 'auth', authMode: 'exit', pw: '', authErr: '' });
+  lockNow = () => this.setState({ authed: false, screen: 'collect' });
+
+  submitAuth = () => {
+    const ok = this.state.pw === '888888';
+    if (!ok) { this.setState({ authErr: 'Неверный пароль. Обратитесь к администратору.' }); return; }
+    if (this.state.authMode === 'exit') {
+      this.setState({
+        modal: 'confirm', pw: '', authErr: '',
+        conf: { title: 'Выход из программы', text: 'Сбор данных будет остановлен. Регистраторы в отсеках останутся на зарядке.', btn: 'Выйти', act: 'exit' }
+      });
+    } else {
+      this.setState({ authed: true, screen: 'settings', modal: null, pw: '', authErr: '' });
+    }
+  };
+
+  openBay = (n) => () => this.setState({ modal: 'bay', bayN: n });
+  setPriority = () => this.setState(s => ({
+    modal: 'confirm',
+    conf: { title: 'Приоритетная загрузка', text: 'Отсек ' + s.bayN + ' будет загружен первым, остальные окна встанут в очередь.', btn: 'Назначить приоритет', act: 'priority' }
+  }));
+  chargeOnly = () => this.setState(s => ({
+    modal: 'confirm',
+    conf: { title: 'Только зарядка', text: 'Загрузка данных из отсека ' + s.bayN + ' будет отменена. Файлы останутся на регистраторе и загрузятся при следующем подключении.', btn: 'Отменить загрузку', act: 'charge' }
+  }));
+  syncTime = () => this.setState({ modal: null });
+
+  confirmOk = () => {
+    const c = this.state.conf || {};
+    if (c.act === 'charge') {
+      this.setState(s => ({ modal: null, bays: s.bays.map(b => b.n === s.bayN ? { ...b, st: 'charge' } : b) }));
+    } else if (c.act === 'priority') {
+      this.setState(s => ({ modal: null, bays: s.bays.map(b => b.n === s.bayN ? { ...b, st: 'copying' } : b) }));
+    } else if (c.act === 'delete') {
+      this.setState({ modal: null, sel: {} });
+    } else {
+      this.setState({ modal: null });
+    }
+  };
+
+  toggleRow = (i) => () => this.setState(s => {
+    const sel = { ...s.sel };
+    if (sel[i]) delete sel[i]; else sel[i] = true;
+    return { sel };
+  });
+
+  runQuery = () => this.setState({ sel: {} });
+  resetQuery = () => this.setState({ fDept: '', fPers: '', fDev: '', fName: '', fType: 'Все', fFrom: '01.09.2026 00:00', fTo: '02.09.2026 23:59', sel: {} });
+  openPlayer = () => this.setState({ modal: 'player' });
+  openConvert = () => this.setState({ modal: 'convert' });
+  openNote = () => this.setState({ modal: 'note' });
+  saveNote = () => this.setState({ modal: null });
+  startConvert = () => this.setState({ modal: null });
+  openDownload = () => this.setState(s => ({
+    modal: 'confirm',
+    conf: { title: 'Загрузка на USB-накопитель', text: 'Выбрано файлов: ' + Object.keys(s.sel).length + '. Вставьте накопитель в порт USB 3.0 и подтвердите начало загрузки.', btn: 'Начать загрузку', act: 'download' }
+  }));
+  askDelete = () => this.setState(s => ({
+    modal: 'confirm',
+    conf: { title: 'Удаление файлов', text: 'Будет удалено файлов: ' + Object.keys(s.sel).length + '. Защищённые файлы удалить нельзя — они будут пропущены.', btn: 'Удалить', act: 'delete' }
+  }));
+
+  saveStation = () => this.setState({ restart: true });
+  doRestart = () => this.setState({ restart: false });
+  testFtp = () => this.setState({ ftpTest: 'Подключение установлено' });
+  testSql = () => this.setState({ sqlTest: 'Подключение установлено' });
+  toggleFtp = () => this.setState(s => ({ ftp: !s.ftp }));
+  toggleSql = () => this.setState(s => ({ sql: !s.sql }));
+  toggleNotes = () => this.setState(s => ({ notes: !(s.notes === null ? this.props.specNotes === true : s.notes) }));
+
+  openForm = (kind, vals, title) => () => this.setState({ modal: 'form', formKind: kind, formVals: vals, formTitle: title });
+  addDept = this.openForm('dept', { name: '', code: '', parent: 'ППСП' }, 'Добавить отдел');
+  editDept = () => { const d = DEPTS[this.state.deptSel]; this.setState({ modal: 'form', formKind: 'dept', formTitle: 'Редактировать отдел', formVals: { name: d[0], code: d[1], parent: 'ППСП' } }); };
+  delDept = () => this.setState({ modal: 'confirm', conf: { title: 'Удалить отдел', text: 'Отдел «' + DEPTS[this.state.deptSel][0] + '» будет удалён вместе с вложенными подразделениями.', btn: 'Удалить', act: 'deldept' } });
+  addUser = this.openForm('user', { name: '', pers: '', dev: '', dept: '', role: 'Сотрудник', phone: '' }, 'Добавить пользователя');
+  editUser = () => { const u = USERS[this.state.userSel]; this.setState({ modal: 'form', formKind: 'user', formTitle: 'Редактировать пользователя', formVals: { name: u[0], pers: u[1], dev: u[2], dept: u[3], role: u[4], phone: u[5] } }); };
+  delUser = () => this.setState({ modal: 'confirm', conf: { title: 'Удалить пользователя', text: 'Учётная запись «' + USERS[this.state.userSel][0] + '» будет удалена. Собранные файлы останутся в архиве.', btn: 'Удалить', act: 'deluser' } });
+  setFormVal = (k) => (e) => this.setState(s => ({ formVals: { ...s.formVals, [k]: e.target.value } }));
+  saveForm = () => this.setState({ modal: null });
+
+  pill(active, activeBg) {
+    return active
+      ? { bg: activeBg || 'var(--color-accent)', fg: 'var(--color-neutral-100)', bd: activeBg || 'var(--color-accent)' }
+      : { bg: 'var(--color-neutral-100)', fg: 'var(--color-text)', bd: 'var(--color-divider)' };
+  }
+
+  radio(active) {
+    return active
+      ? { bd: 'var(--color-accent)', bg: 'var(--color-accent-100)', dotBd: 'var(--color-accent)', dotBg: 'var(--color-accent)', dotSh: 'inset 0 0 0 4px var(--color-neutral-100)' }
+      : { bd: 'var(--color-divider)', bg: 'var(--color-bg)', dotBd: 'var(--color-neutral-400)', dotBg: 'transparent', dotSh: 'none' };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const two = (n) => String(n).padStart(2, '0');
+    const now = s.now;
+    const clock = two(now.getHours()) + ':' + two(now.getMinutes()) + ':' + two(now.getSeconds());
+    const days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
+    const today = days[now.getDay()] + ', ' + two(now.getDate()) + '.' + two(now.getMonth() + 1) + '.' + now.getFullYear();
+
+    const layout = s.layout || this.props.initialLayout || 'grid';
+    const showNotes = s.notes === null ? this.props.specNotes === true : s.notes;
+
+    const bays = s.bays.map(b => {
+      const st = BAY_STYLES[b.st];
+      const copied = Math.round(b.total * b.pct / 100);
+      const free = b.person === 'Отсек свободен';
+      return {
+        n: b.n, person: free ? 'Отсек свободен' : b.person, dept: b.dept,
+        state: st.label, sub: free ? 'Вставьте регистратор' : SUBS[b.st],
+        bg: st.bg, bd: st.bd, fg: st.fg, numBg: st.numBg, numFg: st.numFg, track: st.track, barBg: st.bar,
+        barW: b.pct + '%',
+        pctText: (b.st === 'copying' || b.st === 'done' || b.st === 'error') ? b.pct + '%' : '',
+        files: free ? '' : (b.st === 'copying' ? copied + ' из ' + b.total + ' файлов'
+              : b.st === 'done' ? b.total + ' файлов загружено'
+              : b.st === 'error' ? copied + ' из ' + b.total + ' файлов'
+              : b.st === 'charge' ? 'Загрузка отменена' : ''),
+        charge: b.battery,
+        open: this.openBay(b.n)
+      };
+    });
+
+    const cnt = (st) => s.bays.filter(b => b.st === st).length;
+    const summary = 'Копирование: ' + cnt('copying') + ' · Готово: ' + cnt('done') + ' · Ошибки: ' + cnt('error') + ' · Свободно окон: ' + cnt('idle');
+
+    const navDefs = [['collect', 'Сбор данных'], ['query', 'Запрос данных'], ['settings', 'Настройки']];
+    const navItems = navDefs.map(([id, label]) => ({ ...this.pill(s.screen === id), label, on: this.goto(id) }));
+
+    const layoutDefs = [['grid', 'Сетка'], ['list', 'Список'], ['rack', 'Схема стойки']];
+    const layoutOpts = layoutDefs.map(([id, label]) => {
+      const a = layout === id;
+      return { label, bg: a ? 'var(--color-neutral-100)' : 'transparent', fg: a ? 'var(--color-accent-800)' : 'var(--color-neutral-700)', on: this.put('layout', id) };
+    });
+
+    const typeDefs = ['Все', 'Видео', 'Аудио', 'Фото', 'Журнал'];
+    const typeOpts = typeDefs.map(label => {
+      const a = s.fType === label;
+      return { label, bg: a ? 'var(--color-accent)' : 'transparent', fg: a ? 'var(--color-neutral-100)' : 'var(--color-neutral-700)', on: this.put('fType', label) };
+    });
+
+    const visible = ROWS.filter(r => s.fType === 'Все' || r[6] === s.fType);
+    const rows = visible.map((r, i) => {
+      const on = !!s.sel[i];
+      return {
+        shot: r[0], got: r[1], person: r[2], dept: r[3], dev: r[4], file: r[5], type: r[6], size: r[7],
+        prot: r[8] || '—', protFg: r[8] ? 'var(--color-accent-700)' : 'var(--color-neutral-500)',
+        typeCls: TYPE_CLS[r[6]] || 'tag-neutral',
+        check: on ? '✓' : '',
+        boxBd: on ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        boxBg: on ? 'var(--color-accent)' : 'transparent',
+        rowBg: on ? 'var(--color-accent-100)' : 'transparent',
+        toggle: this.toggleRow(i)
+      };
+    });
+    const selCount = Object.keys(s.sel).length;
+
+    const stabDefs = [['dept', 'Отделы'], ['users', 'Пользователи'], ['station', 'Станция сбора'], ['ports', 'Сопоставление портов'], ['ftp', 'FTP'], ['sql', 'SQL'], ['log', 'Журнал']];
+    const stabs = stabDefs.map(([id, label]) => ({ ...this.pill(s.stab === id), label, on: this.put('stab', id) }));
+
+    const depts = DEPTS.map((d, i) => {
+      const a = s.deptSel === i;
+      return {
+        name: d[0], code: d[1], count: d[2], pad: (18 + d[3] * 26) + 'px',
+        bg: a ? 'var(--color-accent-100)' : 'var(--color-bg)',
+        bd: a ? 'var(--color-accent)' : 'var(--color-divider)',
+        fg: 'var(--color-text)', on: this.put('deptSel', i)
+      };
+    });
+
+    const users = USERS.map((u, i) => {
+      const a = s.userSel === i;
+      const auto = u[6] !== 'Активен';
+      return {
+        name: u[0], pers: u[1], dev: u[2], dept: u[3], role: u[4], phone: u[5], status: u[6],
+        stCls: auto ? 'tag-outline' : 'tag-accent-2',
+        ini: u[0].slice(0, 1) + u[0].split(' ')[1].slice(0, 1),
+        avBg: a ? 'var(--color-accent)' : 'var(--color-accent-200)',
+        avFg: a ? 'var(--color-neutral-100)' : 'var(--color-accent-900)',
+        rowBg: a ? 'var(--color-accent-100)' : 'transparent',
+        on: this.put('userSel', i)
+      };
+    });
+
+    const storeOpts = [
+      { key: 'alarm', title: 'Тревога при заполнении', desc: 'Собранные файлы не удаляются, при нехватке места срабатывает тревога.' },
+      { key: 'rewrite', title: 'Автоматическая перезапись', desc: 'При нехватке места самые ранние файлы удаляются автоматически.' }
+    ].map(o => ({ ...o, ...this.radio(s.store === o.key), on: this.put('store', o.key) }));
+
+    const wipeOpts = [
+      { key: 'delete', title: 'Удалять после загрузки', desc: 'Память регистратора очищается только после подтверждённой записи в архив.' },
+      { key: 'keep', title: 'Не удалять', desc: 'Файлы остаются на регистраторе, повторная загрузка пропускает уже собранные.' }
+    ].map(o => ({ ...o, ...this.radio(s.wipe === o.key), on: this.put('wipe', o.key) }));
+
+    const tog = (v) => ({ trackBg: v ? 'var(--color-accent-2-500)' : 'var(--color-neutral-400)', just: v ? 'flex-end' : 'flex-start' });
+    const toggles = [
+      { title: 'Голосовые оповещения', desc: 'Подсказки станции проговариваются голосом', ...tog(s.voice), on: () => this.setState({ voice: !s.voice }) },
+      { title: 'Звуковая тревога', desc: 'Сигнал при обрыве сети и нехватке места', ...tog(s.alarm), on: () => this.setState({ alarm: !s.alarm }) },
+      { title: 'Автоочистка архива', desc: 'Удалять видео старше заданного срока', ...tog(s.autoclean), on: () => this.setState({ autoclean: !s.autoclean }) }
+    ];
+
+    const ports = s.bays.map((b, i) => {
+      const mapped = i % 4 !== 3;
+      return {
+        n: b.n,
+        disk: b.person === 'Отсек свободен' ? '—' : '/dev/sd' + String.fromCharCode(98 + i) + '1',
+        serial: b.person === 'Отсек свободен' ? '—' : 'BC' + (830041 + i * 17),
+        label: b.person === 'Отсек свободен' ? '—' : b.dev,
+        state: mapped ? 'Сопоставлен' : 'Не сопоставлен',
+        cls: mapped ? 'tag-accent-2' : 'tag-outline',
+        action: mapped ? 'Изменить' : 'Сопоставить',
+        numBg: mapped ? 'var(--color-accent-2-500)' : 'var(--color-neutral-300)',
+        numFg: mapped ? 'var(--color-neutral-100)' : 'var(--color-neutral-800)',
+        map: this.noop
+      };
+    });
+
+    const cryptoOpts = ['Без шифрования', 'FTPS', 'SFTP'].map(label => {
+      const a = s.crypto === label;
+      return { label, bg: a ? 'var(--color-accent)' : 'transparent', fg: a ? 'var(--color-neutral-100)' : 'var(--color-neutral-700)', on: this.put('crypto', label) };
+    });
+
+    const logs = LOGS.map(l => ({
+      time: l[0], kind: l[1], text: l[2], who: l[3],
+      cls: l[1] === 'Ошибка' ? 'tag-accent' : l[1] === 'Сбор' ? 'tag-accent-2' : 'tag-neutral'
+    }));
+
+    const bay = s.bays.find(b => b.n === s.bayN) || s.bays[0] || { n: 1, person: '', dept: '', pers: '', dev: '', st: 'idle', total: 0, pct: 0, battery: '' };
+    const bst = BAY_STYLES[bay.st];
+    const bayCopied = Math.round(bay.total * bay.pct / 100);
+
+    const convGroups = [
+      { title: 'Видео', opts: ['MP4', 'MOV'].map(l => ({ label: l, ...(s.convVideo === l ? { bd: 'var(--color-accent)', bg: 'var(--color-accent)', fg: 'var(--color-neutral-100)' } : { bd: 'var(--color-divider)', bg: 'var(--color-neutral-100)', fg: 'var(--color-text)' }), on: this.put('convVideo', l) })) },
+      { title: 'Аудио', opts: ['MP3', 'WAV', 'WMA'].map(l => ({ label: l, ...(s.convAudio === l ? { bd: 'var(--color-accent)', bg: 'var(--color-accent)', fg: 'var(--color-neutral-100)' } : { bd: 'var(--color-divider)', bg: 'var(--color-neutral-100)', fg: 'var(--color-text)' }), on: this.put('convAudio', l) })) },
+      { title: 'Изображения', opts: ['JPG', 'PNG', 'BMP'].map(l => ({ label: l, ...(s.convImg === l ? { bd: 'var(--color-accent)', bg: 'var(--color-accent)', fg: 'var(--color-neutral-100)' } : { bd: 'var(--color-divider)', bg: 'var(--color-neutral-100)', fg: 'var(--color-text)' }), on: this.put('convImg', l) })) }
+    ];
+
+    const formDefs = {
+      dept: [['name', 'Название отдела'], ['code', 'Код отдела'], ['parent', 'Отдел верхнего уровня']],
+      user: [['name', 'ФИО'], ['pers', 'Табельный номер'], ['dev', 'Номер устройства'], ['dept', 'Отдел'], ['role', 'Роль'], ['phone', 'Телефон']]
+    };
+    const formFields = (formDefs[s.formKind] || []).map(([k, label]) => ({ label, value: s.formVals[k] || '', on: this.setFormVal(k) }));
+
+    const keyDefs = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '←'];
+    const keys = keyDefs.map(label => ({
+      label,
+      bg: label === 'C' || label === '←' ? 'var(--color-neutral-200)' : 'var(--color-bg)',
+      fg: 'var(--color-text)',
+      on: () => this.setState(st => ({
+        pw: label === 'C' ? '' : label === '←' ? st.pw.slice(0, -1) : st.pw + label,
+        authErr: ''
+      }))
+    }));
+
+    const conf = s.conf || { title: '', text: '', btn: 'ОК' };
+
+    return {
+      clock, today, summary, navItems, layoutOpts, bays, showNotes,
+      isCollect: s.screen === 'collect', isQuery: s.screen === 'query', isSettings: s.screen === 'settings',
+      isGrid: layout === 'grid', isList: layout === 'list', isRack: layout === 'rack',
+      statusPills: [
+        { label: 'Сеть 1 Гбит/с', bg: 'var(--color-accent-2-100)', fg: 'var(--color-accent-2-800)', dot: 'var(--color-accent-2-500)' },
+        { label: s.ftp ? 'FTP подключён' : 'FTP выключен', bg: s.ftp ? 'var(--color-accent-100)' : 'var(--color-neutral-200)', fg: s.ftp ? 'var(--color-accent-800)' : 'var(--color-neutral-700)', dot: s.ftp ? 'var(--color-accent-500)' : 'var(--color-neutral-400)' },
+        { label: s.sql ? 'Сервер SQL подключён' : 'Локальная база', bg: 'var(--color-neutral-200)', fg: 'var(--color-neutral-700)', dot: 'var(--color-neutral-500)' }
+      ],
+      openSettings: this.openSettings, askExit: this.askExit, lockNow: this.lockNow,
+      restartNeeded: s.restart, doRestart: this.doRestart,
+      diskLabel: 'Том архива BCDATA · свободно 23,6 ТБ из 32 ТБ', diskW: '26%',
+      monStatus: 'Монитор USB активен · окон сбора: ' + s.bays.length,
+      notesBtn: showNotes ? 'Скрыть примечания к ТЗ' : 'Примечания к ТЗ',
+      toggleNotes: this.toggleNotes,
+
+      fDept: s.fDept, fPers: s.fPers, fDev: s.fDev, fName: s.fName, fFrom: s.fFrom, fTo: s.fTo,
+      setFDept: this.set('fDept'), setFPers: this.set('fPers'), setFDev: this.set('fDev'), setFName: this.set('fName'),
+      setFFrom: this.set('fFrom'), setFTo: this.set('fTo'),
+      typeOpts, rows, runQuery: this.runQuery, resetQuery: this.resetQuery,
+      queryCount: 'Найдено файлов: ' + rows.length + ' · выбрано: ' + selCount,
+      dlLabel: 'Скачать (' + selCount + ')', delLabel: 'Удалить (' + selCount + ')',
+      openPlayer: this.openPlayer, openConvert: this.openConvert, openNote: this.openNote,
+      openDownload: this.openDownload, askDelete: this.askDelete,
+
+      stabs, stabTitle: STAB_TITLES[s.stab],
+      sDept: s.stab === 'dept', sUsers: s.stab === 'users', sStation: s.stab === 'station',
+      sPorts: s.stab === 'ports', sFtp: s.stab === 'ftp', sSql: s.stab === 'sql', sLog: s.stab === 'log',
+      depts, users, addDept: this.addDept, editDept: this.editDept, delDept: this.delDept,
+      addUser: this.addUser, editUser: this.editUser, delUser: this.delUser,
+      storeOpts, wipeOpts, toggles, ports, cryptoOpts, logs,
+      cfgBays: s.cfgBays, cfgCols: s.cfgCols, cfgThreshold: s.cfgThreshold, cfgDisk: s.cfgDisk, cfgPath: s.cfgPath,
+      setCfgBays: this.set('cfgBays'), setCfgCols: this.set('cfgCols'), setCfgThreshold: this.set('cfgThreshold'),
+      setCfgDisk: this.set('cfgDisk'), setCfgPath: this.set('cfgPath'), saveStation: this.saveStation,
+      ftpTrack: s.ftp ? 'var(--color-accent-2-500)' : 'var(--color-neutral-400)', ftpJust: s.ftp ? 'flex-end' : 'flex-start',
+      ftpOpacity: s.ftp ? '1' : '.45', toggleFtp: this.toggleFtp, testFtp: this.testFtp, ftpTest: s.ftpTest,
+      ftpHost: s.ftpHost, ftpPort: s.ftpPort, ftpUser: s.ftpUser, ftpPass: s.ftpPass,
+      setFtpHost: this.set('ftpHost'), setFtpPort: this.set('ftpPort'), setFtpUser: this.set('ftpUser'), setFtpPass: this.set('ftpPass'),
+      sqlTrack: s.sql ? 'var(--color-accent-2-500)' : 'var(--color-neutral-400)', sqlJust: s.sql ? 'flex-end' : 'flex-start',
+      sqlOpacity: s.sql ? '1' : '.45', toggleSql: this.toggleSql, testSql: this.testSql, sqlTest: s.sqlTest,
+      sqlHost: s.sqlHost, sqlDb: s.sqlDb, sqlUser: s.sqlUser, sqlPass: s.sqlPass,
+      setSqlHost: this.set('sqlHost'), setSqlDb: this.set('sqlDb'), setSqlUser: this.set('sqlUser'), setSqlPass: this.set('sqlPass'),
+      logFrom: s.logFrom, logTo: s.logTo, setLogFrom: this.set('logFrom'), setLogTo: this.set('logTo'),
+
+      modal: s.modal,
+      modalW: s.modal === 'player' ? '900px' : s.modal === 'bay' ? '760px' : s.modal === 'form' ? '720px' : '620px',
+      mAuth: s.modal === 'auth', mBay: s.modal === 'bay', mPlayer: s.modal === 'player',
+      mConvert: s.modal === 'convert', mNote: s.modal === 'note', mForm: s.modal === 'form', mConfirm: s.modal === 'confirm',
+      closeModal: this.closeModal, noop: this.noop,
+      authTitle: s.authMode === 'exit' ? 'Выход из программы' : 'Доступ к настройкам защищён',
+      authHint: s.authMode === 'exit' ? 'Введите пароль администратора, чтобы завершить работу программы.' : 'Введите учётную запись и пароль администратора. Разделы блокируются автоматически через 10 минут без действий.',
+      authBtn: s.authMode === 'exit' ? 'Подтвердить' : 'Войти',
+      login: s.login, pw: s.pw, authErr: s.authErr,
+      setLogin: this.set('login'), setPw: this.set('pw'), submitAuth: this.submitAuth, keys,
+
+      bayN: bay.n, bayPerson: bay.person, bayDept: bay.dept, bayState: bst.label, bayCls: bst.cls,
+      bayNumBg: bst.numBg, bayNumFg: bst.numFg, bayBarW: bay.pct + '%',
+      bayFiles: bayCopied + ' из ' + bay.total + ' файлов', bayPct: bay.pct + '%',
+      bayFacts: [
+        { k: 'Номер устройства', v: bay.dev },
+        { k: 'Табельный номер', v: bay.pers },
+        { k: 'Заряд батареи', v: bay.battery || '—' },
+        { k: 'Синхронизация', v: 'выполнена' },
+        { k: 'Осталось', v: bay.st === 'copying' ? '≈ 2 мин' : '—' },
+        { k: 'Отсек', v: '№ ' + bay.n }
+      ],
+      setPriority: this.setPriority, chargeOnly: this.chargeOnly, syncTime: this.syncTime,
+
+      playFile: 'VID_00231.MP4', playMeta: 'Смирнов А. В. · ППСП · Взвод 1 · 1,84 ГБ',
+      playStamp: '02.09.2026 08:12:04',
+      convSubject: 'Выбрано файлов: ' + selCount + ' · целевые форматы применяются по типу файла',
+      convGroups, startConvert: this.startConvert,
+      noteSubject: 'VID_00231.MP4 · Смирнов А. В. · 02.09.2026 08:12',
+      noteText: s.noteText, setNoteText: this.set('noteText'), saveNote: this.saveNote,
+      formTitle: s.formTitle || '', formFields, saveForm: this.saveForm,
+      confTitle: conf.title, confText: conf.text, confBtn: conf.btn, confirmOk: this.confirmOk,
+
+      notesCollect: [
+        { i: '1', t: 'Одно окно — один физический отсек. Состояния: простой, сканирование, копирование, готово, ошибка, только зарядка. Цвет и подпись меняются вместе, только цветом состояние не кодируется.' },
+        { i: '2', t: 'Копирование инкрементальное: файл с совпадающими размером и датой пропускается, изменённый сохраняется с суффиксом даты, а не перезаписывается.' },
+        { i: '3', t: 'Память регистратора очищается только по подтверждённо скопированным файлам. Если копия хотя бы одного файла не удалась — окно уходит в «Ошибка», а не в «Готово».' },
+        { i: '4', t: 'Обрыв USB не отменяет сессию: загрузка продолжается с того же места при следующем подключении того же устройства (идентификация по служебному файлу и серийному номеру).' },
+        { i: '5', t: 'Нажатие на окно открывает карточку отсека: приоритетная загрузка, отмена загрузки (только зарядка), повторная синхронизация времени.' },
+        { i: '6', t: 'Три компоновки — одна кодовая база: сетка до 12 окон, список от 12 до 30, схема стойки для сверки номеров с физическими отсеками. Минимальная область нажатия 44 px.' }
+      ],
+      notesQuery: [
+        { i: '1', t: 'Фильтры: отдел, табельный номер, номер устройства, ФИО, имя файла, тип файла, время съёмки и время сбора с точностью до секунды. «Сброс» возвращает значения по умолчанию.' },
+        { i: '2', t: 'Запрос выполняется в фоновом потоке, результат ограничен 500 записями; повторный запрос отменяет предыдущий.' },
+        { i: '3', t: 'Защищённые файлы не удаляются неавторизованным пользователем — в пакетном удалении они пропускаются, и об этом сообщается в итоге операции.' },
+        { i: '4', t: 'Конвертация: видео MP4/MOV, аудио MP3/WAV/WMA, изображения JPG/PNG/BMP. Исходный файл сохраняется.' },
+        { i: '5', t: 'Загрузка на внешний носитель показывает прогресс до 100% и результат по каждому файлу.' }
+      ],
+      notesSettings: [
+        { i: '1', t: 'Разделы настроек защищены паролем (по умолчанию admin / 888888) и повторно блокируются после 10 минут без действий.' },
+        { i: '2', t: 'Число окон сбора от 6 до 30 задаётся вместе с числом окон в строке и применяется после перезапуска — баннер о перезапуске обязателен.' },
+        { i: '3', t: 'Папка архива помечается служебным файлом. Метки нет — диск не смонтирован: сбор останавливается с ошибкой, запись в системный раздел запрещена.' },
+        { i: '4', t: 'Сопоставление портов выполняется по одному регистратору: обнаруженный диск привязывается к выбранному номеру отсека.' },
+        { i: '5', t: 'FTP и SQL настраиваются по одной схеме: включение, параметры подключения, проверка соединения, сохранение, перезапуск.' },
+        { i: '6', t: 'Журнал ведётся по датам: сбор, ошибки, синхронизация времени, входы в настройки, состояние хранилища.' }
+      ]
+    };
+  }
+}
+
+</script>
+</body>
+</html>

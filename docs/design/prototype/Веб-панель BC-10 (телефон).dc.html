@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/organic-04d377a8-3c73-421c-8b45-badc6e95c76e/styles.css">
+  <script src="_ds/organic-04d377a8-3c73-421c-8b45-badc6e95c76e/_ds_bundle.js"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&family=Manrope:wght@400;500;600;700&display=swap&subset=cyrillic,latin">
+  <style>
+    :root {
+      --font-heading: "Nunito", system-ui, sans-serif;
+      --font-heading-weight: 800;
+      --font-body: "Manrope", system-ui, sans-serif;
+      --color-bg: #eef3f9;
+      --color-surface: #dde7f2;
+      --color-text: #16202c;
+      --color-accent: #2f77ad;
+      --color-accent-2: #3f9ba6;
+      --color-divider: color-mix(in srgb, #16202c 16%, transparent);
+      --color-neutral-100: #f7fafd;
+      --color-neutral-200: #e9f0f7;
+      --color-neutral-300: #d3dee9;
+      --color-neutral-400: #b2c1d1;
+      --color-neutral-500: #90a1b5;
+      --color-neutral-600: #71839a;
+      --color-neutral-700: #56677e;
+      --color-neutral-800: #3a495c;
+      --color-neutral-900: #212d3b;
+      --color-accent-100: #eaf3fc;
+      --color-accent-200: #d0e4f8;
+      --color-accent-300: #a7caee;
+      --color-accent-400: #72a9de;
+      --color-accent-500: #3f84c5;
+      --color-accent-600: #2a68a6;
+      --color-accent-700: #1d4f83;
+      --color-accent-800: #143a61;
+      --color-accent-900: #0d2740;
+      --color-accent-2-100: #e6f6f8;
+      --color-accent-2-200: #c8eaee;
+      --color-accent-2-300: #9dd7de;
+      --color-accent-2-400: #69bcc6;
+      --color-accent-2-500: #3f9ba6;
+      --color-accent-2-600: #2c7d88;
+      --color-accent-2-700: #1f6069;
+      --color-accent-2-800: #16454c;
+      --color-accent-2-900: #0f2f34;
+    }
+    html, body { margin: 0; padding: 0; background: var(--color-neutral-200); font-family: var(--font-body); }
+    * { box-sizing: border-box; }
+    button, input { font-family: var(--font-body); }
+    a { color: var(--color-accent-700); text-decoration: none; }
+    a:hover { color: var(--color-accent-600); }
+  </style>
+</helmet>
+
+<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;gap:22px;padding:32px 20px 40px;background:var(--color-neutral-200);font-family:var(--font-body);color:var(--color-text)">
+
+  <div style="width:100%;max-width:540px;display:flex;flex-direction:column;gap:6px">
+    <div style="font-family:var(--font-heading);font-weight:800;font-size:26px;line-height:1.1">Веб-панель BC-10</div>
+    <div style="font-size:14.5px;line-height:1.5;color:var(--color-neutral-700);text-wrap:pretty">Удалённое управление станцией с телефона: отсеки, архив, журнал, перезапуск. Тот же адрес открывается в браузере на компьютере — раскладка растягивается на широкий экран. Пути и тома показываются в форме той системы, где запущена станция.</div>
+  </div>
+
+  <x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" hint-size="402px,874px">
+    <div style="height:100%;display:flex;flex-direction:column;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
+
+      <div style="flex:none;padding:56px 16px 12px;background:var(--color-neutral-100);border-bottom:1px solid var(--color-divider)">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:40px;height:40px;flex:none;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);display:grid;place-items:center;font-family:var(--font-heading);font-weight:800;font-size:15px">BC</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-family:var(--font-heading);font-weight:800;font-size:16.5px;line-height:1.15">BC-10 · Пермская 10</div>
+            <div style="font-size:12px;color:var(--color-neutral-600)">{{ clock }} · {{ osLabel }}</div>
+          </div>
+          <button onClick="{{ askLogout }}" style="flex:none;min-height:40px;padding:0 16px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-bg);color:var(--color-neutral-700);font-size:13.5px;font-weight:600;white-space:nowrap;cursor:pointer">Выйти</button>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow:auto;padding:14px 16px 20px">
+
+        <sc-if value="{{ tabOverview }}" hint-placeholder-val="{{ true }}">
+          <div data-screen-label="Обзор" style="display:flex;flex-direction:column;gap:12px">
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+              <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="3">
+                <div style="padding:12px 10px;border-radius:22px;background:{{ m.bg }};color:{{ m.fg }}">
+                  <div style="font-family:var(--font-heading);font-weight:800;font-size:26px;line-height:1">{{ m.v }}</div>
+                  <div style="margin-top:4px;font-size:11.5px;font-weight:600;line-height:1.25">{{ m.k }}</div>
+                </div>
+              </sc-for>
+            </div>
+
+            <sc-if value="{{ hasAlert }}" hint-placeholder-val="{{ true }}">
+              <button onClick="{{ goBays }}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;text-align:left;border:none;border-radius:24px;background:var(--color-accent-800);color:var(--color-neutral-100);font:inherit;cursor:pointer">
+                <span style="flex:1;font-size:14px;line-height:1.4;font-weight:600">{{ alertText }}</span>
+                <span style="font-size:18px">›</span>
+              </button>
+            </sc-if>
+
+            <div style="padding:16px;border-radius:24px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px">
+                <span style="font-family:var(--font-heading);font-weight:800;font-size:15px">Том архива</span>
+                <span style="font-size:12.5px;color:var(--color-neutral-700)">{{ diskLabel }}</span>
+              </div>
+              <div style="height:12px;border-radius:999px;background:var(--color-neutral-300);overflow:hidden">
+                <div style="height:100%;border-radius:999px;background:var(--color-accent-2-500);width:{{ diskW }}"></div>
+              </div>
+              <div style="font-size:12.5px;line-height:1.45;color:var(--color-neutral-700)">{{ diskPath }}</div>
+            </div>
+
+            <div style="padding:16px;border-radius:24px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:4px">
+              <span style="font-family:var(--font-heading);font-weight:800;font-size:15px;margin-bottom:4px">Состояние служб</span>
+              <sc-for list="{{ services }}" as="s" hint-placeholder-count="4">
+                <div style="display:flex;align-items:center;gap:10px;min-height:38px">
+                  <span style="width:9px;height:9px;flex:none;border-radius:999px;background:{{ s.dot }}"></span>
+                  <span style="flex:1;font-size:14px;font-weight:600">{{ s.k }}</span>
+                  <span style="font-size:13px;color:var(--color-neutral-700)">{{ s.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <button onClick="{{ askRestart }}" style="min-height:52px;border:none;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);font-size:15.5px;font-weight:700;cursor:pointer">Перезапустить станцию</button>
+              <button onClick="{{ refresh }}" style="min-height:52px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-neutral-100);color:var(--color-text);font-size:15.5px;font-weight:600;cursor:pointer">Обновить состояние</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ tabBays }}" hint-placeholder-val="{{ false }}">
+          <div data-screen-label="Отсеки" style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ bays }}" as="b" hint-placeholder-count="10">
+              <button onClick="{{ b.open }}" style="display:flex;align-items:center;gap:12px;min-height:70px;padding:10px 14px;text-align:left;border:1px solid {{ b.bd }};border-radius:24px;background:{{ b.bg }};color:{{ b.fg }};font:inherit;cursor:pointer">
+                <span style="width:38px;height:38px;flex:none;border-radius:999px;display:grid;place-items:center;background:{{ b.numBg }};color:{{ b.numFg }};font-size:15px;font-weight:700">{{ b.n }}</span>
+                <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ b.person }}</span>
+                  <span style="font-size:12px;opacity:.8">{{ b.state }} · {{ b.files }}</span>
+                  <span style="height:7px;border-radius:999px;background:{{ b.track }};overflow:hidden">
+                    <span style="display:block;height:100%;border-radius:999px;background:{{ b.barBg }};width:{{ b.barW }}"></span>
+                  </span>
+                </span>
+                <span style="flex:none;font-size:14px;font-weight:700">{{ b.pctText }}</span>
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ tabArchive }}" hint-placeholder-val="{{ false }}">
+          <div data-screen-label="Архив" style="display:flex;flex-direction:column;gap:12px">
+            <input class="input" value="{{ q }}" onChange="{{ setQ }}" placeholder="Сотрудник, устройство, файл" style="min-height:52px;font-size:15px;background:var(--color-neutral-100)">
+            <div style="display:flex;gap:6px;overflow:auto;padding-bottom:2px">
+              <sc-for list="{{ typeOpts }}" as="o" hint-placeholder-count="5">
+                <button onClick="{{ o.on }}" style="flex:none;min-height:42px;padding:0 16px;border:1px solid {{ o.bd }};border-radius:999px;background:{{ o.bg }};color:{{ o.fg }};font-size:13.5px;font-weight:700;cursor:pointer">{{ o.label }}</button>
+              </sc-for>
+            </div>
+            <sc-for list="{{ files }}" as="f" hint-placeholder-count="6">
+              <div style="padding:14px;border-radius:24px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;align-items:baseline;gap:10px">
+                  <span style="flex:1;min-width:0;font-size:14.5px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ f.file }}</span>
+                  <span class="tag {{ f.cls }}" style="flex:none;font-size:11.5px">{{ f.type }}</span>
+                </div>
+                <div style="font-size:12.5px;line-height:1.45;color:var(--color-neutral-700)">{{ f.meta }}</div>
+                <div style="display:flex;gap:8px">
+                  <button onClick="{{ f.play }}" style="flex:1;min-height:44px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-bg);color:var(--color-text);font-size:13.5px;font-weight:600;cursor:pointer">Смотреть</button>
+                  <button onClick="{{ f.download }}" style="flex:1;min-height:44px;border:none;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);font-size:13.5px;font-weight:700;cursor:pointer">Скачать</button>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ tabLog }}" hint-placeholder-val="{{ false }}">
+          <div data-screen-label="Журнал" style="display:flex;flex-direction:column;gap:8px">
+            <sc-for list="{{ logs }}" as="l" hint-placeholder-count="8">
+              <div style="padding:13px 15px;border-radius:22px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:5px">
+                <div style="display:flex;align-items:center;gap:8px">
+                  <span class="tag {{ l.cls }}" style="font-size:11.5px">{{ l.kind }}</span>
+                  <span style="font-size:12px;color:var(--color-neutral-600)">{{ l.time }}</span>
+                </div>
+                <div style="font-size:13.5px;line-height:1.45">{{ l.text }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="flex:none;display:flex;gap:4px;padding:8px 10px 30px;background:var(--color-neutral-100);border-top:1px solid var(--color-divider)">
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.on }}" style="flex:1;min-height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;border:none;border-radius:20px;background:{{ t.bg }};color:{{ t.fg }};font:inherit;cursor:pointer">
+            <span style="font-size:17px;line-height:1">{{ t.icon }}</span>
+            <span style="font-size:11.5px;font-weight:700">{{ t.label }}</span>
+          </button>
+        </sc-for>
+      </div>
+
+      <sc-if value="{{ sheet }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;inset:0;z-index:80;display:flex;flex-direction:column;justify-content:flex-end;background:color-mix(in srgb, var(--color-neutral-900) 45%, transparent)">
+          <div style="padding:20px 18px 34px;border-radius:32px 32px 0 0;background:var(--color-surface);display:flex;flex-direction:column;gap:14px">
+            <div style="width:44px;height:5px;border-radius:999px;background:var(--color-neutral-400);align-self:center"></div>
+            <div style="font-family:var(--font-heading);font-weight:800;font-size:20px;line-height:1.15">{{ sheetTitle }}</div>
+            <div style="font-size:13.5px;line-height:1.5;color:var(--color-neutral-700)">{{ sheetText }}</div>
+            <sc-for list="{{ sheetActions }}" as="a" hint-placeholder-count="3">
+              <button onClick="{{ a.on }}" style="min-height:52px;border:1px solid {{ a.bd }};border-radius:999px;background:{{ a.bg }};color:{{ a.fg }};font-size:15px;font-weight:700;cursor:pointer">{{ a.label }}</button>
+            </sc-for>
+            <button onClick="{{ closeSheet }}" style="min-height:52px;border:none;border-radius:999px;background:transparent;color:var(--color-neutral-700);font-size:15px;font-weight:600;cursor:pointer">Отмена</button>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+  </x-import>
+
+  <div style="width:100%;max-width:1180px;display:flex;flex-direction:column;gap:6px;margin-top:16px">
+    <div style="font-family:var(--font-heading);font-weight:800;font-size:20px;line-height:1.15">Та же панель на компьютере</div>
+    <div style="font-size:14px;line-height:1.5;color:var(--color-neutral-700);text-wrap:pretty">Один адрес и одни данные: разделы переезжают из нижней панели в боковую, отсеки раскладываются в сетку, архив и журнал показываются таблицами. Переключение раздела синхронно с телефоном выше.</div>
+  </div>
+
+  <x-import component-from-global-scope="ChromeWindow" from="./browser-window.jsx" width="{{ 1180 }}" height="{{ 760 }}" url="bc10.local/panel" hint-size="1180px,760px">
+    <div style="display:flex;height:100%;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body)">
+
+      <div style="width:236px;flex:none;display:flex;flex-direction:column;gap:6px;padding:18px 14px;background:var(--color-neutral-100);border-right:1px solid var(--color-divider)">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <div style="width:38px;height:38px;flex:none;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);display:grid;place-items:center;font-family:var(--font-heading);font-weight:800;font-size:14px">BC</div>
+          <div style="min-width:0">
+            <div style="font-family:var(--font-heading);font-weight:800;font-size:15px;line-height:1.15">BC-10</div>
+            <div style="font-size:11.5px;color:var(--color-neutral-600)">Пермская 10</div>
+          </div>
+        </div>
+        <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+          <button onClick="{{ t.on }}" style="display:flex;align-items:center;gap:10px;min-height:48px;padding:0 16px;text-align:left;border:none;border-radius:999px;background:{{ t.bg }};color:{{ t.fg }};font:inherit;font-size:14.5px;font-weight:700;cursor:pointer">
+            <span style="font-size:15px">{{ t.icon }}</span>{{ t.label }}
+          </button>
+        </sc-for>
+        <div style="flex:1"></div>
+        <div style="padding:12px 14px;border-radius:20px;background:var(--color-bg);font-size:12px;line-height:1.5;color:var(--color-neutral-700)">{{ diskPath }}</div>
+        <button onClick="{{ askLogout }}" style="min-height:46px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-bg);color:var(--color-neutral-700);font-size:13.5px;font-weight:600;cursor:pointer">Выйти</button>
+      </div>
+
+      <div style="flex:1;min-width:0;display:flex;flex-direction:column">
+        <div style="flex:none;display:flex;align-items:center;gap:14px;padding:14px 22px;background:var(--color-neutral-100);border-bottom:1px solid var(--color-divider);flex-wrap:wrap">
+          <span style="font-family:var(--font-heading);font-weight:800;font-size:18px">{{ deskTitle }}</span>
+          <span style="font-size:13px;color:var(--color-neutral-600)">{{ clock }} · {{ osLabel }}</span>
+          <div style="flex:1"></div>
+          <sc-for list="{{ services }}" as="s" hint-placeholder-count="4">
+            <span style="display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;background:var(--color-bg);font-size:12.5px;font-weight:600">
+              <span style="width:8px;height:8px;border-radius:999px;background:{{ s.dot }}"></span>{{ s.k }} · {{ s.v }}
+            </span>
+          </sc-for>
+        </div>
+
+        <div style="flex:1;min-height:0;overflow:auto;padding:20px 22px 26px">
+
+          <sc-if value="{{ tabOverview }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;flex-direction:column;gap:16px">
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+                <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="3">
+                  <div style="padding:20px 22px;border-radius:26px;background:{{ m.bg }};color:{{ m.fg }}">
+                    <div style="font-family:var(--font-heading);font-weight:800;font-size:44px;line-height:1">{{ m.v }}</div>
+                    <div style="margin-top:6px;font-size:13.5px;font-weight:600">{{ m.k }}</div>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:14px">
+                <div style="padding:20px 22px;border-radius:26px;background:var(--color-neutral-100);display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:baseline">
+                    <span style="font-family:var(--font-heading);font-weight:800;font-size:17px">Том архива</span>
+                    <span style="font-size:13px;color:var(--color-neutral-700)">{{ diskLabel }}</span>
+                  </div>
+                  <div style="height:14px;border-radius:999px;background:var(--color-neutral-300);overflow:hidden">
+                    <div style="height:100%;border-radius:999px;background:var(--color-accent-2-500);width:{{ diskW }}"></div>
+                  </div>
+                  <div style="font-size:13px;color:var(--color-neutral-700)">Автоперезапись выключена · тревога при остатке 500 ГБ</div>
+                  <div style="display:flex;gap:10px;margin-top:auto">
+                    <button onClick="{{ askRestart }}" style="min-height:48px;padding:0 22px;border:none;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);font-size:14.5px;font-weight:700;cursor:pointer">Перезапустить станцию</button>
+                    <button onClick="{{ refresh }}" style="min-height:48px;padding:0 22px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-bg);color:var(--color-text);font-size:14.5px;font-weight:600;cursor:pointer">Обновить состояние</button>
+                  </div>
+                </div>
+                <div style="padding:20px 22px;border-radius:26px;background:var(--color-accent-800);color:var(--color-neutral-100);display:flex;flex-direction:column;gap:10px">
+                  <span style="font-family:var(--font-heading);font-weight:800;font-size:17px">Требует внимания</span>
+                  <span style="font-size:13.5px;line-height:1.5">{{ alertText }}</span>
+                  <button onClick="{{ goBays }}" style="margin-top:auto;min-height:48px;border:1px solid var(--color-accent-300);border-radius:999px;background:transparent;color:var(--color-neutral-100);font-size:14.5px;font-weight:700;cursor:pointer">Открыть отсек</button>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabBays }}" hint-placeholder-val="{{ false }}">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px">
+              <sc-for list="{{ bays }}" as="b" hint-placeholder-count="10">
+                <button onClick="{{ b.open }}" style="display:flex;flex-direction:column;gap:9px;min-height:168px;padding:16px 18px;text-align:left;border:2px solid {{ b.bd }};border-radius:28px;background:{{ b.bg }};color:{{ b.fg }};font:inherit;cursor:pointer" style-hover="box-shadow:var(--shadow-md)">
+                  <span style="display:flex;align-items:center;gap:10px">
+                    <span style="width:40px;height:40px;flex:none;border-radius:999px;display:grid;place-items:center;background:{{ b.numBg }};color:{{ b.numFg }};font-size:16px;font-weight:700">{{ b.n }}</span>
+                    <span style="flex:1;min-width:0;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ b.person }}</span>
+                  </span>
+                  <span style="font-family:var(--font-heading);font-weight:800;font-size:19px;line-height:1.1">{{ b.state }}</span>
+                  <span style="font-size:12.5px;opacity:.8">{{ b.files }}</span>
+                  <span style="margin-top:auto;height:10px;border-radius:999px;background:{{ b.track }};overflow:hidden">
+                    <span style="display:block;height:100%;border-radius:999px;background:{{ b.barBg }};width:{{ b.barW }}"></span>
+                  </span>
+                </button>
+              </sc-for>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabArchive }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                <input class="input" value="{{ q }}" onChange="{{ setQ }}" placeholder="Сотрудник, устройство, файл" style="min-height:50px;width:320px;font-size:15px;background:var(--color-neutral-100)">
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  <sc-for list="{{ typeOpts }}" as="o" hint-placeholder-count="5">
+                    <button onClick="{{ o.on }}" style="min-height:44px;padding:0 18px;border:1px solid {{ o.bd }};border-radius:999px;background:{{ o.bg }};color:{{ o.fg }};font-size:13.5px;font-weight:700;cursor:pointer">{{ o.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <div style="border-radius:26px;background:var(--color-neutral-100);padding:8px 20px 14px;overflow:auto">
+                <table class="table" style="font-size:14px">
+                  <thead>
+                    <tr>
+                      <th>Файл</th>
+                      <th style="width:110px">Тип</th>
+                      <th>Сотрудник, время съёмки, размер</th>
+                      <th style="width:220px"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <sc-for list="{{ files }}" as="f" hint-placeholder-count="6">
+                      <tr>
+                        <td style="font-weight:700;white-space:nowrap">{{ f.file }}</td>
+                        <td><span class="tag {{ f.cls }}" style="font-size:12px">{{ f.type }}</span></td>
+                        <td style="color:var(--color-neutral-700)">{{ f.meta }}</td>
+                        <td>
+                          <span style="display:flex;gap:8px;justify-content:flex-end">
+                            <button onClick="{{ f.play }}" style="min-height:42px;padding:0 16px;border:1px solid var(--color-divider);border-radius:999px;background:var(--color-bg);color:var(--color-text);font-size:13px;font-weight:600;cursor:pointer">Смотреть</button>
+                            <button onClick="{{ f.download }}" style="min-height:42px;padding:0 16px;border:none;border-radius:999px;background:var(--color-accent);color:var(--color-neutral-100);font-size:13px;font-weight:700;cursor:pointer">Скачать</button>
+                          </span>
+                        </td>
+                      </tr>
+                    </sc-for>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ tabLog }}" hint-placeholder-val="{{ false }}">
+            <div style="border-radius:26px;background:var(--color-neutral-100);padding:8px 20px 14px;overflow:auto">
+              <table class="table" style="font-size:14px">
+                <thead>
+                  <tr>
+                    <th style="width:90px">Время</th>
+                    <th style="width:150px">Событие</th>
+                    <th>Описание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <sc-for list="{{ logs }}" as="l" hint-placeholder-count="8">
+                    <tr>
+                      <td style="color:var(--color-neutral-700)">{{ l.time }}</td>
+                      <td><span class="tag {{ l.cls }}" style="font-size:12px">{{ l.kind }}</span></td>
+                      <td>{{ l.text }}</td>
+                    </tr>
+                  </sc-for>
+                </tbody>
+              </table>
+            </div>
+          </sc-if>
+        </div>
+      </div>
+    </div>
+  </x-import>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:560,&quot;height&quot;:1040}}">
+const BAY_STYLES = {
+  idle:     { label: 'Простой',        bg: 'var(--color-neutral-100)',  bd: 'var(--color-divider)',      fg: 'var(--color-text)',         numBg: 'var(--color-neutral-300)',  numFg: 'var(--color-neutral-800)', track: 'var(--color-neutral-200)', bar: 'var(--color-neutral-400)' },
+  scanning: { label: 'Сканирование',   bg: 'var(--color-accent-2-100)', bd: 'var(--color-accent-2-300)', fg: 'var(--color-accent-2-900)', numBg: 'var(--color-accent-2-500)', numFg: 'var(--color-neutral-100)', track: 'var(--color-accent-2-200)',bar: 'var(--color-accent-2-500)' },
+  copying:  { label: 'Копирование',    bg: 'var(--color-accent-100)',   bd: 'var(--color-accent-400)',   fg: 'var(--color-accent-900)',   numBg: 'var(--color-accent)',       numFg: 'var(--color-neutral-100)', track: 'var(--color-accent-200)',  bar: 'var(--color-accent-500)' },
+  done:     { label: 'Готово',         bg: 'var(--color-accent-2-200)', bd: 'var(--color-accent-2-500)', fg: 'var(--color-accent-2-900)', numBg: 'var(--color-accent-2-600)', numFg: 'var(--color-neutral-100)', track: 'var(--color-accent-2-300)',bar: 'var(--color-accent-2-600)' },
+  error:    { label: 'Ошибка',         bg: 'var(--color-accent-800)',   bd: 'var(--color-accent-900)',   fg: 'var(--color-neutral-100)',  numBg: 'var(--color-accent-300)',   numFg: 'var(--color-accent-900)',  track: 'var(--color-accent-700)',  bar: 'var(--color-accent-300)' },
+  charge:   { label: 'Только зарядка', bg: 'var(--color-neutral-200)',  bd: 'var(--color-accent-300)',   fg: 'var(--color-text)',         numBg: 'var(--color-accent-300)',   numFg: 'var(--color-accent-900)',  track: 'var(--color-neutral-300)', bar: 'var(--color-accent-300)' }
+};
+
+const PEOPLE = [
+  ['Смирнов А. В.', 'copying', 340],
+  ['Ковалёв Д. С.', 'copying', 210],
+  ['Мельник И. П.', 'done', 128],
+  ['Гусева Е. А.', 'scanning', 96],
+  ['Тимофеев Р. Н.', 'copying', 412],
+  ['Отсек свободен', 'idle', 0],
+  ['Лазарев К. Ю.', 'done', 74],
+  ['Шилов П. А.', 'error', 188],
+  ['Отсек свободен', 'idle', 0],
+  ['Юрченко С. М.', 'charge', 122]
+];
+
+const FILES = [
+  ['VID_00231.MP4', 'Видео', 'Смирнов А. В. · 02.09 08:12 · 1,84 ГБ · защищён'],
+  ['VID_00232.MP4', 'Видео', 'Смирнов А. В. · 02.09 08:44 · 920 МБ'],
+  ['AUD_00088.WAV', 'Аудио', 'Гусева Е. А. · 02.09 07:03 · 48 МБ'],
+  ['IMG_00412.JPG', 'Фото', 'Тимофеев Р. Н. · 01.09 21:37 · 6,2 МБ'],
+  ['VID_00187.MP4', 'Видео', 'Тимофеев Р. Н. · 01.09 19:58 · 2,41 ГБ · защищён'],
+  ['LOG_00023.TXT', 'Журнал', 'Лазарев К. Ю. · 01.09 16:22 · 112 КБ']
+];
+
+const TYPE_CLS = { 'Видео': 'tag-accent', 'Аудио': 'tag-accent-2', 'Фото': 'tag-neutral', 'Журнал': 'tag-outline' };
+
+const LOGS = [
+  ['09:41', 'Сбор', 'Отсек 1 · загружено 128 файлов, 6,4 ГБ'],
+  ['09:38', 'Ошибка', 'Отсек 8 · 3 файла не скопировано, повтор при следующем подключении'],
+  ['09:12', 'Сбор', 'Отсек 4 · загружено 41 файл, 1,2 ГБ'],
+  ['08:55', 'Время', 'Отсек 4 · время регистратора синхронизировано'],
+  ['08:31', 'Вход', 'Вход в веб-панель с телефона · admin'],
+  ['08:05', 'Сбор', 'Отсек 5 · загружено 96 файлов, 4,8 ГБ'],
+  ['07:59', 'Хранилище', 'Свободно 23,6 ТБ из 32 ТБ'],
+  ['07:02', 'Запуск', 'Программа запущена автоматически, монитор USB активен']
+];
+
+class Component extends DCLogic {
+  state = { tab: 'overview', now: new Date(), bays: [], sheet: null, bayN: null, q: '', type: 'Все' };
+
+  componentDidMount() {
+    this.setState({
+      bays: PEOPLE.map((p, i) => ({
+        n: i + 1, person: p[0], st: p[1], total: p[2],
+        pct: p[1] === 'copying' ? 12 + i * 9 : (p[1] === 'done' || p[1] === 'error' ? 100 : 0)
+      }))
+    });
+    this._clock = setInterval(() => this.setState({ now: new Date() }), 1000);
+    this._tick = setInterval(this.advance, 1000);
+  }
+
+  componentWillUnmount() { clearInterval(this._clock); clearInterval(this._tick); }
+
+  advance = () => this.setState(s => ({
+    bays: s.bays.map(b => {
+      if (b.st === 'copying') {
+        const pct = b.pct + 1 + Math.round(Math.random() * 3);
+        return pct >= 100 ? { ...b, pct: 100, st: 'done' } : { ...b, pct };
+      }
+      return b;
+    })
+  }));
+
+  put = (k, v) => () => this.setState({ [k]: v });
+  set = (k) => (e) => this.setState({ [k]: e.target.value });
+  closeSheet = () => this.setState({ sheet: null });
+  goBays = () => this.setState({ tab: 'bays' });
+  refresh = () => this.setState({ now: new Date() });
+
+  openBay = (n) => () => this.setState({ sheet: 'bay', bayN: n });
+  askRestart = () => this.setState({ sheet: 'restart' });
+  askLogout = () => this.setState({ sheet: 'logout' });
+  fileSheet = (i, kind) => () => this.setState({ sheet: kind, fileIdx: i });
+
+  renderVals() {
+    const s = this.state;
+    const two = (n) => String(n).padStart(2, '0');
+    const clock = two(s.now.getHours()) + ':' + two(s.now.getMinutes());
+
+    const bays = s.bays.map(b => {
+      const st = BAY_STYLES[b.st];
+      const copied = Math.round(b.total * b.pct / 100);
+      const free = b.person === 'Отсек свободен';
+      return {
+        n: b.n, person: b.person, state: st.label,
+        bg: st.bg, bd: st.bd, fg: st.fg, numBg: st.numBg, numFg: st.numFg, track: st.track, barBg: st.bar,
+        barW: b.pct + '%',
+        pctText: (b.st === 'copying' || b.st === 'error') ? b.pct + '%' : (b.st === 'done' ? '✓' : ''),
+        files: free ? 'отсек свободен' : (b.st === 'copying' ? copied + ' из ' + b.total : b.total + ' файлов'),
+        open: this.openBay(b.n)
+      };
+    });
+
+    const cnt = (st) => s.bays.filter(b => b.st === st).length;
+    const errors = cnt('error');
+
+    const tabDefs = [['overview', 'Обзор', '◉'], ['bays', 'Отсеки', '▤'], ['archive', 'Архив', '⌕'], ['log', 'Журнал', '≡']];
+    const tabs = tabDefs.map(([id, label, icon]) => {
+      const a = s.tab === id;
+      return { label, icon, bg: a ? 'var(--color-accent-100)' : 'transparent', fg: a ? 'var(--color-accent-800)' : 'var(--color-neutral-600)', on: this.put('tab', id) };
+    });
+
+    const typeOpts = ['Все', 'Видео', 'Аудио', 'Фото', 'Журнал'].map(label => {
+      const a = s.type === label;
+      return {
+        label,
+        bg: a ? 'var(--color-accent)' : 'var(--color-neutral-100)',
+        fg: a ? 'var(--color-neutral-100)' : 'var(--color-neutral-700)',
+        bd: a ? 'var(--color-accent)' : 'var(--color-divider)',
+        on: this.put('type', label)
+      };
+    });
+
+    const q = s.q.trim().toLowerCase();
+    const files = FILES
+      .filter(f => s.type === 'Все' || f[1] === s.type)
+      .filter(f => !q || (f[0] + ' ' + f[2]).toLowerCase().includes(q))
+      .map((f, i) => ({
+        file: f[0], type: f[1], meta: f[2], cls: TYPE_CLS[f[1]] || 'tag-neutral',
+        play: this.fileSheet(i, 'play'), download: this.fileSheet(i, 'download')
+      }));
+
+    const bay = s.bays.find(b => b.n === s.bayN) || { n: 1, person: '', st: 'idle', total: 0, pct: 0 };
+    const bst = BAY_STYLES[bay.st];
+
+    const primary = { bg: 'var(--color-accent)', fg: 'var(--color-neutral-100)', bd: 'var(--color-accent)' };
+    const plain = { bg: 'var(--color-neutral-100)', fg: 'var(--color-text)', bd: 'var(--color-divider)' };
+    const danger = { bg: 'var(--color-accent-800)', fg: 'var(--color-neutral-100)', bd: 'var(--color-accent-800)' };
+
+    const sheets = {
+      bay: {
+        title: 'Отсек ' + bay.n + ' · ' + bay.person,
+        text: bst.label + ' · ' + Math.round(bay.total * bay.pct / 100) + ' из ' + bay.total + ' файлов · заряд 74 %',
+        actions: [
+          { label: 'Приоритетная загрузка', ...primary, on: this.closeSheet },
+          { label: 'Только зарядка', ...plain, on: this.closeSheet },
+          { label: 'Синхронизировать время', ...plain, on: this.closeSheet }
+        ]
+      },
+      restart: {
+        title: 'Перезапустить станцию',
+        text: 'Идущие сессии копирования будут прерваны и продолжатся после запуска с недостающих файлов. Регистраторы останутся на зарядке.',
+        actions: [{ label: 'Перезапустить', ...danger, on: this.closeSheet }]
+      },
+      logout: {
+        title: 'Выйти из веб-панели',
+        text: 'Сеанс на телефоне будет закрыт. Работа станции не прерывается.',
+        actions: [{ label: 'Выйти', ...danger, on: this.closeSheet }]
+      },
+      play: {
+        title: 'Просмотр файла',
+        text: 'Файл открывается потоком без выгрузки на телефон. При медленной сети предлагается версия SD.',
+        actions: [{ label: 'Смотреть HD', ...primary, on: this.closeSheet }, { label: 'Смотреть SD', ...plain, on: this.closeSheet }]
+      },
+      download: {
+        title: 'Скачать файл',
+        text: 'Файл будет сохранён в загрузки телефона. Защищённые файлы скачиваются только администратором.',
+        actions: [{ label: 'Скачать', ...primary, on: this.closeSheet }]
+      }
+    };
+    const sh = sheets[s.sheet] || { title: '', text: '', actions: [] };
+
+    return {
+      clock, osLabel: 'Astra Linux · ПО v.03.02',
+      deskTitle: { overview: 'Обзор станции', bays: 'Отсеки сбора', archive: 'Архив материалов', log: 'Журнал событий' }[s.tab],
+      tabs, tabOverview: s.tab === 'overview', tabBays: s.tab === 'bays', tabArchive: s.tab === 'archive', tabLog: s.tab === 'log',
+      metrics: [
+        { k: 'копирование', v: cnt('copying'), bg: 'var(--color-accent-100)', fg: 'var(--color-accent-900)' },
+        { k: 'готово', v: cnt('done'), bg: 'var(--color-accent-2-200)', fg: 'var(--color-accent-2-900)' },
+        { k: 'ошибки', v: errors, bg: errors ? 'var(--color-accent-800)' : 'var(--color-neutral-100)', fg: errors ? 'var(--color-neutral-100)' : 'var(--color-neutral-700)' }
+      ],
+      hasAlert: errors > 0,
+      alertText: 'Отсек 8 · 3 файла не скопировано. Регистратор не очищен, повтор при следующем подключении.',
+      diskLabel: 'свободно 23,6 из 32 ТБ', diskW: '26%',
+      diskPath: 'Том BCDATA · /mnt/bcdata/archive (в Windows — D:\\BestCam\\Archive)',
+      services: [
+        { k: 'Сеть', v: '1 Гбит/с', dot: 'var(--color-accent-2-500)' },
+        { k: 'Монитор USB', v: 'активен', dot: 'var(--color-accent-2-500)' },
+        { k: 'FTP', v: 'подключён', dot: 'var(--color-accent-500)' },
+        { k: 'База данных', v: 'локальная', dot: 'var(--color-neutral-500)' }
+      ],
+      askRestart: this.askRestart, refresh: this.refresh, askLogout: this.askLogout, goBays: this.goBays,
+      bays, typeOpts, files, q: s.q, setQ: this.set('q'),
+      logs: LOGS.map(l => ({ time: l[0], kind: l[1], text: l[2], cls: l[1] === 'Ошибка' ? 'tag-accent' : l[1] === 'Сбор' ? 'tag-accent-2' : 'tag-neutral' })),
+      sheet: s.sheet, sheetTitle: sh.title, sheetText: sh.text, sheetActions: sh.actions, closeSheet: this.closeSheet
+    };
+  }
+}
+
+</script>
+</body>
+</html>
