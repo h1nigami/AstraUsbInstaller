@@ -119,6 +119,31 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private string _status = "мониторинг: запуск";
 
     /// <summary>
+    /// Сводка по отсекам в шапке: сколько копируется, сколько готово, сколько
+    /// в ошибке и сколько окон свободно. Оператор смотрит на неё, не обходя
+    /// доску глазами.
+    /// </summary>
+    [ObservableProperty]
+    private string _summary = "";
+
+    /// <summary>Состояние сети: по нему видно, дойдут ли файлы до сервера.</summary>
+    [ObservableProperty]
+    private bool _networkUp;
+
+    [ObservableProperty]
+    private string _networkLabel = "сеть не проверена";
+
+    /// <summary>Состояние отправки на сервер: включена ли и сколько ждёт очередь.</summary>
+    [ObservableProperty]
+    private bool _ftpEnabled;
+
+    [ObservableProperty]
+    private string _ftpLabel = "отправка выключена";
+
+    /// <summary>Отправка идёт прямо сейчас: второй раз запускать не нужно.</summary>
+    private bool _sending;
+
+    /// <summary>
     /// Выбранная компоновка доски: сетка, список или схема стойки. Все три
     /// живут на одной кодовой базе и переключаются оператором.
     /// </summary>
@@ -214,6 +239,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // несмонтированный диск от пустого.
         if (_stationSettings.BackupRoot == AppPaths.BackupsRoot)
             ArchiveGuard.Mark(_stationSettings.BackupRoot);
+
+        UpdateNetwork();
+        UpdateSummary();
+        FtpEnabled = _stationSettings.FtpEnabled;
+        FtpLabel = _stationSettings.FtpEnabled ? "отправка включена" : "отправка выключена";
 
         TickClock();
         _clock.Tick += (_, _) => TickClock();
@@ -462,6 +492,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         ClockTime = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         ClockDate = now.ToString("dd MMMM yyyy", Ru);
 
+        // Сеть опрашиваем раз в пять секунд: чаще незачем, а состояние в
+        // строке разделов должно быть свежим.
+        if (now.Second % 5 == 0)
+            UpdateNetwork();
+
+        // Очередь отправки разбирается раз в пятнадцать секунд: файлы уже в
+        // архиве, спешить некуда, а частые попытки при мёртвой сети только
+        // жгут счётчик неудач.
+        if (now.Second % 15 == 0)
+            PumpServerQueue();
+
         // Раздел, забытый открытым, закрывается сам: станция стоит в общем
         // помещении.
         var wasUnlocked = _access.Unlocked;
@@ -552,6 +593,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         Status = devices.Count == 0
             ? "носители не подключены"
             : $"носителей: {devices.Count}";
+
+        UpdateSummary();
 
         UpdateStorage();
     }
@@ -753,6 +796,121 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                     _priority = null;
             }
         });
+    }
+
+    /// <summary>
+    /// Отправляет из очереди то, что накопилось. Обрыв сети не теряет записи:
+    /// они остаются в архиве и в очереди до следующей попытки.
+    /// </summary>
+    private void PumpServerQueue()
+    {
+        var settings = Services.Settings.Load();
+        FtpEnabled = settings.FtpEnabled;
+
+        if (!settings.FtpEnabled)
+        {
+            FtpLabel = "отправка выключена";
+            return;
+        }
+
+        if (_sending)
+            return;
+
+        if (!NetworkUp)
+        {
+            FtpLabel = "сети нет, очередь ждёт";
+            return;
+        }
+
+        _sending = true;
+
+        _ = Task.Run(() =>
+        {
+            var sent = 0;
+            var failed = 0;
+            var waiting = 0;
+
+            try
+            {
+                var queue = new FtpQueue(AppPaths.Database);
+                queue.Prune();
+
+                foreach (var item in queue.Next(10))
+                {
+                    var result = FtpSender.Send(settings, item.Path);
+                    if (result.Ok)
+                    {
+                        queue.Done(item.Id);
+                        sent++;
+                    }
+                    else
+                    {
+                        queue.Failed(item.Id, result.Message);
+                        failed++;
+
+                        // Первая же неудача обычно означает, что сервер или
+                        // сеть недоступны целиком: остальные попытки только
+                        // израсходуют счётчик.
+                        break;
+                    }
+                }
+
+                waiting = queue.Count();
+
+                if (sent > 0)
+                    _actions.Write(ActionLog.Export,
+                        $"на сервер отправлено {Numerals.Plural(sent, "файл", "файла", "файлов")}");
+            }
+            catch (Exception e)
+            {
+                CrashLog.Write("отправка на сервер", e);
+            }
+            finally
+            {
+                var label = failed > 0
+                    ? $"сервер не принял, в очереди {waiting}"
+                    : waiting > 0
+                        ? $"в очереди {waiting}"
+                        : "очередь пуста";
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    FtpLabel = label;
+                    _sending = false;
+                });
+            }
+        });
+    }
+
+    /// <summary>Сводка по отсекам, как в прототипе станции.</summary>
+    private void UpdateSummary()
+    {
+        var copying = Ports.Count(p => p.State is PortState.Copying or PortState.Scanning
+                                       or PortState.Detected);
+        var done = Ports.Count(p => p.State == PortState.Done);
+        var failed = Ports.Count(p => p.State == PortState.Failed);
+        var free = Ports.Count(p => p.IsFree);
+
+        Summary = $"копирование {copying} · готово {done} · ошибки {failed} · свободно {free}";
+    }
+
+    /// <summary>
+    /// Проверяет сеть. Задание требует показывать её состояние постоянно:
+    /// при выключенной сети отправка на сервер молча копилась бы в очереди.
+    /// </summary>
+    private void UpdateNetwork()
+    {
+        try
+        {
+            var up = System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable();
+            NetworkUp = up;
+            NetworkLabel = up ? "сеть доступна" : "сети нет";
+        }
+        catch (Exception)
+        {
+            NetworkUp = false;
+            NetworkLabel = "сеть не проверена";
+        }
     }
 
     /// <summary>Версия из файла VERSION рядом с программой.</summary>

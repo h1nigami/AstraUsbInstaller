@@ -54,6 +54,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public bool IsStationSection => Section == "station";
     public bool IsAccessSection => Section == "access";
     public bool IsSlotsSection => Section == "slots";
+    public bool IsFtpSection => Section == "ftp";
     public bool IsAboutSection => Section == "about";
 
     [RelayCommand]
@@ -61,6 +62,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         "access" => "access",
         "slots" => "slots",
+        "ftp" => "ftp",
         "about" => "about",
         _ => "station",
     };
@@ -71,7 +73,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(IsStationSection));
         OnPropertyChanged(nameof(IsAccessSection));
         OnPropertyChanged(nameof(IsSlotsSection));
+        OnPropertyChanged(nameof(IsFtpSection));
         OnPropertyChanged(nameof(IsAboutSection));
+
+        if (Section == "ftp")
+            ShowQueueState();
     }
 
     [ObservableProperty] private int _lockTimeoutMinutes;
@@ -84,6 +90,16 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// станции невелик, и записи его переполнят.
     /// </summary>
     [ObservableProperty] private bool _archiveOnSystemDrive;
+    [ObservableProperty] private bool _ftpEnabled;
+    [ObservableProperty] private string _ftpHost = "";
+    [ObservableProperty] private int _ftpPort = 21;
+    [ObservableProperty] private string _ftpUser = "";
+    [ObservableProperty] private string _ftpPassword = "";
+    [ObservableProperty] private string _ftpFolder = "";
+    [ObservableProperty] private bool _ftpSsl;
+    [ObservableProperty] private string _ftpState = "";
+    [ObservableProperty] private bool _ftpTesting;
+
     [ObservableProperty] private string _adminAccount = "";
     [ObservableProperty] private string _currentPassword = "";
     [ObservableProperty] private string _newPassword = "";
@@ -114,6 +130,14 @@ public sealed partial class SettingsViewModel : ObservableObject
             ? PasswordGate.DefaultAccount
             : _settings.AdminAccount;
         ArchiveOnSystemDrive = ArchiveGuard.OnSystemDrive(_settings.BackupRoot);
+
+        FtpEnabled = _settings.FtpEnabled;
+        FtpHost = _settings.FtpHost;
+        FtpPort = _settings.FtpPort;
+        FtpUser = _settings.FtpUser;
+        FtpPassword = _settings.FtpPassword;
+        FtpFolder = _settings.FtpFolder;
+        FtpSsl = _settings.FtpSsl;
 
         ReloadSlots();
     }
@@ -169,6 +193,107 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>
     /// Закрепляет за выбранным окном то гнездо, в котором сейчас стоит
     /// единственная подключённая камера. Так размечают станцию по инструкции:
+    /// <summary>Сохраняет параметры отправки на сервер.</summary>
+    [RelayCommand]
+    private void SaveFtp()
+    {
+        _settings.FtpEnabled = FtpEnabled;
+        _settings.FtpHost = FtpHost.Trim();
+        _settings.FtpPort = FtpPort is > 0 and < 65536 ? FtpPort : 21;
+        _settings.FtpUser = FtpUser.Trim();
+        _settings.FtpPassword = FtpPassword;
+        _settings.FtpFolder = FtpFolder.Trim();
+        _settings.FtpSsl = FtpSsl;
+        FtpPort = _settings.FtpPort;
+
+        if (!_settings.Save())
+        {
+            Hint = "не удалось записать настройки, проверьте права на папку data";
+            return;
+        }
+
+        _actions.Write(ActionLog.Settings, FtpEnabled
+            ? $"отправка на сервер включена: {_settings.FtpHost}:{_settings.FtpPort}"
+            : "отправка на сервер выключена");
+
+        Hint = FtpEnabled
+            ? "параметры сохранены, отправка включена"
+            : "параметры сохранены, отправка выключена";
+    }
+
+    /// <summary>
+    /// Проверяет подключение к серверу. Проверка идёт в стороне от интерфейса:
+    /// мёртвый адрес отвечает не сразу, а окно должно оставаться живым.
+    /// </summary>
+    [RelayCommand]
+    private async Task TestFtp()
+    {
+        if (FtpTesting)
+            return;
+
+        var probe = new Settings
+        {
+            FtpHost = FtpHost.Trim(),
+            FtpPort = FtpPort,
+            FtpUser = FtpUser.Trim(),
+            FtpPassword = FtpPassword,
+            FtpFolder = FtpFolder.Trim(),
+            FtpSsl = FtpSsl,
+        };
+
+        FtpTesting = true;
+        FtpState = "проверяем";
+
+        try
+        {
+            var result = await Task.Run(() => FtpSender.Test(probe));
+            FtpState = result.Message;
+        }
+        catch (Exception e)
+        {
+            FtpState = e.Message;
+        }
+        finally
+        {
+            FtpTesting = false;
+        }
+    }
+
+    /// <summary>Возвращает в работу файлы, отложенные после неудачных попыток.</summary>
+    [RelayCommand]
+    private void RetryFtp()
+    {
+        try
+        {
+            var queue = new FtpQueue(_dbPath);
+            var revived = queue.Retry();
+            FtpState = revived > 0
+                ? $"возвращено в очередь: {revived}, всего ждёт {queue.Count()}"
+                : $"отложенных нет, в очереди {queue.Count()}";
+        }
+        catch (Exception e)
+        {
+            FtpState = e.Message;
+        }
+    }
+
+    /// <summary>Показывает, сколько файлов ждёт отправки.</summary>
+    private void ShowQueueState()
+    {
+        try
+        {
+            var queue = new FtpQueue(_dbPath);
+            var stuck = queue.StuckCount();
+            FtpState = stuck > 0
+                ? $"в очереди {queue.Count()}, отложено после неудач {stuck}"
+                : $"в очереди {queue.Count()}";
+        }
+        catch (Exception)
+        {
+            FtpState = "";
+        }
+    }
+
     /// <summary>
     /// Меняет пароль станции. Текущий спрашиваем прежде нового: станция стоит
     /// открытой, и без этой проверки пароль сменил бы любой, кто дошёл до

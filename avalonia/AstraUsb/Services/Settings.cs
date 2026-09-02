@@ -29,6 +29,27 @@ public sealed class Settings
     /// </summary>
     public int MountGraceSeconds { get; set; } = 4;
 
+    /// <summary>Отправлять собранные записи на сервер.</summary>
+    public bool FtpEnabled { get; set; }
+
+    public string FtpHost { get; set; } = "";
+    public int FtpPort { get; set; } = 21;
+    public string FtpUser { get; set; } = "";
+
+    /// <summary>
+    /// Пароль сервера. Хранится как есть: клиент FTP должен предъявить его при
+    /// каждой отправке, а расшифровать сохранённое можно тем же ключом, что
+    /// лежал бы рядом. Поэтому защита здесь это права на файл настроек, а не
+    /// шифрование, о чём сказано в разделе настроек.
+    /// </summary>
+    public string FtpPassword { get; set; } = "";
+
+    /// <summary>Папка на сервере, куда складывать записи.</summary>
+    public string FtpFolder { get; set; } = "";
+
+    /// <summary>Отправлять по защищённому соединению.</summary>
+    public bool FtpSsl { get; set; }
+
     /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 

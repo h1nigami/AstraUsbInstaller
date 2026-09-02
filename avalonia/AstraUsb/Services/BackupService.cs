@@ -81,6 +81,7 @@ public sealed class BackupService
                     $"{files} из {total.Files}"))), token);
 
             RecordCollected(deviceId, mountPoint, destination, result, started);
+            QueueForServer(mountPoint, destination, result);
 
             if (_settings.DeleteVideoAfterCopy && result.Failed == 0)
                 SourceCleaner.DeleteBackedUpVideos(mountPoint, result.BackedUp);
@@ -104,6 +105,27 @@ public sealed class BackupService
         catch (Exception e)
         {
             progress.Report(new BackupProgress(BackupStage.Failed, 0, e.Message));
+        }
+    }
+
+    /// <summary>
+    /// Ставит собранное в очередь отправки на сервер. Отправка идёт из очереди
+    /// отдельно: сеть может пропасть, а записи должны остаться на станции.
+    /// </summary>
+    private void QueueForServer(string mountPoint, string destination, CopyResult result)
+    {
+        if (!_settings.FtpEnabled)
+            return;
+
+        try
+        {
+            var queue = new FtpQueue(_dbPath);
+            queue.AddRange(result.BackedUp.Select(source =>
+                Path.Combine(destination, Path.GetRelativePath(mountPoint, source))));
+        }
+        catch (Exception)
+        {
+            // Очередь не главнее данных: копии уже в архиве.
         }
     }
 

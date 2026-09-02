@@ -85,15 +85,45 @@
         <Border Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Width="7" Height="7" VerticalAlignment="Center"
-                     Fill="{StaticResource Neutral500Brush}" />
+                     Fill="{StaticResource Teal500Brush}" />
             <TextBlock Text="Локальная база" FontSize="10"
+                       Foreground="{StaticResource FgMutedBrush}" />
+          </StackPanel>
+        </Border>
+
+        <Border Padding="10,4" CornerRadius="14" IsVisible="{Binding FtpEnabled}"
+                Background="{StaticResource Accent100Brush}">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+                     Fill="{StaticResource Accent500Brush}" />
+            <TextBlock Text="{Binding FtpLabel}" FontSize="10"
+                       Foreground="{StaticResource Accent900Brush}" />
+          </StackPanel>
+        </Border>
+
+        <!-- Состояние сети видно всегда: при её отсутствии отправка наружу
+             молча копилась бы в очереди. -->
+        <Border Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
+          <StackPanel Orientation="Horizontal" Spacing="6">
+            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+                     Fill="{StaticResource Neutral500Brush}"
+                     IsVisible="{Binding !NetworkUp}" />
+            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+                     Fill="{StaticResource Teal500Brush}"
+                     IsVisible="{Binding NetworkUp}" />
+            <TextBlock Text="{Binding NetworkLabel}" FontSize="10"
                        Foreground="{StaticResource FgMutedBrush}" />
           </StackPanel>
         </Border>
       </StackPanel>
 
-      <TextBlock Grid.Column="2" Text="{Binding Status}" FontSize="10" Margin="0,0,12,8"
-                 VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
+      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" Margin="0,0,12,8"
+                  VerticalAlignment="Center">
+        <TextBlock Text="{Binding Summary}" FontSize="10"
+                   VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
+        <TextBlock Text="{Binding Status}" FontSize="10"
+                   VerticalAlignment="Center" Foreground="{StaticResource Accent700Brush}" />
+      </StackPanel>
     </Grid>
 
     <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
@@ -376,21 +406,22 @@
 
           <Border Grid.Row="1" Classes="card">
             <Grid RowDefinitions="26,*">
-              <Grid Grid.Row="0" ColumnDefinitions="34,96,*,66,62,96,84,70" Margin="12,7,12,0">
+              <Grid Grid.Row="0" ColumnDefinitions="30,86,*,54,54,86,76,76,52" Margin="12,7,12,0">
                 <TextBlock Grid.Column="1" Text="УСТРОЙСТВО" Classes="label" />
                 <TextBlock Grid.Column="2" Text="ФАЙЛ" Classes="label" />
                 <TextBlock Grid.Column="3" Text="ТИП" Classes="label" />
                 <TextBlock Grid.Column="4" Text="РАЗМЕР" Classes="label" />
                 <TextBlock Grid.Column="5" Text="СОТРУДНИК" Classes="label" />
-                <TextBlock Grid.Column="6" Text="ЗАГРУЖЕНО" Classes="label" />
-                <TextBlock Grid.Column="7" Text="ЗАЩИТА" Classes="label" />
+                <TextBlock Grid.Column="6" Text="СНЯТО" Classes="label" />
+                <TextBlock Grid.Column="7" Text="ЗАГРУЖЕНО" Classes="label" />
+                <TextBlock Grid.Column="8" Text="ЗАЩИТА" Classes="label" />
               </Grid>
 
               <ListBox Grid.Row="1" ItemsSource="{Binding Search.Results}"
                        SelectedItem="{Binding Search.Current}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:FoundFile">
-                    <Grid ColumnDefinitions="34,96,*,66,62,96,84,70" Height="34">
+                    <Grid ColumnDefinitions="30,86,*,54,54,86,76,76,52" Height="34">
                       <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="30"
                                 VerticalAlignment="Center" />
                       <TextBlock Grid.Column="1" Text="{Binding Camera}" Classes="mono"
@@ -410,10 +441,14 @@
                                  VerticalAlignment="Center"
                                  TextTrimming="CharacterEllipsis"
                                  Foreground="{StaticResource FgMutedBrush}" />
-                      <TextBlock Grid.Column="6" Text="{Binding CollectedAt}" Classes="mono"
+                      <TextBlock Grid.Column="6" Text="{Binding ShotAt}" Classes="mono"
+                                 FontSize="10" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis"
+                                 Foreground="{StaticResource FgMutedBrush}" />
+                      <TextBlock Grid.Column="7" Text="{Binding CollectedAt}" Classes="mono"
                                  FontSize="10" VerticalAlignment="Center"
                                  Foreground="{StaticResource FgMutedBrush}" />
-                      <TextBlock Grid.Column="7" Text="{Binding Mark}" FontSize="10"
+                      <TextBlock Grid.Column="8" Text="{Binding Mark}" FontSize="10"
                                  VerticalAlignment="Center"
                                  Foreground="{StaticResource WarnBrush}" />
                     </Grid>
@@ -708,6 +743,9 @@
             <Button Classes="nav" Content="Разметка гнёзд"
                     Classes.primary="{Binding Settings.IsSlotsSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="slots" />
+            <Button Classes="nav" Content="Отправка на сервер"
+                    Classes.primary="{Binding Settings.IsFtpSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="ftp" />
             <Button Classes="nav" Content="О программе"
                     Classes.primary="{Binding Settings.IsAboutSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="about" />
@@ -871,6 +909,69 @@
                         Margin="0,8,0,0"
                         Command="{Binding Settings.ClearSlotsCommand}" />
               </Grid>
+
+              <!-- Отправка на сервер -->
+              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
+                <StackPanel Spacing="14">
+                  <TextBlock Text="Отправка на сервер" Classes="section" />
+                  <TextBlock Classes="hint"
+                             Text="Записи уходят на сервер после того, как легли в архив, и никогда вместо него. При обрыве связи они остаются в очереди и уйдут, когда сеть вернётся." />
+
+                  <CheckBox Content="Отправлять собранные записи на сервер FTP"
+                            IsChecked="{Binding Settings.FtpEnabled}" />
+
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="АДРЕС СЕРВЕРА" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.FtpHost}"
+                               Watermark="192.168.0.10" />
+                    </StackPanel>
+
+                    <StackPanel>
+                      <TextBlock Text="ПОРТ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.FtpPort}" />
+                    </StackPanel>
+                  </UniformGrid>
+
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.FtpUser}" />
+                    </StackPanel>
+
+                    <StackPanel>
+                      <TextBlock Text="ПАРОЛЬ" Classes="field" />
+                      <TextBox Classes="form" PasswordChar="●"
+                               Text="{Binding Settings.FtpPassword}" />
+                    </StackPanel>
+                  </UniformGrid>
+
+                  <StackPanel>
+                    <TextBlock Text="ПАПКА НА СЕРВЕРЕ" Classes="field" />
+                    <TextBox Classes="form" Text="{Binding Settings.FtpFolder}"
+                             Watermark="можно оставить пустой" />
+                  </StackPanel>
+
+                  <CheckBox Content="Защищённое соединение"
+                            IsChecked="{Binding Settings.FtpSsl}" />
+
+                  <TextBlock Classes="hint"
+                             Text="Пароль сервера хранится в файле настроек как есть: клиент предъявляет его при каждой отправке. Защита здесь это права на папку data, а не шифрование." />
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Classes="primary" Content="Сохранить" Height="52" Width="150"
+                            Command="{Binding Settings.SaveFtpCommand}" />
+                    <Button Content="Проверить" Height="52" Width="150"
+                            IsEnabled="{Binding !Settings.FtpTesting}"
+                            Command="{Binding Settings.TestFtpCommand}" />
+                    <Button Content="Повторить отложенные" Height="52"
+                            Command="{Binding Settings.RetryFtpCommand}" />
+                  </StackPanel>
+
+                  <TextBlock Text="{Binding Settings.FtpState}" Classes="hint"
+                             Foreground="{StaticResource Accent700Brush}" />
+                </StackPanel>
+              </ScrollViewer>
 
               <!-- О программе -->
               <StackPanel Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
