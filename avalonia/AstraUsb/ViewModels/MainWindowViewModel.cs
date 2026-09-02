@@ -49,6 +49,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Носители, которые монтируются прямо сейчас.</summary>
     private readonly HashSet<string> _mounting = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Последний раз, когда носитель был виден, и каким он был. Опрос иногда
+    /// не отдаёт устройство, которое никто не вынимал, поэтому извлечение
+    /// подтверждается выдержкой, как требует задание.
+    /// </summary>
+    private readonly Dictionary<string, (UsbDevice Device, DateTime Seen)> _recent =
+        new(StringComparer.Ordinal);
+
     /// <summary>Открыт ли доступ к закрытым разделам и до каких пор.</summary>
     private AccessGuard _access = new(0);
 
@@ -147,6 +155,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // запуске он подрезается до последних событий.
         _actions.Trim(20_000);
 
+        // Архив по умолчанию лежит рядом с программой и всегда на месте,
+        // поэтому метку ему станция ставит сама. Том, выбранный оператором,
+        // помечается при выборе: там метка и нужна, чтобы отличить
+        // несмонтированный диск от пустого.
+        if (_stationSettings.BackupRoot == AppPaths.BackupsRoot)
+            ArchiveGuard.Mark(_stationSettings.BackupRoot);
+
         TickClock();
         _clock.Tick += (_, _) => TickClock();
         _clock.Start();
@@ -243,7 +258,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Опрашивает носители и раскладывает их по гнёздам.</summary>
     public void Refresh()
     {
-        var devices = _listDevices();
+        var devices = HoldBriefly(_listDevices());
+
+        // Диск, на котором лежит архив, источником не считается: иначе
+        // станция принялась бы копировать архив сам в себя.
+        devices = devices
+            .Where(d => !ArchiveGuard.IsArchiveMedia(d.MountPoint, _stationSettings.BackupRoot))
+            .ToList();
 
         // Носители раскладываются по закреплённым гнёздам: камера из второго
         // разъёма занимает второе окно независимо от очерёдности подключения.
@@ -312,6 +333,36 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             : $"носителей: {devices.Count}";
 
         UpdateStorage();
+    }
+
+    /// <summary>
+    /// Держит недавно пропавшие носители в списке ещё полторы длительности
+    /// опроса. Регистратор считается извлечённым только после этой выдержки:
+    /// иначе один неудачный опрос сбрасывал бы ход выгрузки.
+    /// </summary>
+    private IReadOnlyList<UsbDevice> HoldBriefly(IReadOnlyList<UsbDevice> devices)
+    {
+        var now = DateTime.Now;
+        var hold = _poll.Interval * 1.5;
+
+        foreach (var device in devices)
+            _recent[device.Name] = (device, now);
+
+        var present = devices.Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+        var result = devices.ToList();
+
+        foreach (var (name, entry) in _recent.ToArray())
+        {
+            if (present.Contains(name))
+                continue;
+
+            if (now - entry.Seen <= hold)
+                result.Add(entry.Device);
+            else
+                _recent.Remove(name);
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -481,7 +532,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         try
         {
-            var root = Path.GetPathRoot(AppContext.BaseDirectory);
+            // Считаем том архива, а не тот, где лежит программа: оператор
+            // смотрит на эту полосу, чтобы понять, куда ещё влезут записи.
+            var root = Path.GetPathRoot(Path.GetFullPath(_stationSettings.BackupRoot));
             if (string.IsNullOrEmpty(root))
                 return;
 

@@ -44,6 +44,12 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     /// <summary>Пароль остался таким, каким станция пришла с завода.</summary>
     [ObservableProperty] private bool _usingDefaultPassword;
+
+    /// <summary>
+    /// Архив лежит на системном разделе. Задание это запрещает: системный диск
+    /// станции невелик, и записи его переполнят.
+    /// </summary>
+    [ObservableProperty] private bool _archiveOnSystemDrive;
     [ObservableProperty] private string _currentPassword = "";
     [ObservableProperty] private string _newPassword = "";
     [ObservableProperty] private string _repeatPassword = "";
@@ -68,6 +74,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         KeepDays = _settings.KeepDays;
         LockTimeoutMinutes = _settings.LockTimeoutMinutes;
         UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
+        ArchiveOnSystemDrive = ArchiveGuard.OnSystemDrive(_settings.BackupRoot);
 
         ReloadSlots();
     }
@@ -83,6 +90,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.KeepDays = Math.Clamp(KeepDays, 0, 3650);
         KeepDays = _settings.KeepDays;
 
+        // Метка тома ставится здесь: дальше по ней станция понимает, что диск
+        // смонтирован. Без неё выгрузка останавливается с ошибкой.
+        var marked = ArchiveGuard.Mark(_settings.BackupRoot);
+
         var stored = _settings.Save();
         if (stored)
             _actions.Write(ActionLog.Settings,
@@ -90,11 +101,15 @@ public sealed partial class SettingsViewModel : ObservableObject
                 + $"срок хранения {(KeepDays == 0 ? "бессрочно" : KeepDays + " дн")}, "
                 + $"станция {StationNumber}");
 
+        ArchiveOnSystemDrive = ArchiveGuard.OnSystemDrive(_settings.BackupRoot);
+
         Hint = !stored
             ? "не удалось записать настройки, проверьте права на папку data"
-            : KeepDays == 0
-                ? "настройки сохранены, записи хранятся бессрочно"
-                : $"настройки сохранены, записи хранятся {KeepDays} дн";
+            : !marked
+                ? $"настройки сохранены, но том «{_settings.BackupRoot}» недоступен для записи"
+                : KeepDays == 0
+                    ? "настройки сохранены, записи хранятся бессрочно"
+                    : $"настройки сохранены, записи хранятся {KeepDays} дн";
     }
 
     // --- Разметка гнёзд -----------------------------------------------------

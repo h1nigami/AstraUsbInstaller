@@ -124,20 +124,33 @@ public sealed class StaffDirectory
     }
 
     /// <summary>
-    /// Удаляет отдел. Подчинённые поднимаются к родителю удалённого, а не
-    /// пропадают вместе с ним: терять сотрудников из-за перестановки в
-    /// структуре недопустимо.
+    /// Удаляет отдел. Отдел, за которым закреплены сотрудники, не удаляется:
+    /// сначала их переводят, иначе люди тихо оказались бы в чужом месте
+    /// структуры. Подчинённые отделы поднимаются к родителю удалённого.
     /// </summary>
-    public void DeleteDepartment(long id)
+    /// <returns>False, если в отделе есть сотрудники и он оставлен на месте.</returns>
+    public bool DeleteDepartment(long id)
     {
         using var db = Open();
+
+        if (Scalar(db, "SELECT COUNT(*) FROM employees WHERE department_id = $id",
+                ("$id", id)) is long staff && staff > 0)
+            return false;
+
         var parent = Scalar(db, "SELECT parent_id FROM departments WHERE id = $id", ("$id", id));
 
         Run(db, "UPDATE departments SET parent_id = $parent WHERE parent_id = $id",
             ("$parent", parent ?? DBNull.Value), ("$id", id));
-        Run(db, "UPDATE employees SET department_id = $parent WHERE department_id = $id",
-            ("$parent", parent ?? DBNull.Value), ("$id", id));
         Run(db, "DELETE FROM departments WHERE id = $id", ("$id", id));
+        return true;
+    }
+
+    /// <summary>Сколько сотрудников закреплено за отделом.</summary>
+    public int EmployeeCount(long departmentId)
+    {
+        using var db = Open();
+        return Scalar(db, "SELECT COUNT(*) FROM employees WHERE department_id = $id",
+            ("$id", departmentId)) is long count ? (int)count : 0;
     }
 
     public IReadOnlyList<Department> Departments()

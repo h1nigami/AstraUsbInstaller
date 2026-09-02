@@ -224,8 +224,13 @@ public sealed partial class StaffViewModel : ObservableObject
 
         try
         {
-            new StaffDirectory(_dbPath).DeleteDepartment(department.Id);
-            Hint = $"отдел «{department.Path}» удалён, его сотрудники переведены выше";
+            if (!new StaffDirectory(_dbPath).DeleteDepartment(department.Id))
+            {
+                Hint = $"в отделе «{department.Path}» есть сотрудники, сначала переведите их";
+                return;
+            }
+
+            Hint = $"отдел «{department.Path}» удалён";
             Reload();
         }
         catch (Exception e)

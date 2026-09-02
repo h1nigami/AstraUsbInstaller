@@ -40,13 +40,25 @@ public sealed class StaffDirectoryTests : IDisposable
         var guard = staff.AddDepartment("Охрана");
         var middle = staff.AddDepartment("Участок", parentId: guard);
         var shift = staff.AddDepartment("Смена 1", parentId: middle);
-        var person = staff.AddEmployee("Иванов И.И.", departmentId: middle);
 
-        staff.DeleteDepartment(middle);
+        Assert.True(staff.DeleteDepartment(middle));
 
         Assert.Equal("Охрана / Смена 1", staff.DepartmentPath(shift));
-        var moved = staff.Employees().Single(e => e.Id == person);
-        Assert.Equal(guard, moved.DepartmentId);
+    }
+
+    [Fact]
+    public void A_department_with_employees_stays_put()
+    {
+        var staff = NewDirectory();
+        var guard = staff.AddDepartment("Охрана");
+        var person = staff.AddEmployee("Иванов И.И.", departmentId: guard);
+
+        Assert.False(staff.DeleteDepartment(guard));
+
+        // Ни отдел, ни закреплённый за ним человек никуда не двинулись.
+        Assert.Single(staff.Departments());
+        Assert.Equal(guard, staff.Employees().Single(e => e.Id == person).DepartmentId);
+        Assert.Equal(1, staff.EmployeeCount(guard));
     }
 
     [Fact]

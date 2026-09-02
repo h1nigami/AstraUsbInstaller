@@ -49,6 +49,18 @@ public sealed class BackupService
 
         try
         {
+            // Том архива мог не смонтироваться. Записать в его прежний путь
+            // означало бы создать пустой каталог на системном разделе и
+            // отчитаться об успехе, потеряв записи.
+            if (!ArchiveGuard.Available(_settings.BackupRoot))
+            {
+                progress.Report(new BackupProgress(BackupStage.Failed, 0,
+                    "том архива не смонтирован"));
+                new ActionLog(_dbPath).Write(ActionLog.Cleanup,
+                    $"выгрузка остановлена: нет метки тома архива в {_settings.BackupRoot}");
+                return;
+            }
+
             var total = await Task.Run(() => Measure(mountPoint), token);
             if (total.Files == 0)
             {
@@ -104,8 +116,7 @@ public sealed class BackupService
         {
             foreach (var path in Directory.EnumerateFiles(mountPoint, "*", SearchOption.AllDirectories))
             {
-                var name = Path.GetFileName(path);
-                if (name == DeviceRegistry.DeviceIdFile || name == CardIdentity.FileName)
+                if (Markers.IsService(Path.GetFileName(path)))
                     continue;
                 files++;
                 bytes += new FileInfo(path).Length;

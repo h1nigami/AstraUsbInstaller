@@ -124,7 +124,7 @@ public sealed class StaffViewModelTests : IDisposable
     }
 
     [Fact]
-    public void Deleting_a_department_keeps_its_employees()
+    public void A_department_with_employees_is_not_deleted()
     {
         var model = NewModel();
         model.DepartmentNameInput = "Охрана";
@@ -138,8 +138,24 @@ public sealed class StaffViewModelTests : IDisposable
         model.SelectedDepartment = model.Departments[0];
         model.DeleteDepartmentCommand.Execute(null);
 
-        Assert.Empty(model.Departments);
+        // Сначала людей переводят: иначе они тихо оказались бы в чужом месте
+        // структуры.
+        Assert.Single(model.Departments);
+        Assert.Contains("переведите", model.Hint);
         Assert.Equal("Смирнов С.С.", Assert.Single(model.Employees).FullName);
+    }
+
+    [Fact]
+    public void An_empty_department_is_deleted()
+    {
+        var model = NewModel();
+        model.DepartmentNameInput = "Охрана";
+        model.AddDepartmentCommand.Execute(null);
+
+        model.SelectedDepartment = model.Departments[0];
+        model.DeleteDepartmentCommand.Execute(null);
+
+        Assert.Empty(model.Departments);
     }
 
     [Fact]

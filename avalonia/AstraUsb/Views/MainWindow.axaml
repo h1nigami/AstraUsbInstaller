@@ -550,6 +550,9 @@
                     <ComboBox ItemsSource="{Binding Settings.StorageModes}"
                               SelectedIndex="{Binding Settings.StorageModeIndex}" Width="190" />
                   </StackPanel>
+                  <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}"
+                             Text="Архив лежит на системном разделе. Выберите отдельный диск: системный переполнится записями."
+                             FontSize="11" TextWrapping="Wrap" Foreground="#FFB020" />
                   <StackPanel Orientation="Horizontal" Spacing="8">
                     <TextBlock Text="Хранить записи, дней" VerticalAlignment="Center"
                                FontSize="11" Foreground="{StaticResource FgMutedBrush}" />

@@ -52,7 +52,7 @@ public static class FileCopier
             }
 
             var payload = files
-                .Where(f => Path.GetFileName(f) != DeviceRegistry.DeviceIdFile)
+                .Where(f => !Markers.IsService(Path.GetFileName(f)))
                 .ToArray();
 
             try
