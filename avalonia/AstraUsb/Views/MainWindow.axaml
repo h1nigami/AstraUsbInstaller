@@ -929,7 +929,9 @@
                 <TextBlock Grid.Row="1" Classes="hint" Margin="0,4,0,8"
                            Text="Отключите все регистраторы. Вставляйте по одному и нажимайте «Сопоставить» напротив нужного окна." />
 
-                <ScrollViewer Grid.Row="2">
+                <!-- Отступ справа под полосу прокрутки: без него она
+                     наезжала на кнопки сопоставления. -->
+                <ScrollViewer Grid.Row="2" Padding="0,0,14,0">
                   <ItemsControl ItemsSource="{Binding Settings.Slots}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:SlotRow">
@@ -1093,8 +1095,11 @@
                   <TextBlock Text="Веб-панель" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Панель показывает состояние отсеков, архив и журнал с телефона или компьютера в той же сети. Один адрес, одни данные, раскладка меняется по ширине экрана." />
+                  <!-- Предупреждение к выключенной панели: включённой оно
+                       уже ничего не сообщает. -->
                   <TextBlock Classes="hint" Foreground="{StaticResource WarnBrush}"
-                             Text="Панель выключена по умолчанию: открытый порт на станции это решение того, кто её ставит." />
+                             IsVisible="{Binding !Settings.WebEnabled}"
+                             Text="Панель выключена: открытый порт на станции это решение того, кто её ставит." />
 
                   <CheckBox Content="Открыть веб-панель"
                             IsChecked="{Binding Settings.WebEnabled}" />
@@ -1119,6 +1124,24 @@
 
                   <TextBlock Text="{Binding Settings.WebState}" Classes="hint"
                              Foreground="{StaticResource Accent700Brush}" />
+
+                  <!-- Адреса станции: панель живёт внутри программы, и
+                       заходят на неё по адресу самой станции в её сети. -->
+                  <StackPanel Spacing="4" IsVisible="{Binding Settings.HasWebLinks}">
+                    <TextBlock Text="АДРЕС ПАНЕЛИ В СЕТИ" Classes="field" Margin="0,4,0,0" />
+                    <ItemsControl ItemsSource="{Binding Settings.WebLinks}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                          <TextBlock Text="{Binding}" Classes="mono" FontSize="13"
+                                     FontWeight="Bold"
+                                     Foreground="{StaticResource Accent700Brush}" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock Classes="hint"
+                               Text="Открывайте с телефона или компьютера в той же сети. Адрес меняется вместе с адресом станции в сети." />
+                  </StackPanel>
+
                   <TextBlock Classes="hint"
                              Text="Вход в панель по той же учётной записи администратора, что и в разделы станции. Пять неудачных попыток подряд закрывают вход на минуту." />
                 </StackPanel>

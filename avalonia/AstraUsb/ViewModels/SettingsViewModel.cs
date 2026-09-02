@@ -86,8 +86,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (Section == "ftp")
             ShowQueueState();
 
-        if (Section == "web" && WebEnabled && WebSsl)
-            WebFingerprint = PanelCertificate.Fingerprint();
+        if (Section == "web")
+        {
+            if (WebEnabled && WebSsl)
+                WebFingerprint = PanelCertificate.Fingerprint();
+
+            ShowWebLinks();
+        }
     }
 
     [ObservableProperty] private int _lockTimeoutMinutes;
@@ -240,6 +245,37 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// Закрепляет за выбранным окном то гнездо, в котором сейчас стоит
     /// единственная подключённая камера. Так размечают станцию по инструкции:
     /// <summary>
+    /// Адреса, по которым станция отвечает панелью. Оператору взять их
+    /// больше негде: панель живёт внутри программы, а адрес у станции тот,
+    /// что ей выдала сеть.
+    /// </summary>
+    public ObservableCollection<string> WebLinks { get; } = new();
+
+    /// <summary>Есть ли что показать в списке адресов.</summary>
+    public bool HasWebLinks => WebLinks.Count > 0;
+
+    /// <summary>
+    /// Пересобирает список адресов. Вызывается и по таймеру, пока раздел
+    /// открыт: адрес станции выдаёт сеть объекта, и он меняется без спроса.
+    /// Список переписывается только когда он и правда стал другим, иначе
+    /// строки мигали бы на каждом тике.
+    /// </summary>
+    public void ShowWebLinks()
+    {
+        var port = WebPort is > 0 and < 65536 ? WebPort : 8080;
+        var links = WebAddress.Links(port, WebSsl);
+
+        if (links.SequenceEqual(WebLinks))
+            return;
+
+        WebLinks.Clear();
+        foreach (var link in links)
+            WebLinks.Add(link);
+
+        OnPropertyChanged(nameof(HasWebLinks));
+    }
+
+    /// <summary>
     /// Сохраняет параметры веб-панели. Порт нельзя переоткрыть на ходу,
     /// поэтому включение вступает в силу после перезапуска программы.
     /// </summary>
@@ -270,9 +306,10 @@ public sealed partial class SettingsViewModel : ObservableObject
                 : "веб-панель выключена");
         }
 
+        ShowWebLinks();
+
         WebState = WebEnabled
-            ? $"после перезапуска панель откроется по адресу "
-              + $"{(WebSsl ? "https" : "http")}://адрес-станции:{wanted}"
+            ? "после перезапуска панель откроется по адресам ниже"
             : "панель выключена";
 
         WebFingerprint = WebEnabled && WebSsl ? PanelCertificate.Fingerprint() : "";

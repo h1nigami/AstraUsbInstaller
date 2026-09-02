@@ -637,6 +637,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_demonstrating)
             return;
 
+        // Адрес станции выдаёт сеть объекта и меняет без спроса, поэтому
+        // список адресов панели пересчитывается, пока раздел открыт.
+        if (Settings.IsWebSection)
+            Settings.ShowWebLinks();
+
         var devices = HoldBriefly(_listDevices());
 
         // Диск, на котором лежит архив, источником не считается: иначе
