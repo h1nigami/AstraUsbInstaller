@@ -57,6 +57,14 @@ public sealed class Settings
     public bool AlarmSound { get; set; } = true;
 
     /// <summary>
+    /// Веб-панель для удалённого просмотра. Выключена по умолчанию: открытый
+    /// порт на станции это решение того, кто её ставит, а не программы.
+    /// </summary>
+    public bool WebEnabled { get; set; }
+
+    public int WebPort { get; set; } = 8080;
+
+    /// <summary>
     /// Внешний сервер базы. Станция работает на своей базе рядом с программой,
     /// и эти параметры нужны только там, где сервер есть.
     /// </summary>

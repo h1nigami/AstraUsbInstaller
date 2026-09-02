@@ -56,6 +56,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public bool IsSlotsSection => Section == "slots";
     public bool IsFtpSection => Section == "ftp";
     public bool IsSqlSection => Section == "sql";
+    public bool IsWebSection => Section == "web";
     public bool IsAboutSection => Section == "about";
 
     [RelayCommand]
@@ -65,6 +66,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         "slots" => "slots",
         "ftp" => "ftp",
         "sql" => "sql",
+        "web" => "web",
         "about" => "about",
         _ => "station",
     };
@@ -77,6 +79,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(IsSlotsSection));
         OnPropertyChanged(nameof(IsFtpSection));
         OnPropertyChanged(nameof(IsSqlSection));
+        OnPropertyChanged(nameof(IsWebSection));
         OnPropertyChanged(nameof(IsAboutSection));
 
         if (Section == "ftp")
@@ -94,6 +97,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// </summary>
     [ObservableProperty] private bool _archiveOnSystemDrive;
     [ObservableProperty] private bool _alarmSound;
+
+    [ObservableProperty] private bool _webEnabled;
+    [ObservableProperty] private int _webPort = 8080;
+    [ObservableProperty] private string _webState = "";
 
     [ObservableProperty] private bool _sqlEnabled;
     [ObservableProperty] private int _sqlKindIndex;
@@ -149,6 +156,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         AlarmSound = _settings.AlarmSound;
 
+        WebEnabled = _settings.WebEnabled;
+        WebPort = _settings.WebPort;
         SqlEnabled = _settings.SqlEnabled;
         SqlKindIndex = Math.Max(0, Array.IndexOf(SqlKinds, _settings.SqlKind));
         SqlHost = _settings.SqlHost;
@@ -219,6 +228,41 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>
     /// Закрепляет за выбранным окном то гнездо, в котором сейчас стоит
     /// единственная подключённая камера. Так размечают станцию по инструкции:
+    /// <summary>
+    /// Сохраняет параметры веб-панели. Порт нельзя переоткрыть на ходу,
+    /// поэтому включение вступает в силу после перезапуска программы.
+    /// </summary>
+    [RelayCommand]
+    private void SaveWeb()
+    {
+        var wanted = WebPort is > 0 and < 65536 ? WebPort : 8080;
+        var changed = _settings.WebEnabled != WebEnabled || _settings.WebPort != wanted;
+
+        _settings.WebEnabled = WebEnabled;
+        _settings.WebPort = wanted;
+        WebPort = wanted;
+
+        if (!_settings.Save())
+        {
+            Hint = "не удалось записать настройки, проверьте права на папку data";
+            return;
+        }
+
+        if (changed)
+        {
+            RestartNeeded = true;
+            _actions.Write(ActionLog.Settings, WebEnabled
+                ? $"веб-панель включена на порту {wanted}"
+                : "веб-панель выключена");
+        }
+
+        WebState = WebEnabled
+            ? $"после перезапуска панель откроется на порту {wanted}"
+            : "панель выключена";
+
+        Hint = "параметры панели сохранены";
+    }
+
     /// <summary>Сохраняет параметры внешнего сервера базы.</summary>
     [RelayCommand]
     private void SaveSql()

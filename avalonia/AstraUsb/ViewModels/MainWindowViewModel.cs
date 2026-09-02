@@ -146,6 +146,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>О чём станция уже сообщила: повторять одно и то же незачем.</summary>
     private string _lastTrouble = "";
 
+    /// <summary>Веб-панель, если она включена в настройках.</summary>
+    private readonly WebPanel? _web;
+
     /// <summary>
     /// Выбранная компоновка доски: сетка, список или схема стойки. Все три
     /// живут на одной кодовой базе и переключаются оператором.
@@ -242,6 +245,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // несмонтированный диск от пустого.
         if (_stationSettings.BackupRoot == AppPaths.BackupsRoot)
             ArchiveGuard.Mark(_stationSettings.BackupRoot);
+
+        // Панель поднимается один раз при запуске: порт нельзя переоткрыть на
+        // ходу, поэтому её включение вступает в силу после перезапуска.
+        if (_stationSettings.WebEnabled)
+        {
+            _web = new WebPanel(AppPaths.Database);
+            if (_web.Start(_stationSettings))
+                _actions.Write(ActionLog.Settings,
+                    $"веб-панель открыта на порту {WebPanel.Port(_stationSettings)}");
+        }
 
         UpdateNetwork();
         UpdateSummary();
@@ -912,6 +925,61 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         var free = Ports.Count(p => p.IsFree);
 
         Summary = $"копирование {copying} · готово {done} · ошибки {failed} · свободно {free}";
+
+        PublishSnapshot(copying, done, failed, free);
+    }
+
+    /// <summary>
+    /// Кладёт состояние туда, откуда его читает веб-панель. Доска принадлежит
+    /// потоку интерфейса, и обращаться к ней из веб-запроса нельзя.
+    /// </summary>
+    private void PublishSnapshot(int copying, int done, int failed, int free)
+    {
+        var total = 0L;
+        var freeBytes = 0L;
+        var label = _stationSettings.BackupRoot;
+
+        try
+        {
+            var root = Path.GetPathRoot(Path.GetFullPath(_stationSettings.BackupRoot));
+            if (!string.IsNullOrEmpty(root))
+            {
+                var drive = new DriveInfo(root);
+                if (drive.IsReady)
+                {
+                    total = drive.TotalSize;
+                    freeBytes = drive.AvailableFreeSpace;
+                    label = string.IsNullOrEmpty(drive.VolumeLabel) ? root : drive.VolumeLabel;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Диск недоступен: панель покажет нули и строку происшествия.
+        }
+
+        StationSnapshot.Publish(new StationState(
+            DateTime.Now,
+            Version,
+            copying,
+            done,
+            failed,
+            free,
+            NetworkUp,
+            FtpEnabled,
+            FtpLabel,
+            label,
+            total,
+            freeBytes,
+            _lastTrouble,
+            Ports.Select(p => new BaySnapshot(
+                p.Slot,
+                p.StateText,
+                p.CameraId,
+                p.Employee,
+                p.Department,
+                p.FilesLine,
+                (int)Math.Round(Math.Clamp(p.Progress, 0, 1) * 100))).ToList()));
     }
 
     /// <summary>
@@ -1007,6 +1075,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         _poll.Stop();
         _clock.Stop();
+
+        _web?.Dispose();
 
         // Свои монтирования отпускаем при выходе: иначе карта останется
         // смонтированной, и рабочий стол не сможет с ней работать.

@@ -763,6 +763,9 @@
             <Button Classes="nav" Content="Внешняя база"
                     Classes.primary="{Binding Settings.IsSqlSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="sql" />
+            <Button Classes="nav" Content="Веб-панель"
+                    Classes.primary="{Binding Settings.IsWebSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="web" />
             <Button Classes="nav" Content="О программе"
                     Classes.primary="{Binding Settings.IsAboutSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="about" />
@@ -1055,6 +1058,35 @@
 
                   <TextBlock Text="{Binding Settings.SqlState}" Classes="hint"
                              Foreground="{StaticResource Accent700Brush}" />
+                </StackPanel>
+              </ScrollViewer>
+
+              <!-- Веб-панель -->
+              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsWebSection}">
+                <StackPanel Spacing="14">
+                  <TextBlock Text="Веб-панель" Classes="section" />
+                  <TextBlock Classes="hint"
+                             Text="Панель показывает состояние отсеков, архив и журнал с телефона или компьютера в той же сети. Один адрес, одни данные, раскладка меняется по ширине экрана." />
+                  <TextBlock Classes="hint" Foreground="{StaticResource WarnBrush}"
+                             Text="Соединение идёт без шифрования, поэтому панель годится только для локальной сети. Выключена по умолчанию: открытый порт на станции это решение того, кто её ставит." />
+
+                  <CheckBox Content="Открыть веб-панель"
+                            IsChecked="{Binding Settings.WebEnabled}" />
+
+                  <StackPanel>
+                    <TextBlock Text="ПОРТ" Classes="field" />
+                    <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
+                      <TextBox Grid.Column="0" Classes="form"
+                               Text="{Binding Settings.WebPort}" />
+                      <Button Grid.Column="2" Classes="primary" Content="Сохранить" Height="52"
+                              Command="{Binding Settings.SaveWebCommand}" />
+                    </Grid>
+                  </StackPanel>
+
+                  <TextBlock Text="{Binding Settings.WebState}" Classes="hint"
+                             Foreground="{StaticResource Accent700Brush}" />
+                  <TextBlock Classes="hint"
+                             Text="Вход в панель по той же учётной записи администратора, что и в разделы станции. Пять неудачных попыток подряд закрывают вход на минуту." />
                 </StackPanel>
               </ScrollViewer>
 
