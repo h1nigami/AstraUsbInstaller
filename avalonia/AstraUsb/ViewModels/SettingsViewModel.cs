@@ -55,6 +55,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     public bool IsAccessSection => Section == "access";
     public bool IsSlotsSection => Section == "slots";
     public bool IsFtpSection => Section == "ftp";
+    public bool IsSqlSection => Section == "sql";
     public bool IsAboutSection => Section == "about";
 
     [RelayCommand]
@@ -63,6 +64,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         "access" => "access",
         "slots" => "slots",
         "ftp" => "ftp",
+        "sql" => "sql",
         "about" => "about",
         _ => "station",
     };
@@ -74,6 +76,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         OnPropertyChanged(nameof(IsAccessSection));
         OnPropertyChanged(nameof(IsSlotsSection));
         OnPropertyChanged(nameof(IsFtpSection));
+        OnPropertyChanged(nameof(IsSqlSection));
         OnPropertyChanged(nameof(IsAboutSection));
 
         if (Section == "ftp")
@@ -91,6 +94,18 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// </summary>
     [ObservableProperty] private bool _archiveOnSystemDrive;
     [ObservableProperty] private bool _alarmSound;
+
+    [ObservableProperty] private bool _sqlEnabled;
+    [ObservableProperty] private int _sqlKindIndex;
+    [ObservableProperty] private string _sqlHost = "";
+    [ObservableProperty] private int _sqlPort = 3306;
+    [ObservableProperty] private string _sqlDatabase = "";
+    [ObservableProperty] private string _sqlUser = "";
+    [ObservableProperty] private string _sqlPassword = "";
+    [ObservableProperty] private string _sqlState = "";
+    [ObservableProperty] private bool _sqlTesting;
+
+    public string[] SqlKinds { get; } = ["MySQL", "PostgreSQL", "MSSQL"];
     [ObservableProperty] private bool _ftpEnabled;
     [ObservableProperty] private string _ftpHost = "";
     [ObservableProperty] private int _ftpPort = 21;
@@ -133,6 +148,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         ArchiveOnSystemDrive = ArchiveGuard.OnSystemDrive(_settings.BackupRoot);
 
         AlarmSound = _settings.AlarmSound;
+
+        SqlEnabled = _settings.SqlEnabled;
+        SqlKindIndex = Math.Max(0, Array.IndexOf(SqlKinds, _settings.SqlKind));
+        SqlHost = _settings.SqlHost;
+        SqlPort = _settings.SqlPort;
+        SqlDatabase = _settings.SqlDatabase;
+        SqlUser = _settings.SqlUser;
+        SqlPassword = _settings.SqlPassword;
         FtpEnabled = _settings.FtpEnabled;
         FtpHost = _settings.FtpHost;
         FtpPort = _settings.FtpPort;
@@ -196,6 +219,65 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>
     /// Закрепляет за выбранным окном то гнездо, в котором сейчас стоит
     /// единственная подключённая камера. Так размечают станцию по инструкции:
+    /// <summary>Сохраняет параметры внешнего сервера базы.</summary>
+    [RelayCommand]
+    private void SaveSql()
+    {
+        _settings.SqlEnabled = SqlEnabled;
+        _settings.SqlKind = SqlKinds[Math.Clamp(SqlKindIndex, 0, SqlKinds.Length - 1)];
+        _settings.SqlHost = SqlHost.Trim();
+        _settings.SqlPort = SqlPort is > 0 and < 65536
+            ? SqlPort
+            : SqlProbe.DefaultPort(_settings.SqlKind);
+        _settings.SqlDatabase = SqlDatabase.Trim();
+        _settings.SqlUser = SqlUser.Trim();
+        _settings.SqlPassword = SqlPassword;
+        SqlPort = _settings.SqlPort;
+
+        if (!_settings.Save())
+        {
+            Hint = "не удалось записать настройки, проверьте права на папку data";
+            return;
+        }
+
+        _actions.Write(ActionLog.Settings, SqlEnabled
+            ? $"внешняя база включена: {_settings.SqlKind} {_settings.SqlHost}:{_settings.SqlPort}"
+            : "внешняя база выключена");
+
+        Hint = "параметры внешней базы сохранены";
+    }
+
+    /// <summary>Проверяет, отвечает ли сервер базы на своём порту.</summary>
+    [RelayCommand]
+    private async Task TestSql()
+    {
+        if (SqlTesting)
+            return;
+
+        SqlTesting = true;
+        SqlState = "проверяем";
+
+        try
+        {
+            SqlState = await SqlProbe.CheckAsync(SqlHost, SqlPort, TimeSpan.FromSeconds(5));
+        }
+        catch (Exception e)
+        {
+            SqlState = e.Message;
+        }
+        finally
+        {
+            SqlTesting = false;
+        }
+    }
+
+    /// <summary>Подставляет обычный порт выбранного сервера.</summary>
+    partial void OnSqlKindIndexChanged(int value)
+    {
+        var kind = SqlKinds[Math.Clamp(value, 0, SqlKinds.Length - 1)];
+        SqlPort = SqlProbe.DefaultPort(kind);
+    }
+
     /// <summary>Сохраняет параметры отправки на сервер.</summary>
     [RelayCommand]
     private void SaveFtp()

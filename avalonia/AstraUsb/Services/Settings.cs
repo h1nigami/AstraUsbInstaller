@@ -56,6 +56,19 @@ public sealed class Settings
     /// </summary>
     public bool AlarmSound { get; set; } = true;
 
+    /// <summary>
+    /// Внешний сервер базы. Станция работает на своей базе рядом с программой,
+    /// и эти параметры нужны только там, где сервер есть.
+    /// </summary>
+    public bool SqlEnabled { get; set; }
+
+    public string SqlKind { get; set; } = "MySQL";
+    public string SqlHost { get; set; } = "";
+    public int SqlPort { get; set; } = 3306;
+    public string SqlDatabase { get; set; } = "";
+    public string SqlUser { get; set; } = "";
+    public string SqlPassword { get; set; } = "";
+
     /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 

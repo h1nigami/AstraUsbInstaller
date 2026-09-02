@@ -760,6 +760,9 @@
             <Button Classes="nav" Content="Отправка на сервер"
                     Classes.primary="{Binding Settings.IsFtpSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="ftp" />
+            <Button Classes="nav" Content="Внешняя база"
+                    Classes.primary="{Binding Settings.IsSqlSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="sql" />
             <Button Classes="nav" Content="О программе"
                     Classes.primary="{Binding Settings.IsAboutSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="about" />
@@ -986,6 +989,71 @@
                   </StackPanel>
 
                   <TextBlock Text="{Binding Settings.FtpState}" Classes="hint"
+                             Foreground="{StaticResource Accent700Brush}" />
+                </StackPanel>
+              </ScrollViewer>
+
+              <!-- Внешняя база -->
+              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsSqlSection}">
+                <StackPanel Spacing="14">
+                  <TextBlock Text="Внешняя база" Classes="section" />
+                  <TextBlock Classes="hint"
+                             Text="Станция работает на своей базе рядом с программой, и настраивать здесь нечего, пока внешнего сервера нет." />
+                  <TextBlock Classes="hint" Foreground="{StaticResource WarnBrush}"
+                             Text="Пока станция только проверяет, отвечает ли сервер на своём порту. Хранение записей на внешней базе не ведётся: драйвер чужой базы в сборку станции не входит." />
+
+                  <CheckBox Content="Работать с внешним сервером базы"
+                            IsChecked="{Binding Settings.SqlEnabled}" />
+
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="СЕРВЕР" Classes="field" />
+                      <ComboBox Classes="form" HorizontalAlignment="Stretch"
+                                ItemsSource="{Binding Settings.SqlKinds}"
+                                SelectedIndex="{Binding Settings.SqlKindIndex}" />
+                    </StackPanel>
+
+                    <StackPanel>
+                      <TextBlock Text="ПОРТ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlPort}" />
+                    </StackPanel>
+                  </UniformGrid>
+
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="АДРЕС" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlHost}"
+                               Watermark="192.168.0.20" />
+                    </StackPanel>
+
+                    <StackPanel>
+                      <TextBlock Text="ИМЯ БАЗЫ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlDatabase}" />
+                    </StackPanel>
+                  </UniformGrid>
+
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlUser}" />
+                    </StackPanel>
+
+                    <StackPanel>
+                      <TextBlock Text="ПАРОЛЬ" Classes="field" />
+                      <TextBox Classes="form" PasswordChar="●"
+                               Text="{Binding Settings.SqlPassword}" />
+                    </StackPanel>
+                  </UniformGrid>
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button Classes="primary" Content="Сохранить" Height="52" Width="150"
+                            Command="{Binding Settings.SaveSqlCommand}" />
+                    <Button Content="Проверить" Height="52" Width="150"
+                            IsEnabled="{Binding !Settings.SqlTesting}"
+                            Command="{Binding Settings.TestSqlCommand}" />
+                  </StackPanel>
+
+                  <TextBlock Text="{Binding Settings.SqlState}" Classes="hint"
                              Foreground="{StaticResource Accent700Brush}" />
                 </StackPanel>
               </ScrollViewer>
