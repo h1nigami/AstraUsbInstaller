@@ -141,7 +141,7 @@ public sealed partial class PortViewModel : ObservableObject
         PortState.Failed => "#A7CAEE",
         PortState.Detected or PortState.Scanning or PortState.Done => "#16454C",
         PortState.Copying => "#1D4F83",
-        _ => "#56677E",
+        _ => "#3B4C61",
     });
 
     /// <summary>Незаполненная часть полосы.</summary>

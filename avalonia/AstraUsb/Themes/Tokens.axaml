@@ -57,8 +57,8 @@
 
   <!-- Текст -->
   <Color x:Key="FgMain">#16202C</Color>
-  <Color x:Key="FgMuted">#56677E</Color>
-  <Color x:Key="FgFaint">#71839A</Color>
+  <Color x:Key="FgMuted">#28374A</Color>
+  <Color x:Key="FgFaint">#53657C</Color>
   <Color x:Key="FgOnDark">#F7FAFD</Color>
 
   <SolidColorBrush x:Key="BgAppBrush" Color="{StaticResource BgApp}" />
@@ -103,7 +103,7 @@
     тёмный янтарь: на светлом грунте он читается, в отличие от привычного
     оранжевого, и не спорит с синим акцентом.
   -->
-  <Color x:Key="Warn">#8A5A00</Color>
+  <Color x:Key="Warn">#6E4700</Color>
   <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource Warn}" />
 
   <!-- Шрифты вшиты в сборку: на киоске сети нет, подтянуть их неоткуда -->

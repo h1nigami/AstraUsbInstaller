@@ -62,7 +62,7 @@
           <TextBlock Text="{Binding ClockTime}" Classes="mono"
                      FontSize="19" FontWeight="Bold" VerticalAlignment="Center"
                      Foreground="{StaticResource FgMainBrush}" />
-          <TextBlock Text="{Binding ClockDate}" FontSize="10" VerticalAlignment="Bottom"
+          <TextBlock Text="{Binding ClockDate}" FontSize="12" VerticalAlignment="Bottom"
                      Margin="0,0,0,3" Foreground="{StaticResource FgMutedBrush}" />
         </StackPanel>
       </Border>
@@ -74,14 +74,16 @@
 
     <!-- Строка состояния служб: по заданию она видна всегда -->
     <Grid Grid.Row="1" Background="{StaticResource BgPanelBrush}"
-          ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,1">
-      <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8"
+          ColumnDefinitions="*,Auto" Margin="0,0,0,1">
+      <!-- Пилюли служб сжимаются первыми: сводка по гнёздам и состояние
+           станции нужнее, чем полный список служб. -->
+      <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" ClipToBounds="True"
                   Margin="12,0,0,8" VerticalAlignment="Center">
         <Border Padding="10,4" CornerRadius="14" Background="{StaticResource Teal100Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}" />
-            <TextBlock Text="Монитор USB активен" FontSize="10"
+            <TextBlock Text="Монитор USB активен" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource Teal900Brush}" />
           </StackPanel>
         </Border>
@@ -89,7 +91,7 @@
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}" />
-            <TextBlock Text="Локальная база" FontSize="10"
+            <TextBlock Text="Локальная база" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource FgMutedBrush}" />
           </StackPanel>
         </Border>
@@ -99,7 +101,7 @@
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Accent500Brush}" />
-            <TextBlock Text="{Binding FtpLabel}" FontSize="10"
+            <TextBlock Text="{Binding FtpLabel}" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource Accent900Brush}" />
           </StackPanel>
         </Border>
@@ -114,19 +116,16 @@
             <Ellipse Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}"
                      IsVisible="{Binding NetworkUp}" />
-            <TextBlock Text="{Binding NetworkLabel}" FontSize="10"
+            <TextBlock Text="{Binding NetworkLabel}" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource FgMutedBrush}" />
           </StackPanel>
         </Border>
       </StackPanel>
 
-      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" Margin="0,0,12,8"
-                  VerticalAlignment="Center">
-        <TextBlock Text="{Binding Summary}" FontSize="10"
-                   VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
-        <TextBlock Text="{Binding Status}" FontSize="10"
-                   VerticalAlignment="Center" Foreground="{StaticResource Accent700Brush}" />
-      </StackPanel>
+      <!-- Состояние станции стоит в подвале и второй раз здесь не нужно:
+           из-за него сводка по гнёздам не влезала в ширину экрана. -->
+      <TextBlock Grid.Column="1" Text="{Binding Summary}" FontSize="12" Margin="8,0,12,8"
+                 VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
     </Grid>
 
     <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
@@ -137,7 +136,7 @@
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="4,0,4,6">
             <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
               <TextBlock Text="Сбор данных" Classes="h1" FontSize="22" LineHeight="26" />
-              <TextBlock Classes="hint" MaxWidth="420" FontSize="10"
+              <TextBlock Classes="hint" MaxWidth="420" FontSize="11"
                          HorizontalAlignment="Left"
                          Text="Забирать регистратор можно, когда окно стало бирюзовым" />
             </StackPanel>
@@ -198,7 +197,8 @@
                                  Foreground="{Binding Ink}" />
                     </Grid>
 
-                    <TextBlock Grid.Row="2" Text="{Binding StateHint}" FontSize="10"
+                    <TextBlock Grid.Row="2" Text="{Binding StateHint}" FontSize="12"
+                               FontWeight="Bold"
                                TextTrimming="CharacterEllipsis" Foreground="{Binding InkMuted}" />
 
                     <Border Grid.Row="4" Height="7" CornerRadius="4" ClipToBounds="True"
@@ -236,7 +236,7 @@
                         <TextBlock Text="{Binding EmployeeLine}" FontSize="12"
                                    FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding Ink}" />
-                        <TextBlock Text="{Binding DepartmentLine}" FontSize="10"
+                        <TextBlock Text="{Binding DepartmentLine}" FontSize="11"
                                    TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding InkMuted}" />
                       </StackPanel>
@@ -258,7 +258,7 @@
                         <TextBlock Text="{Binding PercentText}" Classes="mono" FontSize="11"
                                    FontWeight="Bold" HorizontalAlignment="Right"
                                    Foreground="{Binding Ink}" />
-                        <TextBlock Text="{Binding FilesLine}" FontSize="10"
+                        <TextBlock Text="{Binding FilesLine}" FontSize="11"
                                    HorizontalAlignment="Right"
                                    Foreground="{Binding InkMuted}" />
                       </StackPanel>
@@ -306,7 +306,7 @@
                                    FontWeight="ExtraBold" HorizontalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding Ink}" />
-                        <TextBlock Text="{Binding EmployeeLine}" FontSize="10"
+                        <TextBlock Text="{Binding EmployeeLine}" FontSize="11"
                                    HorizontalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding InkMuted}" />
@@ -456,13 +456,13 @@
                                  TextTrimming="CharacterEllipsis"
                                  Foreground="{StaticResource FgMutedBrush}" />
                       <TextBlock Grid.Column="6" Text="{Binding ShotAt}" Classes="mono"
-                                 FontSize="10" VerticalAlignment="Center"
+                                 FontSize="11" VerticalAlignment="Center"
                                  TextTrimming="CharacterEllipsis"
                                  Foreground="{StaticResource FgMutedBrush}" />
                       <TextBlock Grid.Column="7" Text="{Binding CollectedAt}" Classes="mono"
-                                 FontSize="10" VerticalAlignment="Center"
+                                 FontSize="11" VerticalAlignment="Center"
                                  Foreground="{StaticResource FgMutedBrush}" />
-                      <TextBlock Grid.Column="8" Text="{Binding Mark}" FontSize="10"
+                      <TextBlock Grid.Column="8" Text="{Binding Mark}" FontSize="11"
                                  VerticalAlignment="Center"
                                  Foreground="{StaticResource WarnBrush}" />
                     </Grid>
@@ -514,15 +514,15 @@
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
               <Grid Grid.Row="0" ColumnDefinitions="96,124,*,96,58" Margin="10,6,10,0">
-                <TextBlock Grid.Column="0" Text="КАМЕРА" FontSize="10"
+                <TextBlock Grid.Column="0" Text="КАМЕРА" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="1" Text="СОТРУДНИК" FontSize="10"
+                <TextBlock Grid.Column="1" Text="СОТРУДНИК" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="2" Text="ОТДЕЛ" FontSize="10"
+                <TextBlock Grid.Column="2" Text="ОТДЕЛ" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="3" Text="ЗАГРУЖЕНО" FontSize="10"
+                <TextBlock Grid.Column="3" Text="ЗАГРУЖЕНО" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="4" Text="ДИСК" FontSize="10"
+                <TextBlock Grid.Column="4" Text="ДИСК" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
               </Grid>
               <ListBox Grid.Row="1" ItemsSource="{Binding Devices.Devices}"
@@ -598,7 +598,7 @@
                   BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
-              <TextBlock Grid.Row="0" Text="ОТДЕЛЫ" Margin="10,6,0,0" FontSize="10"
+              <TextBlock Grid.Row="0" Text="ОТДЕЛЫ" Margin="10,6,0,0" FontSize="11"
                          Foreground="{StaticResource FgMutedBrush}" />
               <TextBlock Grid.Row="1" IsVisible="{Binding Staff.NoDepartments}"
                          Text="Отделов пока нет. Введите название внизу и нажмите «Добавить отдел»."
@@ -622,11 +622,11 @@
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
               <Grid Grid.Row="0" ColumnDefinitions="84,*,104,58" Margin="10,6,10,0">
-                <TextBlock Grid.Column="0" Text="НОМЕР" FontSize="10"
+                <TextBlock Grid.Column="0" Text="НОМЕР" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="1" Text="ИМЯ" FontSize="10"
+                <TextBlock Grid.Column="1" Text="ИМЯ" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="2" Text="ТЕЛЕФОН" FontSize="10"
+                <TextBlock Grid.Column="2" Text="ТЕЛЕФОН" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
               </Grid>
               <ListBox Grid.Row="1" ItemsSource="{Binding Staff.Employees}"
@@ -721,11 +721,11 @@
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
               <Grid Grid.Row="0" ColumnDefinitions="128,90,*" Margin="10,6,10,0">
-                <TextBlock Grid.Column="0" Text="КОГДА" FontSize="10"
+                <TextBlock Grid.Column="0" Text="КОГДА" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="1" Text="СОБЫТИЕ" FontSize="10"
+                <TextBlock Grid.Column="1" Text="СОБЫТИЕ" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="2" Text="ЧТО ПРОИЗОШЛО" FontSize="10"
+                <TextBlock Grid.Column="2" Text="ЧТО ПРОИЗОШЛО" FontSize="11"
                            Foreground="{StaticResource FgMutedBrush}" />
               </Grid>
               <ListBox Grid.Row="1" ItemsSource="{Binding Log.Entries}"
@@ -1153,12 +1153,12 @@
           ColumnDefinitions="Auto,*,Auto">
       <Border Grid.Column="0" Grid.ColumnSpan="3" Height="1" VerticalAlignment="Top"
               Background="{StaticResource LineBrush}" />
-      <TextBlock Grid.Column="0" Text="© BestCam" Margin="12,0" FontSize="10"
+      <TextBlock Grid.Column="0" Text="© BestCam" Margin="12,0" FontSize="12"
                  VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
 
       <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8"
                   HorizontalAlignment="Center" VerticalAlignment="Center">
-        <TextBlock Text="{Binding StorageLabel}" FontSize="10"
+        <TextBlock Text="{Binding StorageLabel}" FontSize="12"
                    VerticalAlignment="Center"
                    Foreground="{StaticResource FgMutedBrush}" />
         <Border Width="150" Height="6" CornerRadius="1"
@@ -1175,9 +1175,9 @@
         </Border>
       </StackPanel>
 
-      <TextBlock Grid.Column="2" Text="{Binding Status}" Margin="12,0" FontSize="10"
-                 VerticalAlignment="Center" Foreground="{StaticResource Accent700Brush}"
-                 />
+      <TextBlock Grid.Column="2" Text="{Binding Status}" Margin="12,0" FontSize="12"
+                 FontWeight="Bold" VerticalAlignment="Center"
+                 Foreground="{StaticResource Accent700Brush}" />
     </Grid>
 
     <!-- Просмотр записи. Снимки и журналы станция показывает сама: для них

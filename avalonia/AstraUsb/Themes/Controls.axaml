@@ -39,13 +39,14 @@
 
   <!-- Микроподпись. Регистр поднимается в разметке: аналога text-transform нет -->
   <Style Selector="TextBlock.label">
-    <Setter Property="FontSize" Value="10" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="LetterSpacing" Value="0.7" />
     <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
   </Style>
 
   <Style Selector="TextBlock.hint">
-    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontSize" Value="12" />
     <Setter Property="TextWrapping" Value="Wrap" />
     <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
   </Style>
@@ -128,10 +129,10 @@
   -->
   <Style Selector="TextBlock.field">
     <Setter Property="FontSize" Value="12" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="LetterSpacing" Value="0.5" />
     <Setter Property="Margin" Value="0,0,0,6" />
-    <Setter Property="Foreground" Value="{StaticResource Neutral700Brush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
   </Style>
 
   <!-- Поле формы по макету: высота 52 под палец, белый фон, крупный текст -->
