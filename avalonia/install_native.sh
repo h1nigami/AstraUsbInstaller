@@ -22,6 +22,12 @@ SERVICE_NAME="astra-usb-avalonia"
 PYTHON_SERVICE="astra-usb-monitor"
 SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Пакет .deb раскладывает файлы сам, а зависимости ставит apt, поэтому из
+# установщика ему нужны только правило udev и службы. Отдельного скрипта
+# для этого нет намеренно: юниты должны описываться в одном месте.
+UNITS_ONLY=0
+[ "$1" = "--units-only" ] && UNITS_ONLY=1
+
 if [ "$(id -u)" -ne 0 ]; then
     SUDO="sudo"
 else
@@ -40,6 +46,7 @@ fi
 # библиотеки: без libfontconfig приложение падает ещё до первого окна, а без
 # libicu не доживает даже до него, потому что станция показывает русские даты
 # и разбирает их. Сообщение об этом видно только в журнале сервиса.
+if [ "$UNITS_ONLY" -eq 0 ]; then
 echo "--- Проверка системных библиотек..."
 NEEDED_LIBS="libfontconfig.so.1 libX11.so.6 libSM.so.6 libICE.so.6 libicuuc.so"
 PACKAGES="libfontconfig1 libx11-6 libsm6 libice6"
@@ -113,6 +120,9 @@ if systemctl list-unit-files 2>/dev/null | grep -q "^$PYTHON_SERVICE.service"; t
     esac
 fi
 
+fi  # конец шагов, которые пакету .deb не нужны
+
+if [ "$UNITS_ONLY" -eq 0 ]; then
 # --- 3. Приложение ------------------------------------------------------------
 echo "--- Установка в $APP_DIR..."
 $SUDO mkdir -p "$APP_DIR"
@@ -124,10 +134,12 @@ $SUDO find "$APP_DIR" -mindepth 1 -maxdepth 1 \
 $SUDO cp -r "$SRC_DIR/." "$APP_DIR/"
 $SUDO chmod +x "$APP_DIR/AstraUsb" "$APP_DIR/start_native.sh"
 $SUDO mkdir -p "$APP_DIR/data" "$APP_DIR/USB_Backups"
+fi
 
 # --- 4. Правило udev ----------------------------------------------------------
 echo "--- Настройка udev-правила против автомонтирования рабочим столом..."
-$SUDO cp "$SRC_DIR/99-astra-usb-avalonia-udisks.rules" \
+$SUDO mkdir -p /etc/udev/rules.d
+$SUDO cp "$APP_DIR/99-astra-usb-avalonia-udisks.rules" \
     "/etc/udev/rules.d/99-astra-usb-avalonia-udisks.rules"
 
 if command -v udevadm >/dev/null 2>&1; then
@@ -156,9 +168,15 @@ Environment=DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0
 WantedBy=multi-user.target
 EOF
 
-$SUDO systemctl daemon-reload
-$SUDO systemctl enable "$SERVICE_NAME.service"
-$SUDO systemctl restart "$SERVICE_NAME.service"
+# В контейнере или в системе без systemd команд просто нет, и установка
+# пакета не должна из-за этого считаться неудачной.
+if [ -d /run/systemd/system ]; then
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable "$SERVICE_NAME.service"
+    $SUDO systemctl restart "$SERVICE_NAME.service"
+else
+    echo "systemd не запущен, службы включатся при следующей загрузке."
+fi
 
 # --- 6. Обновление ------------------------------------------------------------
 # Обновление идёт отдельной службой по таймеру, а не изнутри киоска: установка
@@ -167,7 +185,7 @@ $SUDO systemctl restart "$SERVICE_NAME.service"
 # киоск не поднимается, а ради такого случая откат и нужен.
 echo "--- Настройка обновления по расписанию..."
 
-if [ ! -f "$APP_DIR/VERSION" ] && command -v git >/dev/null 2>&1    && git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+if [ "$UNITS_ONLY" -eq 0 ] && [ ! -f "$APP_DIR/VERSION" ] && command -v git >/dev/null 2>&1 && git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
     TAG="$(git -C "$SRC_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
     if [ -n "$TAG" ]; then
         echo "$TAG $(date +%F)" | $SUDO tee "$APP_DIR/VERSION" > /dev/null
@@ -198,8 +216,10 @@ OnUnitActiveSec=6h
 WantedBy=timers.target
 EOF
 
-$SUDO systemctl daemon-reload
-$SUDO systemctl enable --now "$SERVICE_NAME-update.timer"
+if [ -d /run/systemd/system ]; then
+    $SUDO systemctl daemon-reload
+    $SUDO systemctl enable --now "$SERVICE_NAME-update.timer"
+fi
 
 if [ ! -f "$APP_DIR/VERSION" ]; then
     echo

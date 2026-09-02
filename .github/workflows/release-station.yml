@@ -70,6 +70,18 @@ jobs:
                 ;;
             esac
 
+            # Для Linux рядом с архивом кладётся пакет: с ним зависимости
+            # ставит apt, а удаление идёт штатно, вместе со службами.
+            case "$RID" in
+              linux-x64)   DEB=$(avalonia/packaging/build_deb.sh "$OUT" "$TAG" amd64 dist) ;;
+              linux-arm64) DEB=$(avalonia/packaging/build_deb.sh "$OUT" "$TAG" arm64 dist) ;;
+              *)           DEB="" ;;
+            esac
+
+            if [ -n "$DEB" ]; then
+              (cd dist && sha256sum "$(basename "$DEB")" > "$(basename "$DEB").sha256")
+            fi
+
             # Сумма считается от имени файла без пути: станция сверяет её
             # ровно в том виде, в каком пишет sha256sum.
             (cd dist && sha256sum "$(basename "$FILE")" > "$(basename "$FILE").sha256")
@@ -84,6 +96,7 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
             dist/*.sha256
 
       - name: Сохранить как артефакт сборки
