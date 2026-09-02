@@ -294,7 +294,7 @@
             <TextBox Text="{Binding Search.To}" Width="100" />
             <TextBlock Text="Камера" VerticalAlignment="Center" FontSize="11" Margin="10,0,0,0"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Search.Camera}" Width="140" Watermark="номер или имя" />
+            <TextBox Text="{Binding Search.Camera}" Width="110" Watermark="номер или имя" />
             <Button Content="Найти" Command="{Binding Search.SearchCommand}" />
             <Button Content="Сброс" Command="{Binding Search.ResetCommand}" />
           </StackPanel>
@@ -306,7 +306,7 @@
                      Background="Transparent" BorderThickness="0">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:FoundFile">
-                  <Grid ColumnDefinitions="120,*,80,110,110,80" Height="26">
+                  <Grid ColumnDefinitions="86,*,64,84,74,58" Height="26">
                     <TextBlock Grid.Column="0" Text="{Binding Camera}" FontSize="11"
                                FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                VerticalAlignment="Center"
@@ -336,7 +336,7 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="Заметка" VerticalAlignment="Center" FontSize="11"
                          Foreground="{StaticResource FgMutedBrush}" />
-              <TextBox Text="{Binding Search.NoteInput}" Width="240"
+              <TextBox Text="{Binding Search.NoteInput}" Width="180"
                        Watermark="по какому случаю нужна запись" />
               <Button Content="Сохранить заметку" Command="{Binding Search.SaveNoteCommand}" />
               <Button Content="Защитить или снять"
@@ -346,7 +346,7 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="Выгрузить найденное в" VerticalAlignment="Center" FontSize="11"
                          Foreground="{StaticResource FgMutedBrush}" />
-              <TextBox Text="{Binding Search.ExportTarget}" Width="300"
+              <TextBox Text="{Binding Search.ExportTarget}" Width="220"
                        Watermark="путь к папке или флешке" />
               <Button Content="Выгрузить" Command="{Binding Search.ExportCommand}"
                       IsEnabled="{Binding !Search.Exporting}" />
@@ -366,7 +366,7 @@
           <Border Grid.Row="0" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
-              <Grid Grid.Row="0" ColumnDefinitions="90,160,*,140,120" Margin="10,6,10,0">
+              <Grid Grid.Row="0" ColumnDefinitions="96,124,*,96,58" Margin="10,6,10,0">
                 <TextBlock Grid.Column="0" Text="КАМЕРА" FontSize="10"
                            Foreground="{StaticResource FgMutedBrush}" />
                 <TextBlock Grid.Column="1" Text="СОТРУДНИК" FontSize="10"
@@ -383,7 +383,7 @@
                      Background="Transparent" BorderThickness="0">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:DeviceRow">
-                  <Grid ColumnDefinitions="90,160,*,140,120" Height="30">
+                  <Grid ColumnDefinitions="96,124,*,96,58" Height="30">
                     <TextBlock Grid.Column="0" Text="{Binding Display}"
                                FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                FontWeight="Bold" VerticalAlignment="Center"
@@ -412,12 +412,12 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="Имя камеры" VerticalAlignment="Center"
                          Foreground="{StaticResource FgMutedBrush}" />
-              <TextBox Text="{Binding Devices.NameInput}" Width="200" />
+              <TextBox Text="{Binding Devices.NameInput}" Width="150" />
               <Button Content="Переименовать" Command="{Binding Devices.RenameCommand}" />
               <TextBlock Text="Сотрудник" VerticalAlignment="Center" Margin="12,0,0,0"
                          Foreground="{StaticResource FgMutedBrush}" />
               <ComboBox ItemsSource="{Binding Devices.Employees}"
-                        SelectedItem="{Binding Devices.EmployeeInput}" Width="190">
+                        SelectedItem="{Binding Devices.EmployeeInput}" Width="150">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="svc:Employee">
                     <TextBlock Text="{Binding FullName}" />
@@ -433,7 +433,7 @@
         </Grid>
       </TabItem>
       <TabItem Header="СОТРУДНИКИ">
-        <Grid ColumnDefinitions="290,*" RowDefinitions="*,Auto" Margin="10,8">
+        <Grid ColumnDefinitions="224,*" RowDefinitions="*,Auto" Margin="10,8">
 
           <!-- Отделы. Путь показан целиком: вложенность иначе не видна. -->
           <Border Grid.Row="0" Grid.Column="0" Margin="0,0,8,0"
@@ -463,7 +463,7 @@
                   BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
-              <Grid Grid.Row="0" ColumnDefinitions="110,*,150,80" Margin="10,6,10,0">
+              <Grid Grid.Row="0" ColumnDefinitions="84,*,104,58" Margin="10,6,10,0">
                 <TextBlock Grid.Column="0" Text="НОМЕР" FontSize="10"
                            Foreground="{StaticResource FgMutedBrush}" />
                 <TextBlock Grid.Column="1" Text="ИМЯ" FontSize="10"
@@ -476,7 +476,7 @@
                      Background="Transparent" BorderThickness="0">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="svc:Employee">
-                  <Grid ColumnDefinitions="110,*,150,80" Height="28">
+                  <Grid ColumnDefinitions="84,*,104,58" Height="28">
                     <TextBlock Grid.Column="0" Text="{Binding PersonnelNo}"
                                FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                FontWeight="Bold" VerticalAlignment="Center"
@@ -555,7 +555,7 @@
           <Border Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
-              <Grid Grid.Row="0" ColumnDefinitions="140,110,*" Margin="10,6,10,0">
+              <Grid Grid.Row="0" ColumnDefinitions="112,84,*" Margin="10,6,10,0">
                 <TextBlock Grid.Column="0" Text="КОГДА" FontSize="10"
                            Foreground="{StaticResource FgMutedBrush}" />
                 <TextBlock Grid.Column="1" Text="СОБЫТИЕ" FontSize="10"
@@ -567,7 +567,7 @@
                        Background="Transparent" BorderThickness="0">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:LogRow">
-                    <Grid ColumnDefinitions="140,110,*" Height="24">
+                    <Grid ColumnDefinitions="112,84,*" Height="24">
                       <TextBlock Grid.Column="0" Text="{Binding At}" FontSize="11"
                                  FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                  VerticalAlignment="Center"
@@ -592,9 +592,11 @@
 
       <TabItem Header="НАСТРОЙКИ">
         <ScrollViewer>
-          <Grid ColumnDefinitions="*,*" Margin="10,8">
+          <!-- Одна колонка: две по 400 точек на экране станции превращаются
+               в столбики, где не помещается ни одно поле целиком. -->
+          <StackPanel Margin="10,8" Spacing="8">
 
-            <StackPanel Grid.Column="0" Spacing="8" Margin="0,0,6,0">
+            <StackPanel Spacing="8">
               <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                       CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
                 <StackPanel Spacing="6">
@@ -697,7 +699,7 @@
 
             </StackPanel>
 
-            <StackPanel Grid.Column="1" Spacing="8" Margin="6,0,0,0">
+            <StackPanel Spacing="8">
               <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                       CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
                 <StackPanel Spacing="6">
@@ -746,7 +748,7 @@
               <TextBlock Text="{Binding Settings.Hint}" FontSize="11" TextWrapping="Wrap"
                          Foreground="{StaticResource Accent700Brush}" />
             </StackPanel>
-          </Grid>
+          </StackPanel>
         </ScrollViewer>
       </TabItem>
     </TabControl>
