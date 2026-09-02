@@ -610,7 +610,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         var now = DateTime.Now;
         ClockTime = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-        ClockDate = now.ToString("dd MMMM yyyy", Ru);
+        // День без ведущего нуля: по-русски пишут «2 сентября», а не «02».
+        ClockDate = now.ToString("d MMMM yyyy", Ru);
 
         // Сеть опрашиваем раз в пять секунд: чаще незачем, а состояние в
         // строке разделов должно быть свежим.
