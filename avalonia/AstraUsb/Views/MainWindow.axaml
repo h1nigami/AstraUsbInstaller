@@ -789,7 +789,7 @@
             <Grid RowDefinitions="*,Auto">
 
               <!-- Станция и хранилище -->
-              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
+              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Станция и хранилище" Classes="section" />
 
@@ -805,7 +805,7 @@
                       <TextBlock Text="НАЗВАНИЕ ТОЧКИ" Classes="field" />
                       <TextBox Classes="form" Text="{Binding Settings.StationPlace}" />
                       <TextBlock Classes="hint" Margin="0,4,0,0"
-                                 Text="улица или объект: видна в шапке веб-панели, чтобы станции не путали между собой" />
+                                 Text="улица или объект: видна в шапке веб-панели" />
                     </StackPanel>
 
                     <StackPanel>
@@ -873,7 +873,7 @@
               </ScrollViewer>
 
               <!-- Доступ -->
-              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
+              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Доступ" Classes="section" />
                   <TextBlock Classes="hint"
@@ -964,7 +964,7 @@
               </Grid>
 
               <!-- Отправка на сервер -->
-              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
+              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Отправка на сервер" Classes="section" />
                   <TextBlock Classes="hint"
@@ -1027,7 +1027,7 @@
               </ScrollViewer>
 
               <!-- Внешняя база -->
-              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsSqlSection}">
+              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsSqlSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Внешняя база" Classes="section" />
                   <TextBlock Classes="hint"
@@ -1097,7 +1097,7 @@
               </ScrollViewer>
 
               <!-- Веб-панель -->
-              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsWebSection}">
+              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsWebSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Веб-панель" Classes="section" />
                   <TextBlock Classes="hint"
