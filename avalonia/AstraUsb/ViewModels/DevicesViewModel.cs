@@ -56,7 +56,7 @@ public sealed partial class DevicesViewModel : ObservableObject
     public DevicesViewModel(string dbPath)
     {
         _dbPath = dbPath;
-        Reload();
+        _ = Reload();
     }
 
     partial void OnSelectedChanged(DeviceRow? value)
@@ -66,7 +66,7 @@ public sealed partial class DevicesViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public void Reload()
+    public async Task Reload()
     {
         // Выбор снимается до очистки: иначе список, который на неё смотрит,
         // ищет выбранный элемент по прежнему месту и падает.
@@ -79,12 +79,16 @@ public sealed partial class DevicesViewModel : ObservableObject
 
         try
         {
+            // Списки читаются в стороне: при переходе в раздел интерфейс не
+            // должен ждать базу.
             var staff = new StaffDirectory(_dbPath);
-            foreach (var employee in staff.Employees(activeOnly: true))
+            var employees = await Task.Run(() => staff.Employees(activeOnly: true));
+            foreach (var employee in employees)
                 Employees.Add(employee);
 
             using var registry = new DeviceRegistry(_dbPath);
-            foreach (var device in registry.ListDevices())
+            var devices = await Task.Run(() => registry.ListDevices());
+            foreach (var device in devices)
             {
                 Devices.Add(new DeviceRow
                 {
@@ -125,7 +129,7 @@ public sealed partial class DevicesViewModel : ObservableObject
             Hint = string.IsNullOrWhiteSpace(NameInput)
                 ? $"имя снято, камера снова показывается номером {row.Id}"
                 : $"камера {row.Id} теперь «{NameInput.Trim()}»";
-            Reload();
+            _ = Reload();
         }
         catch (Exception e)
         {
@@ -150,7 +154,7 @@ public sealed partial class DevicesViewModel : ObservableObject
             Hint = EmployeeInput is null
                 ? $"камера {row.Id} больше ни за кем не закреплена"
                 : $"камера {row.Id} закреплена за {EmployeeInput.FullName}";
-            Reload();
+            _ = Reload();
         }
         catch (Exception e)
         {

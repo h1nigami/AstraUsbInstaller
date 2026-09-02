@@ -64,10 +64,10 @@ public partial class MainWindow : Window
             }
 
             vm.NoteActivity();
-            vm.Devices.Reload();
+            _ = vm.Devices.Reload();
             vm.Staff.Reload();
-            vm.Log.Reload();
-            vm.Search.ReloadDepartments();
+            _ = vm.Log.Reload();
+            _ = vm.Search.ReloadDepartments();
         };
 
         // Нажатие по окну отсека открывает его карточку. Обработчик висит на

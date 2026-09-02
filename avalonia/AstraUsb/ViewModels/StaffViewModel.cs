@@ -76,6 +76,9 @@ public sealed partial class StaffViewModel : ObservableObject
 
         try
         {
+            // Справочник читается на месте: это десятки строк, доли
+            // миллисекунды, и уводить их в сторону значит только добавить
+            // мигание списка на ровном месте.
             var staff = new StaffDirectory(_dbPath);
 
             foreach (var department in staff.Departments())

@@ -217,11 +217,11 @@ public sealed partial class SearchViewModel : ObservableObject
     public SearchViewModel(string dbPath)
     {
         _dbPath = dbPath;
-        ReloadDepartments();
+        _ = ReloadDepartments();
     }
 
     /// <summary>Список отделов для отбора. Пополняется, пока станция работает.</summary>
-    public void ReloadDepartments()
+    public async Task ReloadDepartments()
     {
         var kept = Department?.Id ?? 0;
 
@@ -234,13 +234,15 @@ public sealed partial class SearchViewModel : ObservableObject
 
         try
         {
+            // Путь отдела собирается по всей ветке предков, а таких запросов
+            // столько же, сколько отделов: читаем в стороне от интерфейса.
             var staff = new StaffDirectory(_dbPath);
-            foreach (var department in staff.Departments())
-                Departments.Add(new DepartmentRow
-                {
-                    Id = department.Id,
-                    Path = staff.DepartmentPath(department.Id),
-                });
+            var loaded = await Task.Run(() => staff.Departments()
+                .Select(d => new DepartmentRow { Id = d.Id, Path = staff.DepartmentPath(d.Id) })
+                .ToList());
+
+            foreach (var department in loaded)
+                Departments.Add(department);
         }
         catch (Exception)
         {
@@ -270,8 +272,17 @@ public sealed partial class SearchViewModel : ObservableObject
     /// что свой потребовал бы кодеки в сборке и отдельную возню с каждым
     /// форматом регистратора.
     /// </summary>
+    /// <summary>Что удалось открыть: готовится в стороне от интерфейса.</summary>
+    private sealed record Opened(Bitmap? Image, string Text, TimeSpan? Length, string Message);
+
+    /// <summary>
+    /// Открывает выбранную запись. Снимок надо раскодировать, у видео узнать
+    /// длительность через ffprobe, журнал прочитать с диска: любое из этого
+    /// на станции занимает сотни миллисекунд, поэтому окно просмотра
+    /// открывается сразу, а содержимое подставляется, когда прочитается.
+    /// </summary>
     [RelayCommand]
-    private void Play()
+    private async Task Play()
     {
         if (Current is not { } file)
         {
@@ -279,74 +290,95 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
-        if (!File.Exists(file.Path))
-        {
-            Hint = "записи больше нет в архиве";
+        CloseViewer();
+
+        var path = file.Path;
+        var kind = file.Row.Kind;
+        var size = file.Size;
+        var shot = file.ShotAt;
+
+        ViewerTitle = file.FileName;
+        ViewerNote = "открываем запись";
+        ViewerVisible = kind is MediaKind.Photo or MediaKind.Log or MediaKind.Video;
+
+        var opened = await Task.Run(() => Open(path, kind));
+
+        // Пока читали, оператор мог закрыть просмотр или выбрать другое.
+        if (!ViewerVisible && kind is MediaKind.Photo or MediaKind.Log or MediaKind.Video)
             return;
+
+        if (opened.Message.Length > 0)
+        {
+            Hint = opened.Message;
+            if (opened.Image is null && opened.Text.Length == 0 && opened.Length is null)
+            {
+                ViewerVisible = false;
+                return;
+            }
         }
 
-        CloseViewer();
-        ViewerTitle = file.FileName;
-
-        switch (file.Row.Kind)
+        if (opened.Image is not null)
         {
-            case MediaKind.Photo:
-                try
-                {
-                    using var stream = File.OpenRead(file.Path);
-                    ViewerImage = new Bitmap(stream);
-                    ViewerNote = $"{file.Size}, снято {file.ShotAt}";
-                    ViewerVisible = true;
-                }
-                catch (Exception e)
-                {
-                    Hint = $"снимок не открылся: {e.Message}";
-                }
-                break;
+            ViewerImage = opened.Image;
+            ViewerNote = $"{size}, снято {shot}";
+        }
+        else if (opened.Text.Length > 0)
+        {
+            ViewerText = opened.Text;
+            ViewerNote = size;
+        }
+        else if (opened.Length is { } length)
+        {
+            _videoPath = path;
+            ViewerLength = length.TotalSeconds;
+            ViewerPosition = 0;
+            ViewerNote = $"{size}, снято {shot}, "
+                         + $"длительность {VideoPreview.Label(length)}. "
+                         + "Просмотр по кадрам, звук в системном проигрывателе";
+            ShowFrame(TimeSpan.Zero);
+        }
 
-            case MediaKind.Log:
-                try
-                {
+        await Task.Run(() => new ActionLog(_dbPath).Write(ActionLog.Export,
+            $"просмотр записи {Path.GetFileName(path)}"));
+    }
+
+    /// <summary>Читает запись. Работает в стороне: диск и ffprobe не быстры.</summary>
+    private static Opened Open(string path, MediaKind kind)
+    {
+        if (!File.Exists(path))
+            return new Opened(null, "", null, "записи больше нет в архиве");
+
+        try
+        {
+            switch (kind)
+            {
+                case MediaKind.Photo:
+                    using (var stream = File.OpenRead(path))
+                        return new Opened(new Bitmap(stream), "", null, "");
+
+                case MediaKind.Log:
                     // Журнал регистратора бывает на десятки мегабайт, а
                     // оператору нужно начало: читаем первые страницы.
-                    var head = Read(file.Path, 64 * 1024);
-                    ViewerText = head.Length > 0 ? head : "файл пуст";
-                    ViewerNote = file.Size;
-                    ViewerVisible = true;
-                }
-                catch (Exception e)
-                {
-                    Hint = $"журнал не открылся: {e.Message}";
-                }
-                break;
+                    var head = Read(path, 64 * 1024);
+                    return new Opened(null, head.Length > 0 ? head : "файл пуст", null, "");
 
-            case MediaKind.Video:
-                // Длительность узнаётся первой: без неё шкалу строить не из
-                // чего, и запись уходит системному проигрывателю, как раньше.
-                var length = VideoPreview.Duration(file.Path);
-                if (length is null)
-                    goto default;
+                case MediaKind.Video:
+                    // Без длительности шкалу строить не из чего, и запись
+                    // уходит системному проигрывателю, как раньше.
+                    if (VideoPreview.Duration(path) is { } length)
+                        return new Opened(null, "", length, "");
+                    break;
+            }
 
-                _videoPath = file.Path;
-                ViewerLength = length.Value.TotalSeconds;
-                ViewerPosition = 0;
-                ViewerNote = $"{file.Size}, снято {file.ShotAt}, "
-                             + $"длительность {VideoPreview.Label(length.Value)}. "
-                             + "Просмотр по кадрам, звук в системном проигрывателе";
-                ViewerVisible = true;
-                ShowFrame(TimeSpan.Zero);
-                break;
-
-            default:
-                var result = MediaTools.Open(file.Path);
-                Hint = result.Ok
-                    ? $"{file.FileName} открыт системным проигрывателем"
-                    : result.Message;
-                break;
+            var result = MediaTools.Open(path);
+            return new Opened(null, "", null, result.Ok
+                ? $"{Path.GetFileName(path)} открыт системным проигрывателем"
+                : result.Message);
         }
-
-        new ActionLog(_dbPath).Write(ActionLog.Export,
-            $"просмотр записи {Path.GetFileName(file.Path)}");
+        catch (Exception e)
+        {
+            return new Opened(null, "", null, $"запись не открылась: {e.Message}");
+        }
     }
 
     /// <summary>Отдаёт запись системному проигрывателю по просьбе оператора.</summary>
@@ -543,7 +575,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
     /// <summary>Защищает отобранные записи от удаления или снимает защиту.</summary>
     [RelayCommand]
-    private void ToggleImportant()
+    private async Task ToggleImportant()
     {
         var rows = Chosen();
         if (rows.Count == 0)
@@ -558,12 +590,17 @@ public sealed partial class SearchViewModel : ObservableObject
 
         try
         {
-            var log = new CollectionLog(_dbPath);
-            foreach (var row in rows)
+            var paths = rows.Select(r => r.Path).ToList();
+
+            await Task.Run(() =>
             {
-                log.SetImportant(row.Path, protect);
+                var log = new CollectionLog(_dbPath);
+                foreach (var path in paths)
+                    log.SetImportant(path, protect);
+            });
+
+            foreach (var row in rows)
                 row.Important = protect;
-            }
 
             Hint = protect
                 ? $"защищено записей: {rows.Count}"
@@ -576,7 +613,7 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void SaveNote()
+    private async Task SaveNote()
     {
         var rows = Chosen();
         if (rows.Count == 0)
@@ -588,12 +625,17 @@ public sealed partial class SearchViewModel : ObservableObject
         try
         {
             var note = NoteInput.Trim();
-            var log = new CollectionLog(_dbPath);
-            foreach (var row in rows)
+            var paths = rows.Select(r => r.Path).ToList();
+
+            await Task.Run(() =>
             {
-                log.SetNote(row.Path, note);
+                var log = new CollectionLog(_dbPath);
+                foreach (var path in paths)
+                    log.SetNote(path, note);
+            });
+
+            foreach (var row in rows)
                 row.Note = note;
-            }
 
             Hint = note.Length == 0
                 ? $"заметка снята с записей: {rows.Count}"
@@ -610,7 +652,7 @@ public sealed partial class SearchViewModel : ObservableObject
     /// пропущено, говорится прямо: иначе оператор считал бы, что удалил всё.
     /// </summary>
     [RelayCommand]
-    private void Delete()
+    private async Task Delete()
     {
         var rows = Chosen();
         if (rows.Count == 0)
@@ -621,7 +663,12 @@ public sealed partial class SearchViewModel : ObservableObject
 
         try
         {
-            var result = new ArchiveSearch(_dbPath).Delete(rows.Select(r => r.Row));
+            Hint = $"удаляем записей: {rows.Count}";
+            var chosen = rows.Select(r => r.Row).ToList();
+
+            // Удаление обходит файлы на диске: с сотней записей это надолго,
+            // и интерфейс не должен замирать всё это время.
+            var result = await Task.Run(() => new ArchiveSearch(_dbPath).Delete(chosen));
 
             foreach (var row in rows.Where(r => !r.Important).ToArray())
                 Results.Remove(row);
@@ -635,8 +682,8 @@ public sealed partial class SearchViewModel : ObservableObject
             Hint = string.Join(", ", parts);
             Refresh();
 
-            new ActionLog(_dbPath).Write(ActionLog.Cleanup,
-                $"удалено записей: {result.Deleted}, пропущено защищённых: {result.Skipped}");
+            await Task.Run(() => new ActionLog(_dbPath).Write(ActionLog.Cleanup,
+                $"удалено записей: {result.Deleted}, пропущено защищённых: {result.Skipped}"));
         }
         catch (Exception e)
         {

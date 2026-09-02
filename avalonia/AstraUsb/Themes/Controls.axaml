@@ -56,6 +56,80 @@
     <Setter Property="FontFamily" Value="DejaVu Sans Mono, Consolas, monospace" />
   </Style>
 
+  <!-- Смена раздела настроек. Подмена содержимого без перехода читается
+       как подёргивание, особенно когда разделы разной высоты. -->
+  <Style Selector=":is(Control).fade[IsVisible=true]">
+    <Style.Animations>
+      <Animation Duration="0:0:0.14" Easing="CubicEaseOut" FillMode="Forward">
+        <KeyFrame Cue="0%">
+          <Setter Property="Opacity" Value="0" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="Opacity" Value="1" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <!-- Появление окон поверх доски. Мгновенная подмена экрана читается как
+       рывок, поэтому подложка проявляется, а само окно чуть поднимается.
+       Ход короткий: станция должна казаться быстрой, а не показывать
+       анимацию. -->
+  <Style Selector="Border.overlay[IsVisible=true]">
+    <Style.Animations>
+      <Animation Duration="0:0:0.15" Easing="CubicEaseOut" FillMode="Forward">
+        <KeyFrame Cue="0%">
+          <Setter Property="Opacity" Value="0" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="Opacity" Value="1" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <Style Selector="Border.overlay[IsVisible=true] > Border">
+    <Style.Animations>
+      <Animation Duration="0:0:0.22" Easing="CubicEaseOut" FillMode="Forward">
+        <KeyFrame Cue="0%">
+          <Setter Property="TranslateTransform.Y" Value="14" />
+          <Setter Property="Opacity" Value="0" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="TranslateTransform.Y" Value="0" />
+          <Setter Property="Opacity" Value="1" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <!-- Отклик на касание. Палец закрывает место нажатия, и единственный
+       признак, что станция услышала, это движение самой кнопки. Ход
+       короткий: длиннее ста миллисекунд уже читается как задержка. -->
+  <Style Selector="Button">
+    <Setter Property="RenderTransformOrigin" Value="50%,50%" />
+    <Setter Property="Transitions">
+      <Transitions>
+        <TransformOperationsTransition Property="RenderTransform"
+                                       Duration="0:0:0.09" Easing="CubicEaseOut" />
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button:pressed">
+    <Setter Property="RenderTransform" Value="scale(0.96)" />
+  </Style>
+
+  <!-- Прокрутка с продолжением движения: экран сенсорный, и список,
+       встающий колом сразу после пальца, ощущается сломанным. -->
+  <Style Selector="ScrollViewer">
+    <Setter Property="IsScrollInertiaEnabled" Value="True" />
+  </Style>
+
+  <Style Selector="ListBox">
+    <Setter Property="ScrollViewer.IsScrollInertiaEnabled" Value="True" />
+  </Style>
+
   <!-- Кнопка по умолчанию: белая пилюля с волосяной рамкой -->
   <Style Selector="Button">
     <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />

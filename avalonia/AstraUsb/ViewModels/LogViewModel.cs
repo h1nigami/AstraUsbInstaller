@@ -39,11 +39,11 @@ public sealed partial class LogViewModel : ObservableObject
     public LogViewModel(string dbPath)
     {
         _dbPath = dbPath;
-        Reload();
+        _ = Reload();
     }
 
     [RelayCommand]
-    public void Reload()
+    public async Task Reload()
     {
         Entries.Clear();
 
@@ -55,8 +55,10 @@ public sealed partial class LogViewModel : ObservableObject
 
         try
         {
-            var found = new ActionLog(_dbPath)
-                .Between(from.Date, to.Date.AddDays(1).AddSeconds(-1), Limit);
+            // Журнал станции живёт годами, и выборка из базы занимает время.
+            // В потоке интерфейса это заметно на переходе между разделами.
+            var found = await Task.Run(() => new ActionLog(_dbPath)
+                .Between(from.Date, to.Date.AddDays(1).AddSeconds(-1), Limit));
 
             foreach (var entry in found)
             {
@@ -86,7 +88,7 @@ public sealed partial class LogViewModel : ObservableObject
     {
         From = DateTime.Now.ToString("dd.MM.yyyy");
         To = From;
-        Reload();
+        _ = Reload();
     }
 
     [RelayCommand]
@@ -94,7 +96,7 @@ public sealed partial class LogViewModel : ObservableObject
     {
         From = DateTime.Now.AddDays(-7).ToString("dd.MM.yyyy");
         To = DateTime.Now.ToString("dd.MM.yyyy");
-        Reload();
+        _ = Reload();
     }
 
     private static bool TryDate(string text, out DateTime value) =>

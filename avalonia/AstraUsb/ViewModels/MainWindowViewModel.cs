@@ -16,6 +16,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private static readonly CultureInfo Ru = new("ru-RU");
 
+    /// <summary>Идёт ли опрос носителей: два сразу ни к чему.</summary>
+    private bool _polling;
+
+    /// <summary>Карты, которые сейчас опознаются в стороне от интерфейса.</summary>
+    private readonly HashSet<string> _identifying = new(StringComparer.Ordinal);
+
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
@@ -267,7 +273,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         UpdateNetwork();
-        UpdateSummary();
+
+        // При запуске том архива ещё не опрошен: доска покажет нули, а первый
+        // же опрос через две секунды подставит настоящие числа.
+        UpdateSummary(StorageState.Unknown(_stationSettings.BackupRoot));
         FtpEnabled = _stationSettings.FtpEnabled;
         FtpLabel = _stationSettings.FtpEnabled ? "отправка включена" : "отправка выключена";
 
@@ -643,13 +652,52 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (Settings.IsWebSection)
             Settings.ShowWebLinks();
 
-        var devices = HoldBriefly(_listDevices());
+        // Опрос носителей это запуск lsblk и чтение с самих карт: на станции
+        // это десятки миллисекунд, а с задумавшейся картой и куда больше.
+        // В потоке интерфейса такое видно как рывки, поэтому чтение идёт в
+        // стороне, а на доску попадает уже готовый ответ.
+        if (_polling)
+            return;
 
-        // Диск, на котором лежит архив, источником не считается: иначе
-        // станция принялась бы копировать архив сам в себя.
-        devices = devices
-            .Where(d => !ArchiveGuard.IsArchiveMedia(d.MountPoint, _stationSettings.BackupRoot))
-            .ToList();
+        _polling = true;
+        var archiveRoot = _stationSettings.BackupRoot;
+
+        _ = Task.Run(() =>
+        {
+            IReadOnlyList<UsbDevice> found;
+            try
+            {
+                // Диск, на котором лежит архив, источником не считается: иначе
+                // станция принялась бы копировать архив сам в себя.
+                found = _listDevices()
+                    .Where(d => !ArchiveGuard.IsArchiveMedia(d.MountPoint, archiveRoot))
+                    .ToList();
+            }
+            catch (Exception e)
+            {
+                CrashLog.Write("опрос носителей", e);
+                found = [];
+            }
+
+            var storage = StorageState.Read(archiveRoot);
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                _polling = false;
+
+                if (!_demonstrating)
+                    Apply(found, storage);
+            });
+        });
+    }
+
+    /// <summary>
+    /// Раскладывает опрошенные носители по гнёздам. Работает в потоке
+    /// интерфейса и ничего с дисков не читает: всё нужное уже прочитано.
+    /// </summary>
+    private void Apply(IReadOnlyList<UsbDevice> found, StorageState storage)
+    {
+        var devices = HoldBriefly(found);
 
         // Носители раскладываются по закреплённым гнёздам: камера из второго
         // разъёма занимает второе окно независимо от очерёдности подключения.
@@ -724,9 +772,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             ? "носители не подключены"
             : $"носителей: {devices.Count}";
 
-        UpdateSummary();
-
-        UpdateStorage();
+        UpdateStorage(storage);
+        UpdateSummary(storage);
         ApplyRemoteCommands();
     }
 
@@ -818,6 +865,36 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_identified.TryGetValue(mount, out var cached))
             return cached;
 
+        // Опознание читает карту и базу, а при первом подключении ещё и пишет
+        // на карту номер. В потоке интерфейса это заметная пауза ровно в тот
+        // момент, когда оператор смотрит на доску, поэтому уходит в сторону.
+        if (_identifying.Add(mount))
+        {
+            var name = device.Name;
+
+            _ = Task.Run(() =>
+            {
+                var info = ReadCard(name, mount);
+
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (info is not null)
+                        _identified[mount] = info;
+
+                    _identifying.Remove(mount);
+                });
+            });
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Читает карту и базу. Работает в стороне от интерфейса, поэтому берёт
+    /// только то, что можно прочитать без доски.
+    /// </summary>
+    private CardInfo? ReadCard(string deviceName, string mount)
+    {
         try
         {
             // Файл на карте и есть единственный источник истины. Нет файла,
@@ -830,7 +907,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             using var registry = new DeviceRegistry(AppPaths.Database);
             var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
-                device.Name, device.Name);
+                deviceName, deviceName);
 
             var number = registry.FirmwareIdOf(id) ?? "";
             var name = registry.GetDeviceName(id);
@@ -846,7 +923,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 person?.FullName ?? "",
                 staff.DepartmentPath(person?.DepartmentId));
 
-            _identified[mount] = info;
             return info;
         }
         catch (Exception)
@@ -1096,7 +1172,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Сводка по отсекам, как в прототипе станции.</summary>
-    private void UpdateSummary()
+    private void UpdateSummary(StorageState storage)
     {
         var copying = Ports.Count(p => p.State is PortState.Copying or PortState.Scanning
                                        or PortState.Detected);
@@ -1111,38 +1187,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (copying > 0)
             BusyMarker.Touch();
 
-        PublishSnapshot(copying, done, failed, free);
+        PublishSnapshot(copying, done, failed, free, storage);
     }
 
     /// <summary>
     /// Кладёт состояние туда, откуда его читает веб-панель. Доска принадлежит
     /// потоку интерфейса, и обращаться к ней из веб-запроса нельзя.
     /// </summary>
-    private void PublishSnapshot(int copying, int done, int failed, int free)
+    private void PublishSnapshot(int copying, int done, int failed, int free,
+        StorageState storage)
     {
-        var total = 0L;
-        var freeBytes = 0L;
-        var label = _stationSettings.BackupRoot;
-
-        try
-        {
-            var root = Path.GetPathRoot(Path.GetFullPath(_stationSettings.BackupRoot));
-            if (!string.IsNullOrEmpty(root))
-            {
-                var drive = new DriveInfo(root);
-                if (drive.IsReady)
-                {
-                    total = drive.TotalSize;
-                    freeBytes = drive.AvailableFreeSpace;
-                    label = string.IsNullOrEmpty(drive.VolumeLabel) ? root : drive.VolumeLabel;
-                }
-            }
-        }
-        catch (Exception)
-        {
-            // Диск недоступен: панель покажет нули и строку происшествия.
-        }
-
         StationSnapshot.Publish(new StationState(
             DateTime.Now,
             StationTitle.Compose(StationTitle.Model, _stationSettings.StationPlace),
@@ -1155,9 +1209,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             NetworkUp,
             FtpEnabled,
             FtpLabel,
-            label,
-            total,
-            freeBytes,
+            storage.Label,
+            storage.Total,
+            storage.Free,
             _lastTrouble,
             Ports.Select(p => new BaySnapshot(
                 p.Slot,
@@ -1190,48 +1244,36 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
 
     /// <summary>Показывает заполнение хранилища и краснеет, когда места мало.</summary>
-    private void UpdateStorage()
+    private void UpdateStorage(StorageState storage)
     {
-        try
+        // Том архива, а не тот, где лежит программа: оператор смотрит на эту
+        // полосу, чтобы понять, куда ещё влезут записи.
+        if (storage.Total <= 0)
+            return;
+
+        var used = storage.Total - storage.Free;
+        var ratio = (double)used / storage.Total;
+
+        // Тревога по заданию: место кончается или архив недоступен.
+        if (storage.Free < _stationSettings.MinFreeBytes)
+            Trouble("места в архиве почти нет");
+        else if (!storage.Available)
+            Trouble("том архива не смонтирован");
+        else if (!NetworkUp && _stationSettings.FtpEnabled)
+            Trouble("сети нет, отправка на сервер ждёт");
+        else
+            _lastTrouble = "";
+
+        StorageLabel = $"хранилище {Size(used)} из {Size(storage.Total)}";
+        StorageWidth = Math.Clamp(ratio, 0, 1) * 150;
+        // Тревожного красного в палитре станции нет: заполнение растёт от
+        // бирюзового к тёмно-синему, и это видно, не мешая остальному.
+        StorageBrush = new SolidColorBrush(Color.Parse(ratio switch
         {
-            // Считаем том архива, а не тот, где лежит программа: оператор
-            // смотрит на эту полосу, чтобы понять, куда ещё влезут записи.
-            var root = Path.GetPathRoot(Path.GetFullPath(_stationSettings.BackupRoot));
-            if (string.IsNullOrEmpty(root))
-                return;
-
-            var drive = new DriveInfo(root);
-            if (!drive.IsReady || drive.TotalSize <= 0)
-                return;
-
-            var used = drive.TotalSize - drive.AvailableFreeSpace;
-            var ratio = (double)used / drive.TotalSize;
-
-            // Тревога по заданию: место кончается или архив недоступен.
-            if (drive.AvailableFreeSpace < _stationSettings.MinFreeBytes)
-                Trouble("места в архиве почти нет");
-            else if (!ArchiveGuard.Available(_stationSettings.BackupRoot))
-                Trouble("том архива не смонтирован");
-            else if (!NetworkUp && _stationSettings.FtpEnabled)
-                Trouble("сети нет, отправка на сервер ждёт");
-            else
-                _lastTrouble = "";
-
-            StorageLabel = $"хранилище {Size(used)} из {Size(drive.TotalSize)}";
-            StorageWidth = Math.Clamp(ratio, 0, 1) * 150;
-            // Тревожного красного в палитре станции нет: заполнение растёт от
-            // бирюзового к тёмно-синему, и это видно, не мешая остальному.
-            StorageBrush = new SolidColorBrush(Color.Parse(ratio switch
-            {
-                >= 0.9 => "#143A61",
-                >= 0.75 => "#2F77AD",
-                _ => "#3F9BA6",
-            }));
-        }
-        catch (Exception)
-        {
-            // Диск недоступен, полоса остаётся в прежнем состоянии.
-        }
+            >= 0.9 => "#143A61",
+            >= 0.75 => "#2F77AD",
+            _ => "#3F9BA6",
+        }));
     }
 
     private static string Size(long bytes)

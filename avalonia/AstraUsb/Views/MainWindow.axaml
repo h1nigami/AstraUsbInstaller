@@ -789,7 +789,7 @@
             <Grid RowDefinitions="*,Auto">
 
               <!-- Станция и хранилище -->
-              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Станция и хранилище" Classes="section" />
 
@@ -873,7 +873,7 @@
               </ScrollViewer>
 
               <!-- Доступ -->
-              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Доступ" Classes="section" />
                   <TextBlock Classes="hint"
@@ -930,7 +930,7 @@
               </ScrollViewer>
 
               <!-- Разметка гнёзд -->
-              <Grid Grid.Row="0" IsVisible="{Binding Settings.IsSlotsSection}"
+              <Grid Classes="fade" Grid.Row="0" IsVisible="{Binding Settings.IsSlotsSection}"
                     RowDefinitions="Auto,Auto,*,Auto">
                 <TextBlock Grid.Row="0" Text="Разметка гнёзд" Classes="section" />
                 <TextBlock Grid.Row="1" Classes="hint" Margin="0,4,0,8"
@@ -964,7 +964,7 @@
               </Grid>
 
               <!-- Отправка на сервер -->
-              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Отправка на сервер" Classes="section" />
                   <TextBlock Classes="hint"
@@ -1027,7 +1027,7 @@
               </ScrollViewer>
 
               <!-- Внешняя база -->
-              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsSqlSection}">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsSqlSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Внешняя база" Classes="section" />
                   <TextBlock Classes="hint"
@@ -1097,7 +1097,7 @@
               </ScrollViewer>
 
               <!-- Веб-панель -->
-              <ScrollViewer Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsWebSection}">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsWebSection}">
                 <StackPanel Spacing="14">
                   <TextBlock Text="Веб-панель" Classes="section" />
                   <TextBlock Classes="hint"
@@ -1155,7 +1155,7 @@
               </ScrollViewer>
 
               <!-- О программе -->
-              <StackPanel Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
+              <StackPanel Classes="fade" Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
                 <TextBlock Text="О программе" Classes="section" />
                 <Button Content="Показать все состояния окон" Height="52"
                         HorizontalAlignment="Left"
@@ -1212,8 +1212,8 @@
 
     <!-- Просмотр записи. Снимки и журналы станция показывает сама: для них
          кодеки не нужны, а видео и звук уходят системному проигрывателю. -->
-    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding Search.ViewerVisible}"
-            Background="#E6212D3B">
+    <Border Grid.Row="0" Grid.RowSpan="4" Classes="overlay"
+            IsVisible="{Binding Search.ViewerVisible}" Background="#E6212D3B">
       <Border Width="700" Height="480" Padding="16" CornerRadius="20"
               HorizontalAlignment="Center" VerticalAlignment="Center"
               Background="{StaticResource BgPanelBrush}"
@@ -1270,8 +1270,8 @@
 
     <!-- Карточка отсека. Открывается нажатием по окну и не требует пароля:
          это работа сменного оператора, а не администратора. -->
-    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding BayVisible}"
-            Background="#8C212D3B">
+    <Border Grid.Row="0" Grid.RowSpan="4" Classes="overlay"
+            IsVisible="{Binding BayVisible}" Background="#8C212D3B">
       <Border Width="460" Padding="22" CornerRadius="20"
               HorizontalAlignment="Center" VerticalAlignment="Center"
               Background="{StaticResource BgPanelBrush}"
@@ -1360,8 +1360,8 @@
 
     <!-- Запрос пароля. Перекрывает весь экран: в киоске это единственная
          преграда между посторонним и выходом из программы. -->
-    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding PasswordVisible}"
-            Background="#E6050A14">
+    <Border Grid.Row="0" Grid.RowSpan="4" Classes="overlay"
+            IsVisible="{Binding PasswordVisible}" Background="#E6050A14">
       <Border Width="756" Padding="20,16" CornerRadius="2"
               HorizontalAlignment="Center" VerticalAlignment="Center"
               Background="{StaticResource BgPanelBrush}"
