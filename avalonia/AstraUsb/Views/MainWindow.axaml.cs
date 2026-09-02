@@ -24,13 +24,36 @@ public partial class MainWindow : Window
         vm.ExitRequested += Close;
         DataContext = vm;
 
-        // Списки читаются из базы один раз при создании. Пока оператор был на
-        // «Загрузке», камеры и сотрудники успевают появиться, поэтому при
-        // переходе на вкладку список перечитывается.
-        this.FindControl<TabControl>("Tabs")!.SelectionChanged += (_, _) =>
+        var tabs = this.FindControl<TabControl>("Tabs")!;
+        var passwordBox = this.FindControl<TextBox>("PasswordBox")!;
+
+        // Все разделы, кроме «Загрузки», закрыты паролем. Списки в них
+        // читаются заново при каждом переходе: пока оператор смотрел на
+        // загрузку, камеры и сотрудники успевают появиться.
+        tabs.SelectionChanged += (_, _) =>
         {
+            if (tabs.SelectedIndex > 0 && !vm.AccessAllowed)
+            {
+                var wanted = tabs.SelectedIndex;
+                tabs.SelectedIndex = 0;
+                vm.AskForTab(wanted);
+                return;
+            }
+
+            vm.NoteActivity();
             vm.Devices.Reload();
             vm.Staff.Reload();
+        };
+
+        vm.AccessGranted += index => tabs.SelectedIndex = index;
+        vm.AccessExpired += () => tabs.SelectedIndex = 0;
+
+        // Пароль вводят сразу, без лишнего попадания по полю: станция
+        // сенсорная, и промах по нему стоит оператору времени.
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(vm.PasswordVisible) && vm.PasswordVisible)
+                passwordBox.Focus();
         };
 
         Closed += (_, _) => vm.Dispose();

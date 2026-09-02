@@ -24,6 +24,12 @@ public sealed class Settings
     public int LockTimeoutMinutes { get; set; } = 10;
 
     /// <summary>
+    /// Хеш пароля станции, а не сам пароль. Пусто означает, что пароль ещё не
+    /// меняли и подходит значение по умолчанию.
+    /// </summary>
+    public string PasswordHash { get; set; } = "";
+
+    /// <summary>
     /// Номер станции. Входит в номера, которые станция выдаёт камерам
     /// (BCU-01-0042), чтобы номера с разных станций не совпадали.
     /// </summary>

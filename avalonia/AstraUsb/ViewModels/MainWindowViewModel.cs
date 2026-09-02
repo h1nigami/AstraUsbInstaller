@@ -40,6 +40,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private readonly Dictionary<string, CardInfo> _identified = new(StringComparer.Ordinal);
 
+    /// <summary>Открыт ли доступ к закрытым разделам и до каких пор.</summary>
+    private AccessGuard _access = new(0);
+
+    /// <summary>Раздел, куда оператор шёл, когда его остановил пароль.</summary>
+    private int _wantedTab;
+
+    /// <summary>Пароль спрашивают перед выходом, а не перед разделом.</summary>
+    private bool _askingForExit;
+
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
     /// <summary>Вкладка «Устройства».</summary>
@@ -76,7 +85,29 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private IBrush _storageBrush = new SolidColorBrush(Color.Parse("#22D3EE"));
 
+    /// <summary>Показан ли запрос пароля поверх экрана.</summary>
+    [ObservableProperty]
+    private bool _passwordVisible;
+
+    [ObservableProperty]
+    private string _passwordInput = "";
+
+    [ObservableProperty]
+    private string _passwordPrompt = "";
+
+    [ObservableProperty]
+    private string _passwordError = "";
+
     public event Action? ExitRequested;
+
+    /// <summary>Пароль принят: можно открывать этот раздел.</summary>
+    public event Action<int>? AccessGranted;
+
+    /// <summary>Доступ закрылся по простою: раздел нужно покинуть.</summary>
+    public event Action? AccessExpired;
+
+    /// <summary>Открыт ли сейчас доступ к закрытым разделам.</summary>
+    public bool AccessAllowed => _access.Check(DateTime.Now);
 
     public MainWindowViewModel() : this(UsbWatcher.List)
     {
@@ -103,8 +134,66 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _poll.Start();
     }
 
+    /// <summary>
+    /// Выход закрыт паролем. В киоске это единственный способ покинуть
+    /// программу, поэтому спрашиваем пароль, а не закрываемся сразу.
+    /// </summary>
     [RelayCommand]
-    private void Exit() => ExitRequested?.Invoke();
+    private void Exit() => Ask("Выход из программы", exit: true);
+
+    /// <summary>Оператор пытается открыть закрытый раздел.</summary>
+    public void AskForTab(int tabIndex)
+    {
+        _wantedTab = tabIndex;
+        Ask("Доступ к разделу", exit: false);
+    }
+
+    private void Ask(string prompt, bool exit)
+    {
+        _askingForExit = exit;
+        PasswordPrompt = prompt;
+        PasswordInput = "";
+        PasswordError = "";
+        PasswordVisible = true;
+    }
+
+    [RelayCommand]
+    private void ConfirmPassword()
+    {
+        // Настройки читаются заново: пароль могли сменить в этом же сеансе.
+        var settings = Services.Settings.Load();
+
+        if (!PasswordGate.Matches(settings.PasswordHash, PasswordInput))
+        {
+            PasswordInput = "";
+            PasswordError = "пароль не подошёл";
+            return;
+        }
+
+        PasswordVisible = false;
+        PasswordInput = "";
+
+        if (_askingForExit)
+        {
+            ExitRequested?.Invoke();
+            return;
+        }
+
+        _access = new AccessGuard(settings.LockTimeoutMinutes);
+        _access.Unlock(DateTime.Now);
+        AccessGranted?.Invoke(_wantedTab);
+    }
+
+    [RelayCommand]
+    private void CancelPassword()
+    {
+        PasswordVisible = false;
+        PasswordInput = "";
+        PasswordError = "";
+    }
+
+    /// <summary>Оператор работает: отсчёт простоя начинается заново.</summary>
+    public void NoteActivity() => _access.Touch(DateTime.Now);
 
     /// <summary>Часы станции: по ним сверяется время подключённых регистраторов.</summary>
     private void TickClock()
@@ -112,6 +201,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         var now = DateTime.Now;
         ClockTime = now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
         ClockDate = now.ToString("dd MMMM yyyy", Ru);
+
+        // Раздел, забытый открытым, закрывается сам: станция стоит в общем
+        // помещении.
+        var wasUnlocked = _access.Unlocked;
+        if (wasUnlocked && !_access.Check(now))
+            AccessExpired?.Invoke();
     }
 
     /// <summary>Опрашивает носители и раскладывает их по гнёздам.</summary>

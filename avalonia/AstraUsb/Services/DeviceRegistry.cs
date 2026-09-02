@@ -318,7 +318,8 @@ public sealed class DeviceRegistry : IDisposable
         cmd.CommandText = """
             SELECT d.id, d.serial, d.label, COALESCE(d.name, ''),
                    d.first_seen, d.last_seen,
-                   COALESCE(e.full_name, ''), e.department_id
+                   COALESCE(e.full_name, ''), e.department_id,
+                   COALESCE(d.firmware_id, '')
             FROM devices d
             LEFT JOIN employees e ON e.id = d.employee_id
             ORDER BY d.id
@@ -334,7 +335,8 @@ public sealed class DeviceRegistry : IDisposable
                     reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.GetString(6),
-                    reader.IsDBNull(7) ? null : reader.GetInt64(7)));
+                    reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                    reader.GetString(8)));
             }
         }
         catch (SqliteException)
@@ -349,7 +351,8 @@ public sealed class DeviceRegistry : IDisposable
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
-            SELECT id, serial, label, COALESCE(name, ''), first_seen, last_seen
+            SELECT id, serial, label, COALESCE(name, ''), first_seen, last_seen,
+                   COALESCE(firmware_id, '')
             FROM devices ORDER BY id
             """;
 
@@ -359,7 +362,8 @@ public sealed class DeviceRegistry : IDisposable
         {
             list.Add(new DeviceRecord(
                 reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetString(4), reader.GetString(5), "", null));
+                reader.GetString(3), reader.GetString(4), reader.GetString(5), "", null,
+                reader.GetString(6)));
         }
         return list;
     }
@@ -383,5 +387,6 @@ public sealed record DeviceRecord(
     string FirstSeen,
     string LastSeen,
     string EmployeeName,
-    long? DepartmentId);
+    long? DepartmentId,
+    string FirmwareId);
 

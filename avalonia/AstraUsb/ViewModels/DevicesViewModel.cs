@@ -10,14 +10,20 @@ public sealed partial class DeviceRow : ObservableObject
 {
     [ObservableProperty] private long _id;
     [ObservableProperty] private string _name = "";
+    [ObservableProperty] private string _number = "";
     [ObservableProperty] private string _label = "";
     [ObservableProperty] private string _employee = "";
     [ObservableProperty] private string _department = "";
     [ObservableProperty] private string _firstSeen = "";
     [ObservableProperty] private string _lastSeen = "";
 
-    /// <summary>Как камера подписана на экране: имя, если задано, иначе номер.</summary>
-    public string Display => string.IsNullOrEmpty(Name) ? Id.ToString() : Name;
+    /// <summary>
+    /// Как камера подписана на экране: имя, если оператор его задал, иначе
+    /// номер с карты, тот же, что показывает плитка.
+    /// </summary>
+    public string Display => !string.IsNullOrEmpty(Name) ? Name
+        : !string.IsNullOrEmpty(Number) ? Number
+        : Id.ToString();
 }
 
 /// <summary>
@@ -78,6 +84,7 @@ public sealed partial class DevicesViewModel : ObservableObject
                 {
                     Id = device.Id,
                     Name = device.Name,
+                    Number = device.FirmwareId,
                     Label = device.Label,
                     Employee = device.EmployeeName,
                     Department = staff.DepartmentPath(device.DepartmentId),

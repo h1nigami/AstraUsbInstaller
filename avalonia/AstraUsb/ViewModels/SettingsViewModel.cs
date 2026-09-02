@@ -27,8 +27,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     private Settings _settings;
 
     public ObservableCollection<SlotRow> Slots { get; } = new();
-    public ObservableCollection<Employee> Employees { get; } = new();
-    public ObservableCollection<Department> Departments { get; } = new();
 
     public string[] StorageModes { get; } = ["предупреждать", "перезаписывать старые"];
 
@@ -40,10 +38,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _version = "";
     [ObservableProperty] private string _hint = "";
 
-    [ObservableProperty] private string _employeeName = "";
-    [ObservableProperty] private string _employeeNo = "";
-    [ObservableProperty] private Department? _employeeDepartment;
-    [ObservableProperty] private string _departmentName = "";
+    [ObservableProperty] private int _lockTimeoutMinutes;
+
+    /// <summary>Пароль остался таким, каким станция пришла с завода.</summary>
+    [ObservableProperty] private bool _usingDefaultPassword;
+    [ObservableProperty] private string _currentPassword = "";
+    [ObservableProperty] private string _newPassword = "";
+    [ObservableProperty] private string _repeatPassword = "";
+
 
     public SettingsViewModel() : this(AppPaths.Database)
     {
@@ -60,9 +62,10 @@ public sealed partial class SettingsViewModel : ObservableObject
         StationNumber = _settings.StationNumber;
         StorageModeIndex = _settings.StorageMode == StorageMode.Overwrite ? 1 : 0;
         DeleteVideoAfterCopy = _settings.DeleteVideoAfterCopy;
+        LockTimeoutMinutes = _settings.LockTimeoutMinutes;
+        UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
 
         ReloadSlots();
-        ReloadStaff();
     }
 
     [RelayCommand]
@@ -97,6 +100,58 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// <summary>
     /// Закрепляет за выбранным окном то гнездо, в котором сейчас стоит
     /// единственная подключённая камера. Так размечают станцию по инструкции:
+    /// <summary>
+    /// Меняет пароль станции. Текущий спрашиваем прежде нового: станция стоит
+    /// открытой, и без этой проверки пароль сменил бы любой, кто дошёл до
+    /// раздела.
+    /// </summary>
+    [RelayCommand]
+    private void ChangePassword()
+    {
+        if (!PasswordGate.Matches(_settings.PasswordHash, CurrentPassword))
+        {
+            Hint = "текущий пароль не подошёл";
+            return;
+        }
+
+        if (NewPassword.Length < 4)
+        {
+            Hint = "новый пароль короче четырёх знаков";
+            return;
+        }
+
+        if (NewPassword != RepeatPassword)
+        {
+            Hint = "новый пароль и повтор не совпали";
+            return;
+        }
+
+        _settings.PasswordHash = PasswordGate.Hash(NewPassword);
+        var saved = _settings.Save();
+        UsingDefaultPassword = !saved;
+        Hint = saved
+            ? "пароль изменён"
+            : "не удалось записать настройки, проверьте права на папку data";
+
+        CurrentPassword = "";
+        NewPassword = "";
+        RepeatPassword = "";
+    }
+
+    /// <summary>Сохраняет время, после которого открытый раздел закрывается сам.</summary>
+    [RelayCommand]
+    private void SaveLockTimeout()
+    {
+        _settings.LockTimeoutMinutes = Math.Clamp(LockTimeoutMinutes, 0, 240);
+        LockTimeoutMinutes = _settings.LockTimeoutMinutes;
+
+        Hint = !_settings.Save()
+            ? "не удалось записать настройки, проверьте права на папку data"
+            : LockTimeoutMinutes == 0
+                ? "разделы больше не закрываются по простою"
+                : $"разделы закроются после {LockTimeoutMinutes} мин простоя";
+    }
+
     /// втыкают камеру в отсек и нажимают «сопоставить».
     /// </summary>
     [RelayCommand]
@@ -132,61 +187,5 @@ public sealed partial class SettingsViewModel : ObservableObject
         _portMap.Clear();
         Hint = "разметка снята, окна снова занимаются по порядку подключения";
         ReloadSlots();
-    }
-
-    // --- Справочник ---------------------------------------------------------
-
-    [RelayCommand]
-    public void ReloadStaff()
-    {
-        Employees.Clear();
-        Departments.Clear();
-
-        var staff = new StaffDirectory(_dbPath);
-        foreach (var department in staff.Departments())
-            Departments.Add(department);
-        foreach (var employee in staff.Employees())
-            Employees.Add(employee);
-    }
-
-    [RelayCommand]
-    private void AddDepartment()
-    {
-        if (string.IsNullOrWhiteSpace(DepartmentName))
-        {
-            Hint = "введите название отдела";
-            return;
-        }
-
-        new StaffDirectory(_dbPath).AddDepartment(DepartmentName.Trim());
-        Hint = $"отдел «{DepartmentName.Trim()}» добавлен";
-        DepartmentName = "";
-        ReloadStaff();
-    }
-
-    [RelayCommand]
-    private void AddEmployee()
-    {
-        if (string.IsNullOrWhiteSpace(EmployeeName))
-        {
-            Hint = "введите фамилию и инициалы";
-            return;
-        }
-
-        try
-        {
-            new StaffDirectory(_dbPath).AddEmployee(
-                EmployeeName.Trim(), EmployeeNo.Trim(), departmentId: EmployeeDepartment?.Id);
-            Hint = $"сотрудник {EmployeeName.Trim()} добавлен";
-            EmployeeName = "";
-            EmployeeNo = "";
-            ReloadStaff();
-        }
-        catch (Exception e)
-        {
-            Hint = e.Message.Contains("UNIQUE", StringComparison.OrdinalIgnoreCase)
-                ? "такой персональный номер уже занят"
-                : $"не удалось добавить: {e.Message}";
-        }
     }
 }

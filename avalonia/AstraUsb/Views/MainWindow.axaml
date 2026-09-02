@@ -12,6 +12,15 @@
         FontFamily="Noto Sans, DejaVu Sans, Segoe UI, sans-serif">
 
   <Window.Styles>
+    <!-- Рамка поля при вводе. Штатный акцент Avalonia пурпурный и выпадает
+         из палитры станции. -->
+    <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+      <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}" />
+    </Style>
+    <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+      <Setter Property="BorderBrush" Value="{StaticResource BrandBrush}" />
+    </Style>
+
     <!-- Плитка порта. Она же индикатор: заливка снизу вверх показывает долю
          скопированного и читается через комнату, в отличие от процентов. -->
     <Style Selector="Border.port">
@@ -263,7 +272,20 @@
                на экране 1024x600 иначе она уезжает за край. -->
           <Border Grid.Row="0" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
-            <ListBox ItemsSource="{Binding Devices.Devices}"
+            <Grid RowDefinitions="24,*">
+              <Grid Grid.Row="0" ColumnDefinitions="90,160,*,140,120" Margin="10,6,10,0">
+                <TextBlock Grid.Column="0" Text="КАМЕРА" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="1" Text="СОТРУДНИК" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="2" Text="ОТДЕЛ" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="3" Text="ПОСЛЕДНЯЯ ЗАГРУЗКА" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="4" Text="НОСИТЕЛЬ" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+              </Grid>
+              <ListBox Grid.Row="1" ItemsSource="{Binding Devices.Devices}"
                      SelectedItem="{Binding Devices.Selected}"
                      Background="Transparent" BorderThickness="0">
               <ListBox.ItemTemplate>
@@ -289,7 +311,8 @@
                   </Grid>
                 </DataTemplate>
               </ListBox.ItemTemplate>
-            </ListBox>
+              </ListBox>
+            </Grid>
           </Border>
 
           <StackPanel Grid.Row="1" Spacing="6" Margin="0,8,0,0">
@@ -463,34 +486,43 @@
 
               <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                       CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
-                <StackPanel Spacing="6">
-                  <TextBlock Text="СОТРУДНИКИ И ОТДЕЛЫ" FontSize="11" LetterSpacing="1.6"
+                <StackPanel Spacing="8">
+                  <TextBlock Text="ДОСТУП" FontSize="11" LetterSpacing="1.6"
                              Foreground="{StaticResource BrandBrush}" />
+                  <TextBlock Text="Паролем закрыты выход из программы и все разделы, кроме «Загрузки»."
+                             FontSize="11" TextWrapping="Wrap"
+                             Foreground="{StaticResource FgMutedBrush}" />
+                  <TextBlock Text="Пароль ещё не меняли: станция открывается стандартным."
+                             IsVisible="{Binding Settings.UsingDefaultPassword}"
+                             FontSize="11" TextWrapping="Wrap" Foreground="#FFB020" />
+
+                  <!-- Форма в одну строку: на экране 1024x600 вертикаль дороже
+                       подписей, и подсказки в самих полях их заменяют. -->
                   <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBox Text="{Binding Settings.DepartmentName}" Width="180"
-                             Watermark="название отдела" />
-                    <Button Content="Добавить отдел"
-                            Command="{Binding Settings.AddDepartmentCommand}" />
+                    <TextBox Width="112" PasswordChar="●" Watermark="текущий"
+                             Text="{Binding Settings.CurrentPassword}" />
+                    <TextBox Width="112" PasswordChar="●" Watermark="новый"
+                             Text="{Binding Settings.NewPassword}" />
+                    <TextBox Width="112" PasswordChar="●" Watermark="повторите"
+                             Text="{Binding Settings.RepeatPassword}" />
+                    <Button Content="Сменить" Command="{Binding Settings.ChangePasswordCommand}" />
                   </StackPanel>
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBox Text="{Binding Settings.EmployeeName}" Width="150"
-                             Watermark="фамилия и инициалы" />
-                    <TextBox Text="{Binding Settings.EmployeeNo}" Width="80"
-                             Watermark="номер" />
-                    <ComboBox ItemsSource="{Binding Settings.Departments}"
-                              SelectedItem="{Binding Settings.EmployeeDepartment}" Width="140">
-                      <ComboBox.ItemTemplate>
-                        <DataTemplate x:DataType="svc:Department">
-                          <TextBlock Text="{Binding Name}" />
-                        </DataTemplate>
-                      </ComboBox.ItemTemplate>
-                    </ComboBox>
+
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Закрывать разделы через" VerticalAlignment="Center"
+                               FontSize="12" Foreground="{StaticResource FgMutedBrush}" />
+                    <NumericUpDown Value="{Binding Settings.LockTimeoutMinutes}"
+                                   Minimum="0" Maximum="240" Increment="5" Width="110"
+                                   FormatString="0" />
+                    <TextBlock Text="мин простоя" VerticalAlignment="Center" FontSize="12"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <Button Content="Сохранить"
+                            Command="{Binding Settings.SaveLockTimeoutCommand}" />
                   </StackPanel>
-                  <Button Content="Добавить сотрудника"
-                          Command="{Binding Settings.AddEmployeeCommand}"
-                          HorizontalAlignment="Left" />
                 </StackPanel>
               </Border>
+
             </StackPanel>
 
             <StackPanel Grid.Column="1" Spacing="8" Margin="6,0,0,0">
@@ -576,5 +608,31 @@
                  VerticalAlignment="Center" Foreground="{StaticResource BrandBrush}"
                  />
     </Grid>
+
+    <!-- Запрос пароля. Перекрывает весь экран: в киоске это единственная
+         преграда между посторонним и выходом из программы. -->
+    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding PasswordVisible}"
+            Background="#E6050A14">
+      <Border Width="420" Padding="24" CornerRadius="2"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              Background="{StaticResource BgPanelBrush}"
+              BorderBrush="{StaticResource BrandBrush}" BorderThickness="1">
+        <StackPanel Spacing="14">
+          <TextBlock Text="{Binding PasswordPrompt}" FontSize="15" FontWeight="Bold"
+                     Foreground="{StaticResource FgMainBrush}" />
+          <TextBlock Text="Введите пароль станции" FontSize="11"
+                     Foreground="{StaticResource FgMutedBrush}" />
+          <TextBox x:Name="PasswordBox" PasswordChar="●" FontSize="16"
+                   Text="{Binding PasswordInput}" />
+          <TextBlock Text="{Binding PasswordError}" FontSize="11"
+                     Foreground="#FF3B5C" />
+          <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Button Content="Отмена" Command="{Binding CancelPasswordCommand}" />
+            <Button Content="Подтвердить" IsDefault="True"
+                    Command="{Binding ConfirmPasswordCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
   </Grid>
 </Window>
