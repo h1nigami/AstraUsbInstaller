@@ -37,11 +37,19 @@ fi
 
 # --- 1. Системные библиотеки --------------------------------------------------
 # Сборка самодостаточна по .NET, но рисование опирается на системные
-# библиотеки: без libfontconfig приложение падает ещё до первого окна, и
-# сообщение об этом видно только в журнале сервиса.
+# библиотеки: без libfontconfig приложение падает ещё до первого окна, а без
+# libicu не доживает даже до него, потому что станция показывает русские даты
+# и разбирает их. Сообщение об этом видно только в журнале сервиса.
 echo "--- Проверка системных библиотек..."
-NEEDED_LIBS="libfontconfig.so.1 libX11.so.6 libSM.so.6 libICE.so.6"
+NEEDED_LIBS="libfontconfig.so.1 libX11.so.6 libSM.so.6 libICE.so.6 libicuuc.so"
 PACKAGES="libfontconfig1 libx11-6 libsm6 libice6"
+
+# Пакет icu называется по номеру версии и в разных выпусках он свой, поэтому
+# имя берётся из самого репозитория, а не пишется здесь наугад.
+if command -v apt-cache >/dev/null 2>&1; then
+    ICU_PACKAGE="$(apt-cache search --names-only '^libicu[0-9]+$' 2>/dev/null         | sort -r | head -1 | cut -d' ' -f1)"
+    [ -n "$ICU_PACKAGE" ] && PACKAGES="$PACKAGES $ICU_PACKAGE"
+fi
 
 # Не обязательны, но без них станция теряет часть работы: alsa-utils играет
 # тревогу, speech-dispatcher произносит подсказки, ffmpeg переводит записи
