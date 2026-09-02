@@ -47,6 +47,13 @@ public sealed class Settings
     /// </summary>
     public int StationNumber { get; set; } = 1;
 
+    /// <summary>
+    /// Сколько окон сбора показывать. У станций от шести до тридцати отсеков,
+    /// и окна должны совпадать с железом. Применяется при следующем запуске:
+    /// доска строится один раз.
+    /// </summary>
+    public int BayCount { get; set; } = 10;
+
     public long MinFreeBytes => (long)MinFreeGb * 1024 * 1024 * 1024;
 
     private static readonly JsonSerializerOptions Json = new()

@@ -1,0 +1,212 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    Пластика прототипа: пилюли вместо прямоугольников, крупные скругления,
+    мягкие тени, никаких резких границ. Размеры взяты из задания под палец:
+    нажатие не меньше 44 точек, основные кнопки от 52.
+  -->
+
+  <Style Selector="Window">
+    <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+    <Setter Property="FontSize" Value="15" />
+  </Style>
+
+  <Style Selector="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+    <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
+  </Style>
+
+  <!-- Заголовки экранов и состояний: единственный дисплейный шрифт системы -->
+  <Style Selector="TextBlock.h1">
+    <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
+    <Setter Property="FontWeight" Value="ExtraBold" />
+    <Setter Property="FontSize" Value="30" />
+    <Setter Property="LineHeight" Value="34" />
+  </Style>
+
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
+    <Setter Property="FontWeight" Value="ExtraBold" />
+    <Setter Property="FontSize" Value="20" />
+  </Style>
+
+  <Style Selector="TextBlock.state">
+    <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
+    <Setter Property="FontWeight" Value="ExtraBold" />
+    <Setter Property="FontSize" Value="19" />
+  </Style>
+
+  <!-- Микроподпись. Регистр поднимается в разметке: аналога text-transform нет -->
+  <Style Selector="TextBlock.label">
+    <Setter Property="FontSize" Value="10" />
+    <Setter Property="LetterSpacing" Value="0.7" />
+    <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
+  </Style>
+
+  <Style Selector="TextBlock.hint">
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="TextWrapping" Value="Wrap" />
+    <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
+  </Style>
+
+  <!-- Цифры моноширинными: номера и время не должны плясать при смене -->
+  <Style Selector="TextBlock.mono">
+    <Setter Property="FontFamily" Value="DejaVu Sans Mono, Consolas, monospace" />
+  </Style>
+
+  <!-- Кнопка по умолчанию: белая пилюля с волосяной рамкой -->
+  <Style Selector="Button">
+    <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Height" Value="{StaticResource ButtonHeight}" />
+    <Setter Property="MinWidth" Value="{StaticResource TapMin}" />
+    <Setter Property="Padding" Value="20,0" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusPill}" />
+    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Button:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Neutral200Brush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+    <Setter Property="TextElement.Foreground" Value="{StaticResource FgMainBrush}" />
+  </Style>
+
+  <!-- Главное действие экрана -->
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgOnDarkBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Accent600Brush}" />
+    <Setter Property="TextElement.Foreground" Value="{StaticResource FgOnDarkBrush}" />
+  </Style>
+
+  <!-- Необратимое действие: тёмный синий, а не красный. Красного в системе нет -->
+  <Style Selector="Button.danger">
+    <Setter Property="Background" Value="{StaticResource Accent800Brush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgOnDarkBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+
+  <Style Selector="Button.danger:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Accent900Brush}" />
+    <Setter Property="TextElement.Foreground" Value="{StaticResource FgOnDarkBrush}" />
+  </Style>
+
+  <!-- Клавиша экранной клавиатуры -->
+  <Style Selector="Button.key">
+    <Setter Property="FontSize" Value="19" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="Margin" Value="3" />
+    <Setter Property="Background" Value="{StaticResource BgAppBrush}" />
+  </Style>
+
+  <Style Selector="TextBox">
+    <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="MinHeight" Value="{StaticResource FieldHeight}" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusPill}" />
+    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+    <Setter Property="BorderThickness" Value="2" />
+  </Style>
+
+  <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{StaticResource Accent300Brush}" />
+  </Style>
+
+  <Style Selector="ComboBox">
+    <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+    <Setter Property="MinHeight" Value="{StaticResource FieldHeight}" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusPill}" />
+    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+
+  <Style Selector="NumericUpDown">
+    <Setter Property="MinHeight" Value="{StaticResource FieldHeight}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusPill}" />
+  </Style>
+
+  <Style Selector="CheckBox">
+    <Setter Property="FontFamily" Value="{StaticResource FontBody}" />
+    <Setter Property="MinHeight" Value="{StaticResource TapMin}" />
+    <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
+  </Style>
+
+  <!-- Панель: белая карточка с крупным скруглением и мягкой тенью -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusMd}" />
+    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+
+  <Style Selector="Border.panel">
+    <Setter Property="Background" Value="{StaticResource BgSurfaceBrush}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusLg}" />
+  </Style>
+
+  <!-- Вкладки: пилюли вместо подчёркиваний -->
+  <Style Selector="TabItem">
+    <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="MinHeight" Value="{StaticResource TapMin}" />
+    <Setter Property="Height" Value="{StaticResource TapMin}" />
+    <Setter Property="Padding" Value="18,0" />
+    <Setter Property="Margin" Value="0,0,8,0" />
+    <Setter Property="CornerRadius" Value="22" />
+    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="TabItem:selected">
+    <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgOnDarkBrush}" />
+  </Style>
+
+  <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe">
+    <Setter Property="IsVisible" Value="False" />
+  </Style>
+
+  <Style Selector="ListBox">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+
+  <Style Selector="ListBoxItem">
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="MinHeight" Value="{StaticResource TapMin}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}" />
+  </Style>
+
+  <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Accent100Brush}" />
+  </Style>
+
+  <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource Neutral200Brush}" />
+  </Style>
+
+</Styles>

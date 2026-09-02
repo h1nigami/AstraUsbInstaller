@@ -37,6 +37,10 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _storageModeIndex;
     [ObservableProperty] private bool _deleteVideoAfterCopy;
     [ObservableProperty] private int _keepDays;
+    [ObservableProperty] private int _bayCount;
+
+    /// <summary>Число окон изменено: доска строится один раз при запуске.</summary>
+    [ObservableProperty] private bool _restartNeeded;
     [ObservableProperty] private string _version = "";
     [ObservableProperty] private string _hint = "";
 
@@ -73,6 +77,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         StorageModeIndex = _settings.StorageMode == StorageMode.Overwrite ? 1 : 0;
         DeleteVideoAfterCopy = _settings.DeleteVideoAfterCopy;
         KeepDays = _settings.KeepDays;
+        BayCount = Math.Clamp(_settings.BayCount, 6, 30);
         LockTimeoutMinutes = _settings.LockTimeoutMinutes;
         UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
         AdminAccount = string.IsNullOrWhiteSpace(_settings.AdminAccount)
@@ -124,7 +129,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         Slots.Clear();
         var assigned = _portMap.All();
 
-        for (var slot = 0; slot < MainWindowViewModel.PortCount; slot++)
+        for (var slot = 0; slot < Math.Clamp(_settings.BayCount, 6, 30); slot++)
         {
             var port = assigned.FirstOrDefault(pair => pair.Value == slot).Key ?? "";
             Slots.Add(new SlotRow { Slot = slot, PortPath = port });
@@ -180,6 +185,38 @@ public sealed partial class SettingsViewModel : ObservableObject
         CurrentPassword = "";
         NewPassword = "";
         RepeatPassword = "";
+    }
+
+    /// <summary>
+    /// Сохраняет число окон сбора. Доска строится один раз при запуске,
+    /// поэтому новое число вступает в силу после перезапуска программы, о чём
+    /// оператору говорится прямо.
+    /// </summary>
+    [RelayCommand]
+    private void SaveBayCount()
+    {
+        var wanted = Math.Clamp(BayCount, 6, 30);
+        var changed = wanted != _settings.BayCount;
+
+        _settings.BayCount = wanted;
+        BayCount = wanted;
+        ReloadSlots();
+
+        if (!_settings.Save())
+        {
+            Hint = "не удалось записать настройки, проверьте права на папку data";
+            return;
+        }
+
+        if (changed)
+        {
+            RestartNeeded = true;
+            _actions.Write(ActionLog.Settings, $"число окон сбора изменено на {wanted}");
+        }
+
+        Hint = changed
+            ? $"окон сбора: {wanted}. Изменение вступит в силу после перезапуска программы"
+            : $"окон сбора: {wanted}";
     }
 
     /// <summary>Сохраняет время, после которого открытый раздел закрывается сам.</summary>

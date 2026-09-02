@@ -11,8 +11,8 @@ namespace AstraUsb.ViewModels;
 /// <summary>Главный экран станции: гнёзда, часы, состояние хранилища.</summary>
 public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 {
-    /// <summary>Столько гнёзд у станции; в старой программе их 6–30, у нас десять.</summary>
-    public const int PortCount = 10;
+    /// <summary>Сколько окон сбора у станции по умолчанию, если в настройках не задано.</summary>
+    public const int DefaultPortCount = 10;
 
     private static readonly CultureInfo Ru = new("ru-RU");
 
@@ -101,6 +101,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _status = "мониторинг: запуск";
 
+    /// <summary>
+    /// Выбранная компоновка доски: сетка, список или схема стойки. Все три
+    /// живут на одной кодовой базе и переключаются оператором.
+    /// </summary>
+    [ObservableProperty]
+    private string _layout = "grid";
+
+    public bool IsGridLayout => Layout == "grid";
+    public bool IsListLayout => Layout == "list";
+    public bool IsRackLayout => Layout == "rack";
+
     [ObservableProperty]
     private string _storageLabel = "хранилище недоступно";
 
@@ -109,7 +120,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private double _storageWidth;
 
     [ObservableProperty]
-    private IBrush _storageBrush = new SolidColorBrush(Color.Parse("#22D3EE"));
+    private IBrush _storageBrush = new SolidColorBrush(Color.Parse("#3F9BA6"));
 
     /// <summary>Показан ли запрос пароля поверх экрана.</summary>
     [ObservableProperty]
@@ -154,7 +165,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _backups = new BackupService(AppPaths.Database, _stationSettings);
         Version = ReadVersion();
 
-        for (var i = 0; i < PortCount; i++)
+        // Число окон задаётся в настройках: у станций от шести до тридцати
+        // отсеков, и окна должны совпадать с железом.
+        var bays = Math.Clamp(_stationSettings.BayCount, 6, 30);
+        for (var i = 0; i < bays; i++)
             Ports.Add(new PortViewModel { Slot = i });
 
         // Журнал за годы работы разрастается вместе с базой, поэтому при
@@ -181,6 +195,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// Выход закрыт паролем. В киоске это единственный способ покинуть
     /// программу, поэтому спрашиваем пароль, а не закрываемся сразу.
     /// </summary>
+    [RelayCommand]
+    private void SetLayout(string? name) => Layout = name switch
+    {
+        "list" => "list",
+        "rack" => "rack",
+        _ => "grid",
+    };
+
+    partial void OnLayoutChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsGridLayout));
+        OnPropertyChanged(nameof(IsListLayout));
+        OnPropertyChanged(nameof(IsRackLayout));
+    }
+
     [RelayCommand]
     private void Exit() => Ask("Выход из программы", exit: true);
 
@@ -344,6 +373,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             if (!busy)
             {
                 port.Detail = detail;
+                port.FilesLine = "";
                 port.State = PortState.Detected;
             }
         }
@@ -520,6 +550,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             port.Progress = report.Progress;
             port.Detail = report.Detail;
+            port.FilesLine = report.Detail;
             port.State = report.Stage switch
             {
                 BackupStage.Scanning => PortState.Scanning,
@@ -582,11 +613,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             StorageLabel = $"хранилище {Size(used)} из {Size(drive.TotalSize)}";
             StorageWidth = Math.Clamp(ratio, 0, 1) * 150;
+            // Тревожного красного в палитре станции нет: заполнение растёт от
+            // бирюзового к тёмно-синему, и это видно, не мешая остальному.
             StorageBrush = new SolidColorBrush(Color.Parse(ratio switch
             {
-                >= 0.9 => "#FF3B5C",
-                >= 0.75 => "#FFB020",
-                _ => "#22D3EE",
+                >= 0.9 => "#143A61",
+                >= 0.75 => "#2F77AD",
+                _ => "#3F9BA6",
             }));
         }
         catch (Exception)

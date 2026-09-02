@@ -1,0 +1,129 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    Токены станции BestCam BC-10, перенесённые из прототипа интерфейса
+    (docs/design/prototype/Терминал BC-10.dc.html).
+
+    Источник истины именно прототип, а не стоковая дизайн-система: у неё взята
+    пластика (пилюли, крупные радиусы, мягкие тени), но палитра перекрашена в
+    холодную сине-бирюзовую, а дисплейный шрифт заменён на Nunito 800.
+
+    Красного в палитре нет вовсе. Ошибка кодируется тёмным инверсным фоном, а
+    не цветом тревоги: экран станции смотрят при боковом освещении и с угла,
+    и разница светлое-тёмное читается надёжнее оттенка.
+  -->
+
+  <!-- Грунт и поверхности -->
+  <Color x:Key="BgApp">#EEF3F9</Color>
+  <Color x:Key="BgPanel">#F7FAFD</Color>
+  <Color x:Key="BgSurface">#DDE7F2</Color>
+  <Color x:Key="Line">#2916202C</Color>
+
+  <!-- Нейтральная рампа -->
+  <Color x:Key="Neutral100">#F7FAFD</Color>
+  <Color x:Key="Neutral200">#E9F0F7</Color>
+  <Color x:Key="Neutral300">#D3DEE9</Color>
+  <Color x:Key="Neutral400">#B2C1D1</Color>
+  <Color x:Key="Neutral500">#90A1B5</Color>
+  <Color x:Key="Neutral600">#71839A</Color>
+  <Color x:Key="Neutral700">#56677E</Color>
+  <Color x:Key="Neutral800">#3A495C</Color>
+  <Color x:Key="Neutral900">#212D3B</Color>
+
+  <!-- Синий акцент -->
+  <Color x:Key="Accent">#2F77AD</Color>
+  <Color x:Key="Accent100">#EAF3FC</Color>
+  <Color x:Key="Accent200">#D0E4F8</Color>
+  <Color x:Key="Accent300">#A7CAEE</Color>
+  <Color x:Key="Accent400">#72A9DE</Color>
+  <Color x:Key="Accent500">#3F84C5</Color>
+  <Color x:Key="Accent600">#2A68A6</Color>
+  <Color x:Key="Accent700">#1D4F83</Color>
+  <Color x:Key="Accent800">#143A61</Color>
+  <Color x:Key="Accent900">#0D2740</Color>
+
+  <!-- Бирюзовый акцент: им кодируется завершённая выгрузка -->
+  <Color x:Key="Teal">#3F9BA6</Color>
+  <Color x:Key="Teal100">#E6F6F8</Color>
+  <Color x:Key="Teal200">#C8EAEE</Color>
+  <Color x:Key="Teal300">#9DD7DE</Color>
+  <Color x:Key="Teal400">#69BCC6</Color>
+  <Color x:Key="Teal500">#3F9BA6</Color>
+  <Color x:Key="Teal600">#2C7D88</Color>
+  <Color x:Key="Teal700">#1F6069</Color>
+  <Color x:Key="Teal800">#16454C</Color>
+  <Color x:Key="Teal900">#0F2F34</Color>
+
+  <!-- Текст -->
+  <Color x:Key="FgMain">#16202C</Color>
+  <Color x:Key="FgMuted">#56677E</Color>
+  <Color x:Key="FgFaint">#71839A</Color>
+  <Color x:Key="FgOnDark">#F7FAFD</Color>
+
+  <SolidColorBrush x:Key="BgAppBrush" Color="{StaticResource BgApp}" />
+  <SolidColorBrush x:Key="BgPanelBrush" Color="{StaticResource BgPanel}" />
+  <SolidColorBrush x:Key="BgSurfaceBrush" Color="{StaticResource BgSurface}" />
+  <SolidColorBrush x:Key="LineBrush" Color="{StaticResource Line}" />
+
+  <SolidColorBrush x:Key="Neutral200Brush" Color="{StaticResource Neutral200}" />
+  <SolidColorBrush x:Key="Neutral300Brush" Color="{StaticResource Neutral300}" />
+  <SolidColorBrush x:Key="Neutral400Brush" Color="{StaticResource Neutral400}" />
+  <SolidColorBrush x:Key="Neutral500Brush" Color="{StaticResource Neutral500}" />
+  <SolidColorBrush x:Key="Neutral800Brush" Color="{StaticResource Neutral800}" />
+  <SolidColorBrush x:Key="Neutral900Brush" Color="{StaticResource Neutral900}" />
+
+  <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}" />
+  <SolidColorBrush x:Key="Accent100Brush" Color="{StaticResource Accent100}" />
+  <SolidColorBrush x:Key="Accent200Brush" Color="{StaticResource Accent200}" />
+  <SolidColorBrush x:Key="Accent300Brush" Color="{StaticResource Accent300}" />
+  <SolidColorBrush x:Key="Accent400Brush" Color="{StaticResource Accent400}" />
+  <SolidColorBrush x:Key="Accent500Brush" Color="{StaticResource Accent500}" />
+  <SolidColorBrush x:Key="Accent600Brush" Color="{StaticResource Accent600}" />
+  <SolidColorBrush x:Key="Accent700Brush" Color="{StaticResource Accent700}" />
+  <SolidColorBrush x:Key="Accent800Brush" Color="{StaticResource Accent800}" />
+  <SolidColorBrush x:Key="Accent900Brush" Color="{StaticResource Accent900}" />
+
+  <SolidColorBrush x:Key="TealBrush" Color="{StaticResource Teal}" />
+  <SolidColorBrush x:Key="Teal100Brush" Color="{StaticResource Teal100}" />
+  <SolidColorBrush x:Key="Teal200Brush" Color="{StaticResource Teal200}" />
+  <SolidColorBrush x:Key="Teal300Brush" Color="{StaticResource Teal300}" />
+  <SolidColorBrush x:Key="Teal500Brush" Color="{StaticResource Teal500}" />
+  <SolidColorBrush x:Key="Teal600Brush" Color="{StaticResource Teal600}" />
+  <SolidColorBrush x:Key="Teal900Brush" Color="{StaticResource Teal900}" />
+
+  <SolidColorBrush x:Key="FgMainBrush" Color="{StaticResource FgMain}" />
+  <SolidColorBrush x:Key="FgMutedBrush" Color="{StaticResource FgMuted}" />
+  <SolidColorBrush x:Key="FgFaintBrush" Color="{StaticResource FgFaint}" />
+  <SolidColorBrush x:Key="FgOnDarkBrush" Color="{StaticResource FgOnDark}" />
+
+  <!--
+    Предупреждение. В палитре прототипа тревожного цвета нет, поэтому взят
+    тёмный янтарь: на светлом грунте он читается, в отличие от привычного
+    оранжевого, и не спорит с синим акцентом.
+  -->
+  <Color x:Key="Warn">#8A5A00</Color>
+  <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource Warn}" />
+
+  <!-- Шрифты вшиты в сборку: на киоске сети нет, подтянуть их неоткуда -->
+  <FontFamily x:Key="FontHeading">avares://AstraUsb/Assets/Fonts#Nunito</FontFamily>
+  <FontFamily x:Key="FontBody">avares://AstraUsb/Assets/Fonts#Manrope</FontFamily>
+
+  <!-- Скругления. Пилюля в XAML задаётся числом: процента от высоты здесь нет -->
+  <CornerRadius x:Key="RadiusSm">8</CornerRadius>
+  <CornerRadius x:Key="RadiusMd">16</CornerRadius>
+  <CornerRadius x:Key="RadiusLg">28</CornerRadius>
+  <CornerRadius x:Key="RadiusCard">32</CornerRadius>
+  <CornerRadius x:Key="RadiusPill">26</CornerRadius>
+
+  <!-- Сенсорные размеры из задания: нажатие от 44, основные кнопки от 52 -->
+  <x:Double x:Key="TapMin">44</x:Double>
+  <x:Double x:Key="ButtonHeight">52</x:Double>
+  <x:Double x:Key="FieldHeight">46</x:Double>
+
+  <!-- Тени перетонированы в холодный грунт новой темы -->
+  <BoxShadows x:Key="ShadowSm">0 1 2 0 #24212D3B</BoxShadows>
+  <BoxShadows x:Key="ShadowMd">0 3 10 0 #29212D3B</BoxShadows>
+  <BoxShadows x:Key="ShadowLg">0 12 32 0 #38212D3B</BoxShadows>
+
+</ResourceDictionary>
