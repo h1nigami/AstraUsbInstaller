@@ -49,6 +49,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Носители, которые монтируются прямо сейчас.</summary>
     private readonly HashSet<string> _mounting = new(StringComparer.Ordinal);
 
+    /// <summary>Чем прервать идущую выгрузку, если оператор попросил.</summary>
+    private readonly Dictionary<string, CancellationTokenSource> _cancels =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Носители, с которых оператор отменил загрузку. Регистратор остаётся в
+    /// отсеке и заряжается, а файлы на нём сохраняются до следующего раза.
+    /// </summary>
+    private readonly HashSet<string> _chargeOnly = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Отсек, который обслуживается вне очереди. Пока он не закончит, другие
+    /// выгрузки не начинаются: полоса USB и диск делятся между всеми, и
+    /// «первым» имеет смысл только при остановленных остальных.
+    /// </summary>
+    private string? _priority;
+
     /// <summary>
     /// Последний раз, когда носитель был виден, и каким он был. Опрос иногда
     /// не отдаёт устройство, которое никто не вынимал, поэтому извлечение
@@ -140,6 +157,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private string _passwordError = "";
+
+    /// <summary>Открыта ли карточка отсека.</summary>
+    [ObservableProperty]
+    private bool _bayVisible;
+
+    /// <summary>Отсек, чья карточка открыта.</summary>
+    [ObservableProperty]
+    private PortViewModel? _bay;
+
+    /// <summary>Номер устройства в карточке.</summary>
+    [ObservableProperty]
+    private string _bayDevice = "";
+
+    /// <summary>Подтверждение действия внутри карточки.</summary>
+    [ObservableProperty]
+    private string _bayConfirm = "";
 
     public event Action? ExitRequested;
 
@@ -299,6 +332,123 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         PasswordError = "";
     }
 
+    /// <summary>
+    /// Открывает карточку отсека. Пароля она не требует: это работа сменного
+    /// оператора, а не администратора.
+    /// </summary>
+    [RelayCommand]
+    private void OpenBay(PortViewModel? port)
+    {
+        if (port is null || port.IsFree)
+            return;
+
+        Bay = port;
+        BayDevice = port.CameraId;
+        BayConfirm = "";
+        BayVisible = true;
+    }
+
+    [RelayCommand]
+    private void CloseBay()
+    {
+        BayVisible = false;
+        Bay = null;
+        BayConfirm = "";
+    }
+
+    /// <summary>
+    /// Обслуживает этот отсек первым. Остальные выгрузки прерываются и
+    /// продолжатся потом с недостающих файлов: копирование инкрементальное,
+    /// поэтому прерывание ничего не теряет.
+    /// </summary>
+    [RelayCommand]
+    private void PrioritizeBay()
+    {
+        if (Bay is not { } port || MountOf(port) is not { } mount)
+            return;
+
+        if (BayConfirm != "priority")
+        {
+            BayConfirm = "priority";
+            return;
+        }
+
+        _priority = mount;
+        _chargeOnly.Remove(mount);
+        _finished.Remove(mount);
+
+        foreach (var other in _cancels.Keys.Where(m => m != mount).ToArray())
+            Cancel(other);
+
+        _actions.Write(ActionLog.Backup, $"отсек {port.Slot + 1} обслуживается первым");
+        CloseBay();
+    }
+
+    /// <summary>
+    /// Отменяет загрузку: регистратор остаётся на зарядке, файлы на нём
+    /// сохраняются и будут собраны при следующем подключении.
+    /// </summary>
+    [RelayCommand]
+    private void ChargeOnlyBay()
+    {
+        if (Bay is not { } port || MountOf(port) is not { } mount)
+            return;
+
+        if (BayConfirm != "charge")
+        {
+            BayConfirm = "charge";
+            return;
+        }
+
+        _chargeOnly.Add(mount);
+        if (_priority == mount)
+            _priority = null;
+
+        Cancel(mount);
+        port.Progress = 0;
+        port.FilesLine = "";
+        port.State = PortState.ChargeOnly;
+
+        _actions.Write(ActionLog.Backup,
+            $"отсек {port.Slot + 1}: загрузка отменена оператором, идёт только зарядка");
+        CloseBay();
+    }
+
+    /// <summary>Возвращает отсек в обычную работу.</summary>
+    [RelayCommand]
+    private void ResumeBay()
+    {
+        if (Bay is not { } port || MountOf(port) is not { } mount)
+            return;
+
+        _chargeOnly.Remove(mount);
+        _finished.Remove(mount);
+        port.State = PortState.Detected;
+
+        _actions.Write(ActionLog.Backup, $"отсек {port.Slot + 1}: загрузка возобновлена");
+        CloseBay();
+    }
+
+    /// <summary>Точка монтирования, которой сейчас занят этот отсек.</summary>
+    private string? MountOf(PortViewModel port) =>
+        _identified.FirstOrDefault(pair => pair.Value.DeviceId != 0
+                                           && pair.Value.CameraId == port.CameraId).Key;
+
+    private void Cancel(string mount)
+    {
+        if (!_cancels.TryGetValue(mount, out var cts))
+            return;
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Выгрузка уже завершилась сама: отменять нечего.
+        }
+    }
+
     /// <summary>Оператор работает: отсчёт простоя начинается заново.</summary>
     public void NoteActivity() => _access.Touch(DateTime.Now);
 
@@ -390,6 +540,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         foreach (var gone in _identified.Keys.Where(m => !present.Contains(m)).ToArray())
             _identified.Remove(gone);
+
+        foreach (var gone in _chargeOnly.Where(m => !present.Contains(m)).ToArray())
+            _chargeOnly.Remove(gone);
+
+        if (_priority is { } waiting && !present.Contains(waiting))
+            _priority = null;
 
         ReleaseGoneMedia(devices);
 
@@ -543,6 +699,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_running.ContainsKey(mountPoint) || _finished.ContainsKey(mountPoint))
             return;
 
+        // Оператор отменил загрузку: регистратор только заряжается.
+        if (_chargeOnly.Contains(mountPoint))
+        {
+            port.State = PortState.ChargeOnly;
+            return;
+        }
+
+        // Другой отсек обслуживается вне очереди: ждём его.
+        if (_priority is { } first && first != mountPoint)
+        {
+            port.State = PortState.Detected;
+            port.Detail = "в очереди";
+            return;
+        }
+
+        var cts = new CancellationTokenSource();
+        _cancels[mountPoint] = cts;
         _running[mountPoint] = deviceId;
         port.State = PortState.Scanning;
 
@@ -567,11 +740,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             try
             {
-                await _backups.RunAsync(deviceId, mountPoint, progress);
+                await _backups.RunAsync(deviceId, mountPoint, progress, cts.Token);
             }
             finally
             {
                 _running.Remove(mountPoint);
+                _cancels.Remove(mountPoint);
+                cts.Dispose();
+
+                // Приоритетный отсек закончил: очередь снова общая.
+                if (_priority == mountPoint)
+                    _priority = null;
             }
         });
     }

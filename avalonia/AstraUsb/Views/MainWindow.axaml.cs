@@ -1,5 +1,7 @@
 using AstraUsb.ViewModels;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 
 namespace AstraUsb.Views;
@@ -45,6 +47,18 @@ public partial class MainWindow : Window
             vm.Staff.Reload();
             vm.Log.Reload();
         };
+
+        // Нажатие по окну отсека открывает его карточку. Обработчик висит на
+        // окне, а не в шаблоне: компоновок три, и в каждой окно устроено
+        // по-своему, а данные под курсором одни и те же.
+        AddHandler(PointerPressedEvent, (_, e) =>
+        {
+            if (vm.PasswordVisible || vm.BayVisible)
+                return;
+
+            if ((e.Source as Control)?.DataContext is PortViewModel port)
+                vm.OpenBayCommand.Execute(port);
+        }, RoutingStrategies.Tunnel);
 
         vm.AccessGranted += index => tabs.SelectedIndex = index;
         vm.AccessExpired += () => tabs.SelectedIndex = 0;

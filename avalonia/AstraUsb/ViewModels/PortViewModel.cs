@@ -48,6 +48,9 @@ public sealed partial class PortViewModel : ObservableObject
     public bool IsFree => State == PortState.Idle && string.IsNullOrEmpty(CameraId);
     public bool IsBusy => !IsFree;
 
+    /// <summary>Загрузка отменена оператором: идёт только зарядка.</summary>
+    public bool IsChargeOnly => State == PortState.ChargeOnly;
+
     /// <summary>Состояние словом, как в прототипе станции.</summary>
     public string StateText => State switch
     {
@@ -75,6 +78,12 @@ public sealed partial class PortViewModel : ObservableObject
     public string PersonnelLine => string.IsNullOrEmpty(PersonnelNo) ? "" : $"№ {PersonnelNo}";
 
     public string EmployeeLine => Employee;
+
+    /// <summary>
+    /// Заголовок карточки отсека. Пока сотрудник не закреплён, там говорится
+    /// об этом прямо: пустая строка выглядела бы сбоем.
+    /// </summary>
+    public string BayTitle => Employee.Length > 0 ? Employee : "Сотрудник не закреплён";
 
     public string DepartmentLine => Department;
 
@@ -171,6 +180,7 @@ public sealed partial class PortViewModel : ObservableObject
                      nameof(StateText), nameof(StateHint), nameof(PercentText), nameof(BarFill),
                      nameof(Fill), nameof(Edge), nameof(Mark), nameof(Ink), nameof(InkMuted),
                      nameof(Track), nameof(SlotInk), nameof(IsFree), nameof(IsBusy),
+                     nameof(IsChargeOnly),
                  })
         {
             OnPropertyChanged(name);
@@ -192,7 +202,11 @@ public sealed partial class PortViewModel : ObservableObject
     }
 
     partial void OnPersonnelNoChanged(string value) => OnPropertyChanged(nameof(PersonnelLine));
-    partial void OnEmployeeChanged(string value) => OnPropertyChanged(nameof(EmployeeLine));
+    partial void OnEmployeeChanged(string value)
+    {
+        OnPropertyChanged(nameof(EmployeeLine));
+        OnPropertyChanged(nameof(BayTitle));
+    }
     partial void OnDepartmentChanged(string value) => OnPropertyChanged(nameof(DepartmentLine));
     partial void OnSlotChanged(int value) => OnPropertyChanged(nameof(SlotLabel));
 

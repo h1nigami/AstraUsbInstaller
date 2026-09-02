@@ -783,6 +783,96 @@
                  />
     </Grid>
 
+    <!-- Карточка отсека. Открывается нажатием по окну и не требует пароля:
+         это работа сменного оператора, а не администратора. -->
+    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding BayVisible}"
+            Background="#8C212D3B">
+      <Border Width="460" Padding="22" CornerRadius="20"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              Background="{StaticResource BgPanelBrush}"
+              BoxShadow="{StaticResource ShadowLg}">
+        <StackPanel Spacing="14" DataContext="{Binding Bay}"
+                    x:CompileBindings="False">
+
+          <Grid ColumnDefinitions="34,*,Auto">
+            <Border Grid.Column="0" Width="34" Height="34" CornerRadius="17"
+                    Background="{Binding Mark}">
+              <TextBlock Text="{Binding SlotLabel}" FontSize="15"
+                         FontFamily="{StaticResource FontHeading}" FontWeight="ExtraBold"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         Foreground="{Binding SlotInk}" />
+            </Border>
+
+            <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
+              <TextBlock Text="{Binding BayTitle}" Classes="h2" FontSize="18"
+                         TextTrimming="CharacterEllipsis" />
+              <TextBlock Text="{Binding DepartmentLine}" Classes="hint" />
+            </StackPanel>
+
+            <Border Grid.Column="2" Padding="12,6" CornerRadius="16"
+                    VerticalAlignment="Center" Background="{Binding Fill}"
+                    BorderBrush="{Binding Edge}" BorderThickness="1">
+              <TextBlock Text="{Binding StateText}" FontSize="12"
+                         FontFamily="{StaticResource FontHeading}" FontWeight="ExtraBold"
+                         Foreground="{Binding Ink}" />
+            </Border>
+          </Grid>
+
+          <UniformGrid Columns="3">
+            <StackPanel Margin="0,0,8,0">
+              <TextBlock Text="НОМЕР УСТРОЙСТВА" Classes="label" />
+              <TextBlock Text="{Binding CameraLine}" Classes="mono" FontSize="13"
+                         TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+            <StackPanel Margin="0,0,8,0">
+              <TextBlock Text="ТАБЕЛЬНЫЙ НОМЕР" Classes="label" />
+              <TextBlock Text="{Binding PersonnelLine}" Classes="mono" FontSize="13" />
+            </StackPanel>
+            <StackPanel>
+              <TextBlock Text="ОТСЕК" Classes="label" />
+              <TextBlock Text="{Binding SlotLabel}" Classes="mono" FontSize="13" />
+            </StackPanel>
+          </UniformGrid>
+
+          <StackPanel Spacing="5">
+            <Border Height="9" CornerRadius="5" ClipToBounds="True"
+                    Background="{Binding Track}">
+              <Border Classes="fill" HorizontalAlignment="Left" CornerRadius="5"
+                      Width="{Binding BarFill}" Background="{Binding Mark}" />
+            </Border>
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="{Binding FilesLine}" Classes="hint" />
+              <TextBlock Grid.Column="1" Text="{Binding PercentText}" Classes="mono"
+                         FontSize="12" FontWeight="Bold" />
+            </Grid>
+          </StackPanel>
+
+          <!-- Действия принадлежат окну, а не отсеку, поэтому команды берутся
+               у модели окна. Каждое требует второго нажатия: оба необратимы
+               для идущей выгрузки. -->
+          <StackPanel Spacing="8">
+            <TextBlock Classes="hint" Foreground="{StaticResource WarnBrush}"
+                       IsVisible="{Binding $parent[Window].DataContext.BayConfirm,
+                                   Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                       Text="Нажмите то же действие ещё раз, чтобы подтвердить" />
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Classes="primary" Content="Первым в очередь" Height="46" FontSize="12"
+                      Command="{Binding $parent[Window].DataContext.PrioritizeBayCommand}" />
+              <Button Content="Только зарядка" Height="46" FontSize="12"
+                      IsVisible="{Binding !IsChargeOnly}"
+                      Command="{Binding $parent[Window].DataContext.ChargeOnlyBayCommand}" />
+              <Button Content="Возобновить" Height="46" FontSize="12"
+                      IsVisible="{Binding IsChargeOnly}"
+                      Command="{Binding $parent[Window].DataContext.ResumeBayCommand}" />
+              <Button Content="Закрыть" Height="46" FontSize="12"
+                      Command="{Binding $parent[Window].DataContext.CloseBayCommand}" />
+            </StackPanel>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+
     <!-- Запрос пароля. Перекрывает весь экран: в киоске это единственная
          преграда между посторонним и выходом из программы. -->
     <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding PasswordVisible}"
