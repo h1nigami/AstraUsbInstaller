@@ -59,7 +59,7 @@ public sealed partial class PortViewModel : ObservableObject
         PortState.Done => "Готово",
         PortState.Failed => "Ошибка",
         PortState.ChargeOnly => "Только зарядка",
-        _ => "Простой",
+        _ => "Свободный",
     };
 
     /// <summary>Подпись под состоянием: что оператору делать или не делать.</summary>

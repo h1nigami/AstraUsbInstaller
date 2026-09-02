@@ -7,23 +7,29 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace AstraUsb.ViewModels;
 
-/// <summary>Строка результата поиска.</summary>
+/// <summary>Строка результата запроса.</summary>
 public sealed partial class FoundFile : ObservableObject
 {
+    public required ArchiveRow Row { get; init; }
+
     public required string Camera { get; init; }
     public required string FileName { get; init; }
     public required string Size { get; init; }
     public required string CollectedAt { get; init; }
 
-    /// <summary>Время съёмки или пометка, что часам камеры доверять нельзя.</summary>
+    /// <summary>Время съёмки или пометка, что часам регистратора доверять нельзя.</summary>
     public required string ShotAt { get; init; }
 
+    public required string Employee { get; init; }
+    public required string Kind { get; init; }
     public required string Path { get; init; }
 
-    /// <summary>Запись защищена от уборки.</summary>
+    /// <summary>Отобрана ли строка для действия над несколькими записями.</summary>
+    [ObservableProperty] private bool _selected;
+
+    /// <summary>Запись защищена от уборки и от удаления.</summary>
     [ObservableProperty] private bool _important;
 
-    /// <summary>Заметка оператора: по какому случаю запись нужна.</summary>
     [ObservableProperty] private string _note = "";
 
     public string Mark => Important ? "защищено" : "";
@@ -32,66 +38,222 @@ public sealed partial class FoundFile : ObservableObject
 }
 
 /// <summary>
-/// Вкладка «Поиск».
+/// Вкладка «Запрос данных».
 ///
-/// Ищем по времени загрузки в станцию, а не по времени съёмки: часы на
-/// камерах сбиваются, и файл, снятый «в 1970 году», по съёмке не найдётся.
-/// Время съёмки показывается рядом и помечается, если ему нельзя верить.
+/// Опора отбора это время загрузки в станцию: его ставит станция, поэтому оно
+/// достоверно. Время съёмки ставит регистратор, и на сбитых часах оно уводит
+/// поиск в сторону, поэтому идёт отдельным условием и помечается, когда ему
+/// нельзя верить.
 /// </summary>
 public sealed partial class SearchViewModel : ObservableObject
 {
-    private const int Limit = 500;
-
     private readonly string _dbPath;
 
+    /// <summary>Поколение запроса: ответ прежнего не должен перебить новый.</summary>
+    private int _generation;
+
     public ObservableCollection<FoundFile> Results { get; } = new();
+    public ObservableCollection<DepartmentRow> Departments { get; } = new();
+
+    public string[] Kinds { get; } = ["Все", "Видео", "Аудио", "Фото", "Журнал"];
 
     [ObservableProperty] private string _from = DateTime.Now.AddDays(-7).ToString("dd.MM.yyyy");
     [ObservableProperty] private string _to = DateTime.Now.ToString("dd.MM.yyyy");
+    [ObservableProperty] private string _shotFrom = "";
+    [ObservableProperty] private string _shotTo = "";
     [ObservableProperty] private string _camera = "";
-    [ObservableProperty] private string _hint = "укажите период и нажмите «Найти»";
+    [ObservableProperty] private string _personnelNo = "";
+    [ObservableProperty] private string _employeeName = "";
+    [ObservableProperty] private string _fileName = "";
+    [ObservableProperty] private int _kindIndex;
+    [ObservableProperty] private bool _protectedOnly;
+    [ObservableProperty] private DepartmentRow? _department;
 
-    /// <summary>Куда выгружать найденное: флешка, сетевая папка, что укажут.</summary>
-    [ObservableProperty] private string _exportTarget = "";
-
-    /// <summary>Выгрузка идёт: второй раз запускать её не нужно.</summary>
+    [ObservableProperty] private string _hint = "укажите условия и нажмите «Запрос»";
+    [ObservableProperty] private bool _searching;
     [ObservableProperty] private bool _exporting;
 
-    [ObservableProperty] private FoundFile? _selected;
+    [ObservableProperty] private string _exportTarget = "";
     [ObservableProperty] private string _noteInput = "";
+    [ObservableProperty] private FoundFile? _current;
+
+    /// <summary>Сколько строк отобрано: число выносится в подписи действий.</summary>
+    public int SelectedCount => Results.Count(r => r.Selected);
+
+    public string ExportLabel => SelectedCount > 0 ? $"Выгрузить ({SelectedCount})" : "Выгрузить";
+    public string DeleteLabel => SelectedCount > 0 ? $"Удалить ({SelectedCount})" : "Удалить";
 
     public SearchViewModel() : this(AppPaths.Database)
     {
     }
 
-    public SearchViewModel(string dbPath) => _dbPath = dbPath;
-
-    /// <summary>Выбор в списке подставляет заметку в поле: её правят на месте.</summary>
-    partial void OnSelectedChanged(FoundFile? value) => NoteInput = value?.Note ?? "";
-
-    /// <summary>
-    /// Защищает запись от уборки или снимает защиту. Защищённое не уходит ни
-    /// по сроку хранения, ни при нехватке места: такие записи держат по
-    /// случаю, и восстановить их будет неоткуда.
-    /// </summary>
-    [RelayCommand]
-    private void ToggleImportant()
+    public SearchViewModel(string dbPath)
     {
-        if (Selected is not { } file)
-        {
-            Hint = "выберите запись в списке";
-            return;
-        }
+        _dbPath = dbPath;
+        ReloadDepartments();
+    }
 
-        var next = !file.Important;
+    /// <summary>Список отделов для отбора. Пополняется, пока станция работает.</summary>
+    public void ReloadDepartments()
+    {
+        var kept = Department?.Id ?? 0;
+
+        // Выбор снимается до очистки: список, который смотрит на коллекцию,
+        // при очистке пытается прочитать выбранный элемент по его прежнему
+        // месту и падает с выходом за границы.
+        Department = null;
+        Departments.Clear();
+        Departments.Add(new DepartmentRow { Id = 0, Path = "Все отделы" });
 
         try
         {
-            new CollectionLog(_dbPath).SetImportant(file.Path, next);
-            file.Important = next;
-            Hint = next
-                ? $"«{file.FileName}» защищено от автоудаления"
-                : $"с «{file.FileName}» снята защита";
+            var staff = new StaffDirectory(_dbPath);
+            foreach (var department in staff.Departments())
+                Departments.Add(new DepartmentRow
+                {
+                    Id = department.Id,
+                    Path = staff.DepartmentPath(department.Id),
+                });
+        }
+        catch (Exception)
+        {
+            // Справочник ещё не заведён: отбор по отделу просто недоступен.
+        }
+
+        Department = Departments.FirstOrDefault(d => d.Id == kept) ?? Departments[0];
+    }
+
+    partial void OnCurrentChanged(FoundFile? value) => NoteInput = value?.Note ?? "";
+
+    /// <summary>
+    /// Ищет записи. Запрос уходит в сторону от интерфейса: по журналу за год он
+    /// идёт заметное время, а окно должно оставаться живым. Ответ прежнего
+    /// запроса отбрасывается, если оператор успел запросить заново.
+    /// </summary>
+    [RelayCommand]
+    private async Task Search()
+    {
+        if (!TryDate(From, out var from) || !TryDate(To, out var to))
+        {
+            Hint = "дата пишется как 02.09.2026";
+            return;
+        }
+
+        DateTime? shotFrom = TryDate(ShotFrom, out var sf) ? sf.Date : null;
+        DateTime? shotTo = TryDate(ShotTo, out var st) ? st.Date.AddDays(1).AddSeconds(-1) : null;
+
+        var filter = new ArchiveFilter
+        {
+            CollectedFrom = from.Date,
+            CollectedTo = to.Date.AddDays(1).AddSeconds(-1),
+            ShotFrom = shotFrom,
+            ShotTo = shotTo,
+            DepartmentId = Department is { Id: > 0 } dep ? dep.Id : null,
+            DeviceId = CameraId(),
+            PersonnelNo = PersonnelNo.Trim(),
+            EmployeeName = EmployeeName.Trim(),
+            FileName = FileName.Trim(),
+            Kind = (MediaKind)Math.Clamp(KindIndex, 0, 4),
+            ProtectedOnly = ProtectedOnly,
+        };
+
+        var generation = ++_generation;
+        Searching = true;
+        Hint = "ищем";
+
+        try
+        {
+            var found = await Task.Run(() => new ArchiveSearch(_dbPath).Find(filter));
+
+            if (generation != _generation)
+                return;
+
+            Current = null;
+            Results.Clear();
+            foreach (var row in found)
+                Results.Add(ToRow(row));
+
+            Refresh();
+
+            Hint = found.Count switch
+            {
+                0 => "по этим условиям ничего не найдено",
+                ArchiveSearch.Limit => $"показаны первые {ArchiveSearch.Limit} записей",
+                _ => $"найдено записей: {found.Count}",
+            };
+        }
+        catch (Exception e)
+        {
+            Hint = $"запрос не удался: {e.Message}";
+        }
+        finally
+        {
+            if (generation == _generation)
+                Searching = false;
+        }
+    }
+
+    [RelayCommand]
+    private void Reset()
+    {
+        From = DateTime.Now.AddDays(-7).ToString("dd.MM.yyyy");
+        To = DateTime.Now.ToString("dd.MM.yyyy");
+        ShotFrom = "";
+        ShotTo = "";
+        Camera = "";
+        PersonnelNo = "";
+        EmployeeName = "";
+        FileName = "";
+        KindIndex = 0;
+        ProtectedOnly = false;
+        Department = Departments.Count > 0 ? Departments[0] : null;
+        Current = null;
+        Results.Clear();
+        NoteInput = "";
+        Current = null;
+        Hint = "укажите условия и нажмите «Запрос»";
+        Refresh();
+    }
+
+    /// <summary>Отбирает или снимает отбор со всех найденных строк.</summary>
+    [RelayCommand]
+    private void SelectAll()
+    {
+        var select = SelectedCount < Results.Count;
+        foreach (var row in Results)
+            row.Selected = select;
+
+        Refresh();
+        Hint = select ? $"отобрано записей: {Results.Count}" : "отбор снят";
+    }
+
+    /// <summary>Защищает отобранные записи от удаления или снимает защиту.</summary>
+    [RelayCommand]
+    private void ToggleImportant()
+    {
+        var rows = Chosen();
+        if (rows.Count == 0)
+        {
+            Hint = "отберите записи галочками";
+            return;
+        }
+
+        // Если хоть одна не защищена, защищаем всё: так понятнее, чем
+        // переключать каждую строку в свою сторону.
+        var protect = rows.Any(r => !r.Important);
+
+        try
+        {
+            var log = new CollectionLog(_dbPath);
+            foreach (var row in rows)
+            {
+                log.SetImportant(row.Path, protect);
+                row.Important = protect;
+            }
+
+            Hint = protect
+                ? $"защищено записей: {rows.Count}"
+                : $"снята защита с записей: {rows.Count}";
         }
         catch (Exception e)
         {
@@ -99,22 +261,29 @@ public sealed partial class SearchViewModel : ObservableObject
         }
     }
 
-    /// <summary>Сохраняет заметку к записи.</summary>
     [RelayCommand]
     private void SaveNote()
     {
-        if (Selected is not { } file)
+        var rows = Chosen();
+        if (rows.Count == 0)
         {
-            Hint = "выберите запись в списке";
+            Hint = "отберите записи галочками";
             return;
         }
 
         try
         {
             var note = NoteInput.Trim();
-            new CollectionLog(_dbPath).SetNote(file.Path, note);
-            file.Note = note;
-            Hint = note.Length == 0 ? "заметка снята" : "заметка сохранена";
+            var log = new CollectionLog(_dbPath);
+            foreach (var row in rows)
+            {
+                log.SetNote(row.Path, note);
+                row.Note = note;
+            }
+
+            Hint = note.Length == 0
+                ? $"заметка снята с записей: {rows.Count}"
+                : $"заметка сохранена, записей: {rows.Count}";
         }
         catch (Exception e)
         {
@@ -122,92 +291,63 @@ public sealed partial class SearchViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Удаляет отобранные записи. Защищённые пропускаются, и сколько именно
+    /// пропущено, говорится прямо: иначе оператор считал бы, что удалил всё.
+    /// </summary>
     [RelayCommand]
-    private void Search()
+    private void Delete()
     {
-        Results.Clear();
-
-        if (!TryDate(From, out var from) || !TryDate(To, out var to))
+        var rows = Chosen();
+        if (rows.Count == 0)
         {
-            Hint = "дата пишется как 02.09.2026";
+            Hint = "отберите записи галочками";
             return;
         }
 
         try
         {
-            long? camera = null;
-            if (!string.IsNullOrWhiteSpace(Camera))
-            {
-                using var registry = new DeviceRegistry(_dbPath);
-                var match = registry.ListDevices().FirstOrDefault(d =>
-                    d.Name.Contains(Camera.Trim(), StringComparison.OrdinalIgnoreCase)
-                    || d.Serial.Contains(Camera.Trim(), StringComparison.OrdinalIgnoreCase)
-                    || d.Id.ToString() == Camera.Trim());
+            var result = new ArchiveSearch(_dbPath).Delete(rows.Select(r => r.Row));
 
-                if (match is null)
-                {
-                    Hint = $"камера «{Camera.Trim()}» не найдена";
-                    return;
-                }
-                camera = match.Id;
-            }
+            foreach (var row in rows.Where(r => !r.Important).ToArray())
+                Results.Remove(row);
 
-            var names = CameraNames();
-            var log = new CollectionLog(_dbPath);
-            var found = log.CollectedBetween(from.Date, to.Date.AddDays(1).AddSeconds(-1), camera);
+            var parts = new List<string> { $"удалено записей: {result.Deleted}" };
+            if (result.Skipped > 0)
+                parts.Add($"пропущено защищённых: {result.Skipped}");
+            if (result.Failed > 0)
+                parts.Add($"не удалось удалить: {result.Failed}");
 
-            foreach (var file in found.Take(Limit))
-            {
-                Results.Add(new FoundFile
-                {
-                    Camera = names.TryGetValue(file.DeviceId, out var name) ? name : file.DeviceId.ToString(),
-                    FileName = Path.GetFileName(file.DestPath),
-                    Size = Size(file.SizeBytes),
-                    CollectedAt = file.CollectedAt.ToString("dd.MM.yy HH:mm"),
-                    ShotAt = file.ShotAt is null
-                        ? "неизвестно"
-                        : file.ShotAtTrusted
-                            ? file.ShotAt.Value.ToString("dd.MM.yy HH:mm")
-                            : "часы камеры сбиты",
-                    Path = file.DestPath,
-                    Important = file.Important,
-                    Note = file.Note,
-                });
-            }
+            Hint = string.Join(", ", parts);
+            Refresh();
 
-            Hint = found.Count switch
-            {
-                0 => "за этот период ничего не загружалось",
-                > Limit => $"найдено {found.Count}, показаны первые {Limit}",
-                _ => $"найдено файлов: {found.Count}",
-            };
+            new ActionLog(_dbPath).Write(ActionLog.Cleanup,
+                $"удалено записей: {result.Deleted}, пропущено защищённых: {result.Skipped}");
         }
         catch (Exception e)
         {
-            Hint = $"поиск не удался: {e.Message}";
+            Hint = $"удаление не удалось: {e.Message}";
         }
     }
 
-    /// <summary>
-    /// Выгружает найденное наружу. Копирование идёт в стороне от интерфейса:
-    /// записей может быть много, и окно не должно застывать.
-    /// </summary>
+    /// <summary>Выгружает отобранное наружу: на флешку или в сетевую папку.</summary>
     [RelayCommand]
     private async Task Export()
     {
         if (Exporting)
             return;
 
-        if (Results.Count == 0)
+        var rows = Chosen();
+        if (rows.Count == 0)
         {
-            Hint = "сначала найдите записи, потом выгружайте";
+            Hint = "отберите записи галочками";
             return;
         }
 
         var target = ExportTarget.Trim();
         if (target.Length == 0)
         {
-            Hint = "укажите папку, куда выгружать";
+            Hint = "укажите, куда выгружать";
             return;
         }
 
@@ -217,7 +357,7 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
-        var paths = Results.Select(r => r.Path).ToList();
+        var paths = rows.Select(r => r.Path).ToList();
         Exporting = true;
 
         try
@@ -232,7 +372,7 @@ public sealed partial class SearchViewModel : ObservableObject
                 $"выгружено {Numerals.Plural(result.Copied, "файл", "файла", "файлов")}",
             };
             if (result.Missing > 0)
-                parts.Add($"не нашлось в хранилище: {result.Missing}");
+                parts.Add($"не нашлось в архиве: {result.Missing}");
             if (result.Failed > 0)
                 parts.Add($"не скопировалось: {result.Failed}");
 
@@ -250,28 +390,64 @@ public sealed partial class SearchViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
-    private void Reset()
+    /// <summary>Обновляет счётчики отбора в подписях действий.</summary>
+    public void Refresh()
     {
-        From = DateTime.Now.AddDays(-7).ToString("dd.MM.yyyy");
-        To = DateTime.Now.ToString("dd.MM.yyyy");
-        Camera = "";
-        Results.Clear();
-        Hint = "укажите период и нажмите «Найти»";
+        OnPropertyChanged(nameof(SelectedCount));
+        OnPropertyChanged(nameof(ExportLabel));
+        OnPropertyChanged(nameof(DeleteLabel));
     }
 
-    private Dictionary<long, string> CameraNames()
+    /// <summary>Отобранные строки, а если галочек нет, то выделенная в списке.</summary>
+    private List<FoundFile> Chosen()
     {
+        var selected = Results.Where(r => r.Selected).ToList();
+        if (selected.Count > 0)
+            return selected;
+
+        return Current is { } single ? [single] : [];
+    }
+
+    private static FoundFile ToRow(ArchiveRow row) => new()
+    {
+        Row = row,
+        Camera = row.CameraName,
+        FileName = Path.GetFileName(row.File.DestPath),
+        Size = Size(row.File.SizeBytes),
+        CollectedAt = row.File.CollectedAt.ToString("dd.MM.yy HH:mm"),
+        ShotAt = row.File.ShotAt is null
+            ? "неизвестно"
+            : row.File.ShotAtTrusted
+                ? row.File.ShotAt.Value.ToString("dd.MM.yy HH:mm")
+                : "часы сбиты",
+        Employee = row.EmployeeName.Length > 0 ? row.EmployeeName : row.PersonnelNo,
+        Kind = MediaKinds.Name(row.Kind),
+        Path = row.File.DestPath,
+        Important = row.File.Important,
+        Note = row.File.Note,
+    };
+
+    /// <summary>Камера по номеру или имени, если оператор её указал.</summary>
+    private long? CameraId()
+    {
+        var wanted = Camera.Trim();
+        if (wanted.Length == 0)
+            return null;
+
         try
         {
             using var registry = new DeviceRegistry(_dbPath);
-            return registry.ListDevices().ToDictionary(
-                d => d.Id,
-                d => string.IsNullOrEmpty(d.Name) ? d.Serial.Replace("CARD_", "") : d.Name);
+            var match = registry.ListDevices().FirstOrDefault(d =>
+                d.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+                || d.FirmwareId.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+                || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+                || d.Id.ToString() == wanted);
+
+            return match?.Id;
         }
         catch (Exception)
         {
-            return new Dictionary<long, string>();
+            return null;
         }
     }
 
@@ -282,6 +458,8 @@ public sealed partial class SearchViewModel : ObservableObject
     private static string Size(long bytes)
     {
         var mb = bytes / 1024d / 1024;
-        return mb >= 1024 ? $"{mb / 1024:0.0} ГБ" : $"{mb:0.0} МБ";
+        return mb >= 1024 ? $"{mb / 1024:0.0} ГБ"
+            : mb >= 1 ? $"{mb:0.0} МБ"
+            : $"{bytes / 1024d:0} КБ";
     }
 }

@@ -319,7 +319,7 @@ public sealed class DeviceRegistry : IDisposable
             SELECT d.id, d.serial, d.label, COALESCE(d.name, ''),
                    d.first_seen, d.last_seen,
                    COALESCE(e.full_name, ''), e.department_id,
-                   COALESCE(d.firmware_id, '')
+                   COALESCE(d.firmware_id, ''), d.employee_id
             FROM devices d
             LEFT JOIN employees e ON e.id = d.employee_id
             ORDER BY d.id
@@ -336,7 +336,8 @@ public sealed class DeviceRegistry : IDisposable
                     reader.GetString(3), reader.GetString(4), reader.GetString(5),
                     reader.GetString(6),
                     reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                    reader.GetString(8)));
+                    reader.GetString(8),
+                    reader.IsDBNull(9) ? null : reader.GetInt64(9)));
             }
         }
         catch (SqliteException)
@@ -363,7 +364,7 @@ public sealed class DeviceRegistry : IDisposable
             list.Add(new DeviceRecord(
                 reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
                 reader.GetString(3), reader.GetString(4), reader.GetString(5), "", null,
-                reader.GetString(6)));
+                reader.GetString(6), null));
         }
         return list;
     }
@@ -388,5 +389,6 @@ public sealed record DeviceRecord(
     string LastSeen,
     string EmployeeName,
     long? DepartmentId,
-    string FirmwareId);
+    string FirmwareId,
+    long? EmployeeId);
 

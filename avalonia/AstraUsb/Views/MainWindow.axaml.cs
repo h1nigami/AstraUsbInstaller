@@ -22,6 +22,14 @@ public partial class MainWindow : Window
             Height = 600;
         }
 
+        // Ошибка в одном обработчике не должна закрывать киоск: станция
+        // работает без присмотра, и упавшее окно означает остановленный сбор.
+        Avalonia.Threading.Dispatcher.UIThread.UnhandledException += (_, e) =>
+        {
+            Services.CrashLog.Write("ошибка в интерфейсе", e.Exception);
+            e.Handled = true;
+        };
+
         var vm = new MainWindowViewModel();
         vm.ExitRequested += Close;
         DataContext = vm;
@@ -32,8 +40,15 @@ public partial class MainWindow : Window
         // Все разделы, кроме «Загрузки», закрыты паролем. Списки в них
         // читаются заново при каждом переходе: пока оператор смотрел на
         // загрузку, камеры и сотрудники успевают появиться.
-        tabs.SelectionChanged += (_, _) =>
+        tabs.SelectionChanged += (_, e) =>
         {
+            // Событие всплывает от вложенных списков: у каждого раздела свой
+            // список с выбором, и перечитывание их содержимого снова меняет
+            // выбор. Без этой проверки обработчик вызывал сам себя до
+            // переполнения стека, а такое падение не попадает даже в журнал.
+            if (!ReferenceEquals(e.Source, tabs))
+                return;
+
             if (tabs.SelectedIndex > 0 && !vm.AccessAllowed)
             {
                 var wanted = tabs.SelectedIndex;
@@ -46,6 +61,7 @@ public partial class MainWindow : Window
             vm.Devices.Reload();
             vm.Staff.Reload();
             vm.Log.Reload();
+            vm.Search.ReloadDepartments();
         };
 
         // Нажатие по окну отсека открывает его карточку. Обработчик висит на

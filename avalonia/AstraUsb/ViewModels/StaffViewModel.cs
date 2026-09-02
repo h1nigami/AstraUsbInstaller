@@ -63,6 +63,14 @@ public sealed partial class StaffViewModel : ObservableObject
     public void Reload()
     {
         var keepEmployee = Selected?.Id;
+        var keepDepartment = SelectedDepartment?.Id;
+
+        // Выбор снимается до очистки: список, который смотрит на коллекцию,
+        // при очистке ищет выбранный элемент по прежнему месту и падает.
+        Selected = null;
+        SelectedDepartment = null;
+        DepartmentInput = null;
+
         Departments.Clear();
         Employees.Clear();
 
@@ -81,6 +89,7 @@ public sealed partial class StaffViewModel : ObservableObject
                 Employees.Add(employee);
 
             Selected = Employees.FirstOrDefault(e => e.Id == keepEmployee);
+            SelectedDepartment = Departments.FirstOrDefault(d => d.Id == keepDepartment);
             OnPropertyChanged(nameof(NoDepartments));
             Hint = Employees.Count == 0
                 ? "сотрудников пока нет; заполните номер и имя, затем нажмите «Сохранить»"

@@ -44,17 +44,12 @@
     <Grid Grid.Row="0" Background="{StaticResource BgPanelBrush}"
           ColumnDefinitions="Auto,Auto,*,Auto,Auto">
 
-      <Border Grid.Column="0" Width="34" Height="34" Margin="12,0,10,0"
-              CornerRadius="17" VerticalAlignment="Center"
-              Background="{StaticResource AccentBrush}">
-        <TextBlock Text="BC" FontFamily="{StaticResource FontHeading}"
-                   FontWeight="ExtraBold" FontSize="14"
-                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                   Foreground="{StaticResource FgOnDarkBrush}" />
-      </Border>
+      <Image Grid.Column="0" Source="avares://AstraUsb/Assets/logo.png"
+             Height="30" Margin="12,0,12,0" VerticalAlignment="Center"
+             Stretch="Uniform" />
 
       <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
-        <TextBlock Text="BestCam BC-10" Classes="h2" FontSize="17" />
+        <TextBlock Text="Терминал BC-10" Classes="h2" FontSize="17" />
         <TextBlock Text="ТЕРМИНАЛ СБОРА И ХРАНЕНИЯ ДАННЫХ" Classes="label" />
       </StackPanel>
 
@@ -283,80 +278,131 @@
         </Grid>
       </TabItem>
 
-      <TabItem Header="ПОИСК">
-        <Grid RowDefinitions="Auto,*,Auto" Margin="10,8">
-          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
-            <TextBlock Text="Загружено с" VerticalAlignment="Center" FontSize="11"
+      <TabItem Header="ЗАПРОС ДАННЫХ">
+        <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="10,8">
+
+          <!-- Условия отбора. Два ряда: в один на экране станции они не
+               помещаются, а прятать их за кнопкой значит спрятать главное. -->
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
+            <TextBlock Text="Загружено" FontSize="11" VerticalAlignment="Center"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Search.From}" Width="100" Height="44" />
-            <TextBlock Text="по" VerticalAlignment="Center" FontSize="11"
+            <TextBox Text="{Binding Search.From}" Width="98" Height="40" />
+            <TextBox Text="{Binding Search.To}" Width="98" Height="40" />
+
+            <TextBlock Text="Снято" FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Search.To}" Width="100" Height="44" />
-            <TextBlock Text="Камера" VerticalAlignment="Center" FontSize="11" Margin="10,0,0,0"
-                       Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Search.Camera}" Width="120" Height="44"
-                     Watermark="номер или имя" />
-            <Button Classes="primary" Content="Найти" Height="44" FontSize="12"
+            <TextBox Text="{Binding Search.ShotFrom}" Width="94" Height="40"
+                     Watermark="любое" />
+            <TextBox Text="{Binding Search.ShotTo}" Width="94" Height="40"
+                     Watermark="любое" />
+
+            <ComboBox ItemsSource="{Binding Search.Kinds}"
+                      SelectedIndex="{Binding Search.KindIndex}" Width="100" Height="40" />
+
+            <CheckBox Content="защищённые" FontSize="11" MinHeight="40"
+                      IsChecked="{Binding Search.ProtectedOnly}" />
+          </StackPanel>
+
+          <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
+            <ComboBox ItemsSource="{Binding Search.Departments}"
+                      SelectedItem="{Binding Search.Department}" Width="150" Height="40">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:DepartmentRow">
+                  <TextBlock Text="{Binding Path}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBox Text="{Binding Search.PersonnelNo}" Width="96" Height="40"
+                     Watermark="табельный" Classes="mono" />
+            <TextBox Text="{Binding Search.EmployeeName}" Width="120" Height="40"
+                     Watermark="сотрудник" />
+            <TextBox Text="{Binding Search.Camera}" Width="104" Height="40"
+                     Watermark="устройство" />
+            <TextBox Text="{Binding Search.FileName}" Width="104" Height="40"
+                     Watermark="имя файла" />
+            <Button Classes="primary" Content="Запрос" Height="40" FontSize="12"
+                    IsEnabled="{Binding !Search.Searching}"
                     Command="{Binding Search.SearchCommand}" />
-            <Button Content="Сброс" Height="44" FontSize="12"
+            <Button Content="Сброс" Height="40" FontSize="12"
                     Command="{Binding Search.ResetCommand}" />
           </StackPanel>
 
-          <Border Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                  CornerRadius="2" Background="{StaticResource BgPanelBrush}">
-            <ListBox ItemsSource="{Binding Search.Results}"
-                     SelectedItem="{Binding Search.Selected}"
-                     Background="Transparent" BorderThickness="0">
-              <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:FoundFile">
-                  <Grid ColumnDefinitions="86,*,64,84,74,58" Height="26">
-                    <TextBlock Grid.Column="0" Text="{Binding Camera}" FontSize="11"
-                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource Accent700Brush}" />
-                    <TextBlock Grid.Column="1" Text="{Binding FileName}" FontSize="11"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMainBrush}" />
-                    <TextBlock Grid.Column="2" Text="{Binding Size}" FontSize="11"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBlock Grid.Column="3" Text="{Binding CollectedAt}" FontSize="11"
-                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMainBrush}" />
-                    <TextBlock Grid.Column="4" Text="{Binding ShotAt}" FontSize="11"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBlock Grid.Column="5" Text="{Binding Mark}" FontSize="11"
-                               VerticalAlignment="Center" Foreground="#FFB020" />
-                  </Grid>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
+          <Border Grid.Row="2" Classes="card">
+            <Grid RowDefinitions="22,*">
+              <Grid Grid.Row="0" ColumnDefinitions="30,84,*,64,58,80,74,58" Margin="10,5,10,0">
+                <TextBlock Grid.Column="1" Text="УСТРОЙСТВО" Classes="label" />
+                <TextBlock Grid.Column="2" Text="ФАЙЛ" Classes="label" />
+                <TextBlock Grid.Column="3" Text="ТИП" Classes="label" />
+                <TextBlock Grid.Column="4" Text="РАЗМЕР" Classes="label" />
+                <TextBlock Grid.Column="5" Text="СОТРУДНИК" Classes="label" />
+                <TextBlock Grid.Column="6" Text="ЗАГРУЖЕНО" Classes="label" />
+                <TextBlock Grid.Column="7" Text="ЗАЩИТА" Classes="label" />
+              </Grid>
+
+              <ListBox Grid.Row="1" ItemsSource="{Binding Search.Results}"
+                       SelectedItem="{Binding Search.Current}">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:FoundFile">
+                    <Grid ColumnDefinitions="30,84,*,64,58,80,74,58" Height="30">
+                      <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="28"
+                                VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="1" Text="{Binding Camera}" Classes="mono"
+                                 FontSize="11" VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis"
+                                 Foreground="{StaticResource Accent700Brush}" />
+                      <TextBlock Grid.Column="2" Text="{Binding FileName}" FontSize="11"
+                                 VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis" />
+                      <TextBlock Grid.Column="3" Text="{Binding Kind}" FontSize="11"
+                                 VerticalAlignment="Center"
+                                 Foreground="{StaticResource FgMutedBrush}" />
+                      <TextBlock Grid.Column="4" Text="{Binding Size}" FontSize="11"
+                                 VerticalAlignment="Center"
+                                 Foreground="{StaticResource FgMutedBrush}" />
+                      <TextBlock Grid.Column="5" Text="{Binding Employee}" FontSize="11"
+                                 VerticalAlignment="Center"
+                                 TextTrimming="CharacterEllipsis"
+                                 Foreground="{StaticResource FgMutedBrush}" />
+                      <TextBlock Grid.Column="6" Text="{Binding CollectedAt}" Classes="mono"
+                                 FontSize="10" VerticalAlignment="Center"
+                                 Foreground="{StaticResource FgMutedBrush}" />
+                      <TextBlock Grid.Column="7" Text="{Binding Mark}" FontSize="10"
+                                 VerticalAlignment="Center"
+                                 Foreground="{StaticResource WarnBrush}" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
           </Border>
 
-          <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+          <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
             <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBox Text="{Binding Search.NoteInput}" Width="240" Height="44"
-                       Watermark="заметка: по какому случаю нужна запись" />
-              <Button Content="Сохранить" Height="44" FontSize="12"
+              <Button Content="Отобрать все" Height="40" FontSize="12"
+                      Command="{Binding Search.SelectAllCommand}" />
+              <TextBox Text="{Binding Search.NoteInput}" Width="200" Height="40"
+                       Watermark="заметка к записям" />
+              <Button Content="Заметка" Height="40" FontSize="12"
                       Command="{Binding Search.SaveNoteCommand}" />
-              <Button Content="Защита" Height="44" FontSize="12"
+              <Button Content="Защита" Height="40" FontSize="12"
                       Command="{Binding Search.ToggleImportantCommand}" />
+              <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="40"
+                      FontSize="12" Command="{Binding Search.DeleteCommand}" />
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBox Text="{Binding Search.ExportTarget}" Width="240" Height="44"
+              <TextBox Text="{Binding Search.ExportTarget}" Width="300" Height="40"
                        Watermark="куда выгрузить: папка или флешка" />
-              <Button Classes="primary" Content="Выгрузить" Height="44" FontSize="12"
-                      Command="{Binding Search.ExportCommand}"
-                      IsEnabled="{Binding !Search.Exporting}" />
+              <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="40"
+                      FontSize="12" IsEnabled="{Binding !Search.Exporting}"
+                      Command="{Binding Search.ExportCommand}" />
+              <TextBlock Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
+                         Foreground="{StaticResource Accent700Brush}" />
             </StackPanel>
-            <TextBlock Text="{Binding Search.Hint}" FontSize="11"
-                       Foreground="{StaticResource Accent700Brush}" />
           </StackPanel>
         </Grid>
       </TabItem>
+
       <TabItem Header="УСТРОЙСТВА">
         <Grid RowDefinitions="*,Auto" Margin="10,8">
           <!-- Панель управления прижата к низу и получает место раньше списка:

@@ -68,6 +68,12 @@ public sealed partial class DevicesViewModel : ObservableObject
     [RelayCommand]
     public void Reload()
     {
+        // Выбор снимается до очистки: иначе список, который на неё смотрит,
+        // ищет выбранный элемент по прежнему месту и падает.
+        var kept = Selected?.Id;
+        Selected = null;
+        EmployeeInput = null;
+
         Devices.Clear();
         Employees.Clear();
 
@@ -93,6 +99,7 @@ public sealed partial class DevicesViewModel : ObservableObject
                 });
             }
 
+            Selected = Devices.FirstOrDefault(d => d.Id == kept);
             Hint = Devices.Count == 0 ? "камеры ещё не подключались" : "";
         }
         catch (Exception e)
