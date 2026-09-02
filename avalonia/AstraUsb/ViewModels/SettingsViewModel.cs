@@ -35,6 +35,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _stationNumber;
     [ObservableProperty] private int _storageModeIndex;
     [ObservableProperty] private bool _deleteVideoAfterCopy;
+    [ObservableProperty] private int _keepDays;
     [ObservableProperty] private string _version = "";
     [ObservableProperty] private string _hint = "";
 
@@ -62,6 +63,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         StationNumber = _settings.StationNumber;
         StorageModeIndex = _settings.StorageMode == StorageMode.Overwrite ? 1 : 0;
         DeleteVideoAfterCopy = _settings.DeleteVideoAfterCopy;
+        KeepDays = _settings.KeepDays;
         LockTimeoutMinutes = _settings.LockTimeoutMinutes;
         UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
 
@@ -76,10 +78,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.StationNumber = Math.Clamp(StationNumber, 0, 99);
         _settings.StorageMode = StorageModeIndex == 1 ? StorageMode.Overwrite : StorageMode.Warn;
         _settings.DeleteVideoAfterCopy = DeleteVideoAfterCopy;
+        _settings.KeepDays = Math.Clamp(KeepDays, 0, 3650);
+        KeepDays = _settings.KeepDays;
 
-        Hint = _settings.Save()
-            ? "настройки хранилища сохранены"
-            : "не удалось записать настройки, проверьте права на папку data";
+        Hint = !_settings.Save()
+            ? "не удалось записать настройки, проверьте права на папку data"
+            : KeepDays == 0
+                ? "настройки сохранены, записи хранятся бессрочно"
+                : $"настройки сохранены, записи хранятся {KeepDays} дн";
     }
 
     // --- Разметка гнёзд -----------------------------------------------------

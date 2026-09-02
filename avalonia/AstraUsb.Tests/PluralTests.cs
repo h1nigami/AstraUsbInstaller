@@ -26,6 +26,6 @@ public sealed class PluralTests
     [InlineData(1002, "1002 файла")]
     public void Numerals_agree_with_the_noun(long count, string expected)
     {
-        Assert.Equal(expected, BackupService.Plural(count, "файл", "файла", "файлов"));
+        Assert.Equal(expected, Numerals.Plural(count, "файл", "файла", "файлов"));
     }
 }

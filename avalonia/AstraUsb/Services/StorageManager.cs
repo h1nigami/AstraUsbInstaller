@@ -55,34 +55,113 @@ public static class StorageManager
     /// <param name="root">Корень хранилища копий.</param>
     /// <param name="bytesToFree">Сколько нужно освободить.</param>
     /// <param name="mode">В режиме предупреждения не удаляется ничего.</param>
+    /// <param name="log">
+    /// Журнал сбора. Он знает, когда файл приехал на станцию, и по нему
+    /// выбирается очередь на удаление. Запись забывается вместе с файлом,
+    /// иначе поиск обещал бы оператору то, чего на диске уже нет.
+    /// </param>
     /// <returns>Сколько байт освобождено.</returns>
-    public static long FreeUpSpace(string root, long bytesToFree, StorageMode mode)
+    public static long FreeUpSpace(string root, long bytesToFree, StorageMode mode,
+        CollectionLog? log = null)
     {
         if (mode != StorageMode.Overwrite || bytesToFree <= 0)
             return 0;
 
         var freed = 0L;
+        var known = log?.CollectedBefore(DateTime.Now) ?? [];
+
+        foreach (var entry in known)
+        {
+            if (freed >= bytesToFree)
+                break;
+            freed += Remove(entry.DestPath, log);
+        }
+
+        // Файлы, которых журнал не знает: копии старше журнала или принесённые
+        // мимо станции. Их очередь определяется датой на диске.
+        var accounted = known
+            .Select(e => Full(e.DestPath))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (var file in OldestFirst(root))
         {
             if (freed >= bytesToFree)
                 break;
 
-            try
-            {
-                var size = file.Length;
-                file.Delete();
-                freed += size;
-            }
-            catch (Exception)
-            {
-                // Файл занят или недоступен, идём к следующему. Место всё
-                // равно освободится, просто чуть позже.
-            }
+            // Файл из журнала, до которого очередь не дошла: он новее тех,
+            // что уже удалены, и трогать его рано.
+            if (accounted.Contains(Full(file.FullName)))
+                continue;
+
+            freed += Remove(file.FullName, log: null);
         }
 
         RemoveEmptyFolders(root);
         return freed;
+    }
+
+    /// <summary>
+    /// Убирает то, чей срок хранения вышел.
+    /// </summary>
+    /// <param name="log">Журнал сбора: по нему видно, когда запись приехала.</param>
+    /// <param name="olderThan">Всё, загруженное раньше этого момента, уходит.</param>
+    /// <param name="root">Корень хранилища, чтобы прибрать опустевшие папки.</param>
+    /// <returns>Сколько записей убрано и сколько места освободилось.</returns>
+    public static (int Files, long Bytes) DeleteExpired(CollectionLog log, DateTime olderThan,
+        string root)
+    {
+        var files = 0;
+        var bytes = 0L;
+
+        foreach (var entry in log.CollectedBefore(olderThan))
+        {
+            bytes += Remove(entry.DestPath, log);
+            files++;
+        }
+
+        if (files > 0)
+            RemoveEmptyFolders(root);
+
+        return (files, bytes);
+    }
+
+    /// <summary>
+    /// Удаляет файл и забывает запись о нём. Пропавший файл тоже забывается:
+    /// запись о том, чего нет, только вводит оператора в заблуждение.
+    /// </summary>
+    private static long Remove(string path, CollectionLog? log)
+    {
+        var size = 0L;
+
+        try
+        {
+            var file = new FileInfo(path);
+            if (file.Exists)
+            {
+                size = file.Length;
+                file.Delete();
+            }
+        }
+        catch (Exception)
+        {
+            // Файл занят или недоступен: запись оставляем, попробуем позже.
+            return 0;
+        }
+
+        log?.Forget(path);
+        return size;
+    }
+
+    private static string Full(string path)
+    {
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch (Exception)
+        {
+            return path;
+        }
     }
 
     /// <summary>Файлы хранилища от самых ранних к поздним.</summary>

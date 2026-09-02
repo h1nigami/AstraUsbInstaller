@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using AstraUsb.Services;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 
@@ -39,6 +40,12 @@ public sealed partial class SearchViewModel : ObservableObject
     [ObservableProperty] private string _to = DateTime.Now.ToString("dd.MM.yyyy");
     [ObservableProperty] private string _camera = "";
     [ObservableProperty] private string _hint = "укажите период и нажмите «Найти»";
+
+    /// <summary>Куда выгружать найденное: флешка, сетевая папка, что укажут.</summary>
+    [ObservableProperty] private string _exportTarget = "";
+
+    /// <summary>Выгрузка идёт: второй раз запускать её не нужно.</summary>
+    [ObservableProperty] private bool _exporting;
 
     public SearchViewModel() : this(AppPaths.Database)
     {
@@ -107,6 +114,66 @@ public sealed partial class SearchViewModel : ObservableObject
         catch (Exception e)
         {
             Hint = $"поиск не удался: {e.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Выгружает найденное наружу. Копирование идёт в стороне от интерфейса:
+    /// записей может быть много, и окно не должно застывать.
+    /// </summary>
+    [RelayCommand]
+    private async Task Export()
+    {
+        if (Exporting)
+            return;
+
+        if (Results.Count == 0)
+        {
+            Hint = "сначала найдите записи, потом выгружайте";
+            return;
+        }
+
+        var target = ExportTarget.Trim();
+        if (target.Length == 0)
+        {
+            Hint = "укажите папку, куда выгружать";
+            return;
+        }
+
+        if (!Directory.Exists(target))
+        {
+            Hint = $"папка «{target}» недоступна, проверьте носитель";
+            return;
+        }
+
+        var paths = Results.Select(r => r.Path).ToList();
+        Exporting = true;
+
+        try
+        {
+            var result = await Task.Run(() => FileExporter.Export(
+                paths, target, DateTime.Now,
+                (done, total) => Dispatcher.UIThread.Post(
+                    () => Hint = $"выгружено {done} из {total}")));
+
+            var parts = new List<string>
+            {
+                $"выгружено {Numerals.Plural(result.Copied, "файл", "файла", "файлов")}",
+            };
+            if (result.Missing > 0)
+                parts.Add($"не нашлось в хранилище: {result.Missing}");
+            if (result.Failed > 0)
+                parts.Add($"не скопировалось: {result.Failed}");
+
+            Hint = string.Join(", ", parts);
+        }
+        catch (Exception e)
+        {
+            Hint = $"выгрузка не удалась: {e.Message}";
+        }
+        finally
+        {
+            Exporting = false;
         }
     }
 

@@ -257,12 +257,20 @@
             </ListBox>
           </Border>
 
-          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="16" Margin="0,6,0,0">
+          <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Выгрузить найденное в" VerticalAlignment="Center" FontSize="11"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding Search.ExportTarget}" Width="300"
+                       Watermark="путь к папке или флешке" />
+              <Button Content="Выгрузить" Command="{Binding Search.ExportCommand}"
+                      IsEnabled="{Binding !Search.Exporting}" />
+              <TextBlock FontSize="10" VerticalAlignment="Center"
+                         Foreground="{StaticResource FgMutedBrush}"
+                         Text="колонки: камера, файл, размер, загружено в станцию, снято" />
+            </StackPanel>
             <TextBlock Text="{Binding Search.Hint}" FontSize="11"
                        Foreground="{StaticResource BrandBrush}" />
-            <TextBlock FontSize="10" VerticalAlignment="Center"
-                       Foreground="{StaticResource FgMutedBrush}"
-                       Text="колонки: камера, файл, размер, загружено в станцию, снято" />
           </StackPanel>
         </Grid>
       </TabItem>
@@ -476,6 +484,13 @@
                                FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
                     <ComboBox ItemsSource="{Binding Settings.StorageModes}"
                               SelectedIndex="{Binding Settings.StorageModeIndex}" Width="190" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Хранить записи, дней" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBox Text="{Binding Settings.KeepDays}" Width="70" />
+                    <TextBlock Text="0 хранит бессрочно" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
                   </StackPanel>
                   <CheckBox Content="Удалять видео с камеры после загрузки"
                             IsChecked="{Binding Settings.DeleteVideoAfterCopy}" />

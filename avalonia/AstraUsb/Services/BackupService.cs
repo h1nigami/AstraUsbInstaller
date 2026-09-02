@@ -58,6 +58,7 @@ public sealed class BackupService
 
             // Освобождаем место заранее, если так настроено: иначе копирование
             // упадёт на середине и часть файлов останется недокопированной.
+            PurgeExpired();
             EnsureSpace(total.Bytes);
 
             var result = await Task.Run(() => FileCopier.Copy(
@@ -74,9 +75,9 @@ public sealed class BackupService
 
             progress.Report(result.Failed == 0
                 ? new BackupProgress(BackupStage.Done, 1,
-                    $"{Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}")
+                    $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}")
                 : new BackupProgress(BackupStage.Failed, 1,
-                    $"не скопировано: {Plural(result.Failed, "файл", "файла", "файлов")}"));
+                    $"не скопировано: {Numerals.Plural(result.Failed, "файл", "файла", "файлов")}"));
         }
         catch (OperationCanceledException)
         {
@@ -117,7 +118,30 @@ public sealed class BackupService
         var status = StorageManager.Check(_settings.BackupRoot, _settings.MinFreeBytes);
         var shortfall = needed + _settings.MinFreeBytes - status.FreeBytes;
         if (shortfall > 0)
-            StorageManager.FreeUpSpace(_settings.BackupRoot, shortfall, _settings.StorageMode);
+            StorageManager.FreeUpSpace(_settings.BackupRoot, shortfall, _settings.StorageMode,
+                new CollectionLog(_dbPath));
+    }
+
+    /// <summary>
+    /// Убирает записи, чей срок хранения вышел. Делается перед выгрузкой:
+    /// освободившееся место сразу пригодится, и станция не копит лишнего.
+    /// </summary>
+    private void PurgeExpired()
+    {
+        if (_settings.KeepDays <= 0)
+            return;
+
+        try
+        {
+            StorageManager.DeleteExpired(
+                new CollectionLog(_dbPath),
+                DateTime.Now.AddDays(-_settings.KeepDays),
+                _settings.BackupRoot);
+        }
+        catch (Exception)
+        {
+            // Уборка не главнее выгрузки: не вышло, значит в другой раз.
+        }
     }
 
     /// <summary>
@@ -168,23 +192,5 @@ public sealed class BackupService
         // показывало бы честно скопированный файл как «0 МБ».
         var mb = bytes / 1024d / 1024;
         return mb >= 1 ? $"{mb:0} МБ" : $"{bytes / 1024d:0} КБ";
-    }
-
-    /// <summary>
-    /// Число с существительным в нужной форме: 1 файл, 2 файла, 5 файлов.
-    /// Одиннадцать и двенадцать берут форму множественного числа, поэтому
-    /// вторая цифра проверяется отдельно.
-    /// </summary>
-    public static string Plural(long count, string one, string few, string many)
-    {
-        var tens = Math.Abs(count) % 100;
-        var unit = tens % 10;
-
-        var form = tens is >= 11 and <= 14 ? many
-            : unit == 1 ? one
-            : unit is >= 2 and <= 4 ? few
-            : many;
-
-        return $"{count} {form}";
     }
 }

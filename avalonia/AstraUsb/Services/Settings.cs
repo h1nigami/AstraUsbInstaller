@@ -20,6 +20,9 @@ public sealed class Settings
     /// <summary>Удалять с камеры видео после успешной загрузки.</summary>
     public bool DeleteVideoAfterCopy { get; set; }
 
+    /// <summary>Сколько дней держать собранные записи; 0 хранит их бессрочно.</summary>
+    public int KeepDays { get; set; }
+
     /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 
