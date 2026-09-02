@@ -289,6 +289,27 @@ class MixedAssetsTest(unittest.TestCase):
         self.assertTrue(checksum.endswith("astra-usb-monitor-v9.9.tar.gz.sha256"),
                         "сумма должна принадлежать выбранному архиву, а не чужому")
 
+    def test_ignores_cross_platform_archives(self):
+        """В том же репозитории выходят релизы кроссплатформенной версии.
+        Точка на Python не должна принимать их архивы за своё обновление:
+        установщик у них другой, и такая «установка» сломала бы точку."""
+        r = self._release("bestcam-station-v2.0-linux-x64.tar.gz",
+                          "bestcam-station-v2.0-linux-x64.tar.gz.sha256",
+                          "bestcam-station-v2.0-linux-arm64.tar.gz",
+                          "bestcam-station-v2.0-linux-arm64.tar.gz.sha256")
+        self.assertIsNone(updater.pick_asset(r))
+
+    def test_takes_own_archive_from_a_mixed_release(self):
+        r = self._release("bestcam-station-v2.0-linux-x64.tar.gz",
+                          "bestcam-station-v2.0-linux-x64.tar.gz.sha256",
+                          "astra-usb-monitor-v2.0.tar.gz",
+                          "astra-usb-monitor-v2.0.tar.gz.sha256")
+        picked = updater.pick_asset(r)
+        self.assertIsNotNone(picked)
+        tarball, checksum = picked
+        self.assertTrue(tarball.endswith("astra-usb-monitor-v2.0.tar.gz"))
+        self.assertTrue(checksum.endswith("astra-usb-monitor-v2.0.tar.gz.sha256"))
+
     def test_none_when_tarball_has_no_own_checksum(self):
         r = self._release("astra-usb-monitor-v9.9.tar.gz",
                           "astra-usb-monitor-win-v9.9.zip.sha256")

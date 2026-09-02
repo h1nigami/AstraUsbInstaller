@@ -32,6 +32,10 @@ FAILED_TAG_FILE = APP_DIR + ".failed"
 SERVICE = "astra-usb-monitor"
 
 
+#: Имя архива Python-версии: его пишет release.yml.
+ARCHIVE_PREFIX = "astra-usb-monitor-"
+
+
 def pick_asset(release):
     """Извлечь (tarball_url, sha256_url) из ответа релиза, или None.
 
@@ -45,8 +49,12 @@ def pick_asset(release):
         a.get("name", ""): a.get("browser_download_url")
         for a in release.get("assets", [])
     }
+    # Архив опознаётся по имени, а не по одному расширению. В том же
+    # репозитории выходят релизы кроссплатформенной версии, и там лежат свои
+    # .tar.gz со своими суммами: без проверки имени точка на Python скачала бы
+    # чужую сборку и попыталась поставить её этим установщиком.
     for name, url in urls.items():
-        if not name.endswith(".tar.gz") or not url:
+        if not name.startswith(ARCHIVE_PREFIX) or not name.endswith(".tar.gz") or not url:
             continue
         checksum = urls.get(name + ".sha256")
         if checksum:
