@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AstraUsb")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+889e4f381a5ea19c1fab42f200f6909fc863007a")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+fb796fd97a9331eba492bcbbdd736d0d72623d87")]
 [assembly: System.Reflection.AssemblyProductAttribute("AstraUsb")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AstraUsb")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
