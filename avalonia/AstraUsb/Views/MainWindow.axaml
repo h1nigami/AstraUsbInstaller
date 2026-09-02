@@ -138,6 +138,7 @@
             <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
               <TextBlock Text="Сбор данных" Classes="h1" FontSize="22" LineHeight="26" />
               <TextBlock Classes="hint" MaxWidth="420" FontSize="10"
+                         HorizontalAlignment="Left"
                          Text="Забирать регистратор можно, когда окно стало бирюзовым" />
             </StackPanel>
 
@@ -217,7 +218,9 @@
             <ItemsControl ItemsSource="{Binding Ports}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:PortViewModel">
-                  <Border Classes="bay" Padding="12,8" Margin="4,3"
+                  <!-- Строка ниже плитки: в списке состояние и так стоит
+                       в своей колонке, а высота нужна под десять гнёзд. -->
+                  <Border Classes="bay" Padding="12,6" Margin="4,3" MinHeight="46"
                           Background="{Binding Fill}" BorderBrush="{Binding Edge}">
                     <Grid ColumnDefinitions="28,150,110,*,Auto">
                       <Border Grid.Column="0" Width="24" Height="24" CornerRadius="12"
@@ -271,10 +274,15 @@
             <Grid RowDefinitions="Auto,*">
               <TextBlock Grid.Row="0" Margin="4,2,0,8" Classes="hint"
                          Text="Номера соответствуют физическим отсекам после сопоставления портов" />
-              <ItemsControl Grid.Row="1" ItemsSource="{Binding Ports}">
+              <!-- Карта отсеков стоит по центру панели: клетки одного
+                   размера, как отсеки в железе, а свободное место делится
+                   сверху и снизу, чтобы схема не выглядела осевшей. -->
+              <ScrollViewer Grid.Row="1">
+              <ItemsControl ItemsSource="{Binding Ports}"
+                            VerticalAlignment="Center" HorizontalAlignment="Center">
                 <ItemsControl.ItemsPanel>
                   <ItemsPanelTemplate>
-                    <WrapPanel ItemWidth="148" ItemHeight="104" />
+                    <WrapPanel ItemWidth="148" ItemHeight="118" />
                   </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
@@ -307,6 +315,7 @@
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
               </ItemsControl>
+              </ScrollViewer>
             </Grid>
           </Border>
         </Grid>
@@ -403,6 +412,7 @@
                 <Button Content="{Binding Search.FiltersLabel}" Height="52" FontSize="12"
                         Command="{Binding Search.ToggleFiltersCommand}" />
                 <TextBlock Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
+                           Margin="8,0,0,0"
                            Foreground="{StaticResource Accent700Brush}" />
               </StackPanel>
             </StackPanel>
@@ -485,7 +495,7 @@
               <Button Content="Отобрать все" Height="46" FontSize="12"
                       Command="{Binding Search.SelectAllCommand}" />
               <TextBox Text="{Binding Search.ExportTarget}" Width="230" Height="46"
-                       Watermark="куда выгрузить: папка или флешка" />
+                       Watermark="папка или флешка" />
               <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="46"
                       FontSize="12" IsEnabled="{Binding !Search.Exporting}"
                       Command="{Binding Search.ExportCommand}" />
@@ -710,7 +720,7 @@
           <Border Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
-              <Grid Grid.Row="0" ColumnDefinitions="112,84,*" Margin="10,6,10,0">
+              <Grid Grid.Row="0" ColumnDefinitions="128,90,*" Margin="10,6,10,0">
                 <TextBlock Grid.Column="0" Text="КОГДА" FontSize="10"
                            Foreground="{StaticResource FgMutedBrush}" />
                 <TextBlock Grid.Column="1" Text="СОБЫТИЕ" FontSize="10"
@@ -722,7 +732,7 @@
                        Background="Transparent" BorderThickness="0">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:LogRow">
-                    <Grid ColumnDefinitions="112,84,*" Height="24">
+                    <Grid ColumnDefinitions="128,90,*" Height="24">
                       <TextBlock Grid.Column="0" Text="{Binding At}" FontSize="11"
                                  FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                  VerticalAlignment="Center"
@@ -1303,81 +1313,73 @@
          преграда между посторонним и выходом из программы. -->
     <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding PasswordVisible}"
             Background="#E6050A14">
-      <Border Width="580" Padding="24" CornerRadius="2"
+      <Border Width="756" Padding="20,16" CornerRadius="2"
               HorizontalAlignment="Center" VerticalAlignment="Center"
               Background="{StaticResource BgPanelBrush}"
               BorderBrush="{StaticResource Accent700Brush}" BorderThickness="1">
-        <StackPanel Spacing="12">
+        <StackPanel Spacing="8">
           <TextBlock Text="{Binding PasswordPrompt}" FontSize="15" FontWeight="Bold"
                      Foreground="{StaticResource FgMainBrush}" />
           <TextBlock Text="Введите учётную запись и пароль администратора" FontSize="11"
                      Foreground="{StaticResource FgMutedBrush}" />
 
-          <Grid ColumnDefinitions="*,Auto">
-            <StackPanel Grid.Column="0" Spacing="10" Margin="0,0,16,0">
-              <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" FontSize="10"
-                         Foreground="{StaticResource FgMutedBrush}" />
-              <TextBox Text="{Binding AccountInput}" FontSize="15" />
-
-              <TextBlock Text="ПАРОЛЬ" FontSize="10" Margin="0,4,0,0"
-                         Foreground="{StaticResource FgMutedBrush}" />
-              <TextBox x:Name="PasswordBox" PasswordChar="●" FontSize="16"
-                       Text="{Binding PasswordInput}" />
-
-              <TextBlock Text="{Binding PasswordError}" FontSize="11"
-                         TextWrapping="Wrap" Foreground="#FF3B5C" />
-
-              <StackPanel Orientation="Horizontal" Spacing="10">
-                <Button Content="Войти" IsDefault="True" Height="46" Width="120"
-                        HorizontalContentAlignment="Center"
-                        Command="{Binding ConfirmPasswordCommand}" />
-                <Button Content="Отмена" Height="46" Width="120"
-                        HorizontalContentAlignment="Center"
-                        Command="{Binding CancelPasswordCommand}" />
-              </StackPanel>
+          <Grid ColumnDefinitions="*,14,*" Margin="0,4,0,0">
+            <StackPanel Grid.Column="0" Spacing="5">
+              <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="label" />
+              <TextBox x:Name="AccountBox" Classes="form" FontSize="15"
+                       Text="{Binding AccountInput}" />
             </StackPanel>
+            <StackPanel Grid.Column="2" Spacing="5">
+              <TextBlock Text="ПАРОЛЬ" Classes="label" />
+              <TextBox x:Name="PasswordBox" Classes="form" PasswordChar="●" FontSize="16"
+                       Text="{Binding PasswordInput}" />
+            </StackPanel>
+          </Grid>
 
-            <!-- Экранная клавиатура: станция сенсорная, физической
-                 клавиатуры у неё нет, а пароль по заданию цифровой. -->
-            <UniformGrid Grid.Column="1" Columns="3" Rows="4" Width="216">
-            <Button Content="1" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+          <TextBlock Text="{Binding PasswordError}" FontSize="11" MinHeight="14"
+                     TextWrapping="Wrap" Foreground="{StaticResource FgInverseBrush}" />
+
+          <!-- Клавиши не забирают курсор из поля: иначе после первого
+               нажатия было бы не видно, куда пойдёт следующее. -->
+          <ItemsControl ItemsSource="{Binding KeyRows}" HorizontalAlignment="Center">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate>
+                <ItemsControl ItemsSource="{Binding}" HorizontalAlignment="Center">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <WrapPanel />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                      <Button Classes="key" Content="{Binding}" CommandParameter="{Binding}"
+                              Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).PasswordKeyCommand}" />
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center"
+                      Margin="0,4,0,0">
+            <Button Content="Регистр" Width="96" Height="42" Focusable="False" FontSize="13"
                     HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="1" />
-            <Button Content="2" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="2" />
-            <Button Content="3" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="3" />
-            <Button Content="4" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="4" />
-            <Button Content="5" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="5" />
-            <Button Content="6" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="6" />
-            <Button Content="7" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="7" />
-            <Button Content="8" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="8" />
-            <Button Content="9" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="9" />
-            <Button Content="C" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="C" />
-            <Button Content="0" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="0" />
-            <Button Content="←" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    Classes.primary="{Binding KeysUpper}"
+                    Command="{Binding ToggleKeysCaseCommand}" />
+            <Button Content="Стереть" Width="96" Height="42" Focusable="False" FontSize="13"
                     HorizontalContentAlignment="Center"
                     Command="{Binding PasswordKeyCommand}" CommandParameter="&lt;" />
-            </UniformGrid>
-          </Grid>
+            <Button Content="Очистить" Width="104" Height="42" Focusable="False" FontSize="13"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="C" />
+            <Button Classes="primary" Content="Войти" Width="120" Height="42" IsDefault="True"
+                    FontSize="13" HorizontalContentAlignment="Center"
+                    Command="{Binding ConfirmPasswordCommand}" />
+            <Button Content="Отмена" Width="110" Height="42" FontSize="13"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding CancelPasswordCommand}" />
+          </StackPanel>
         </StackPanel>
       </Border>
     </Border>

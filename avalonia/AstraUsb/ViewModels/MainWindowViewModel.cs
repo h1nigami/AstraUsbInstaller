@@ -84,8 +84,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private bool _askingForExit;
 
     /// <summary>Названия разделов для журнала: индекс совпадает с вкладкой.</summary>
+    // Имена совпадают с надписями на вкладках: по журналу разбирают, куда
+    // именно заходили, и другое имя там пришлось бы угадывать.
     private static readonly string[] TabNames =
-        ["Загрузка", "Поиск", "Устройства", "Сотрудники", "Журнал", "Настройки"];
+        ["Сбор данных", "Запрос данных", "Устройства", "Сотрудники", "Журнал", "Настройки"];
 
     private readonly ActionLog _actions = new(AppPaths.Database);
 
@@ -381,22 +383,57 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Клавиша экранной клавиатуры. Станция сенсорная, физической клавиатуры
-    /// у неё нет, а пароль по заданию цифровой.
+    /// Раскладка экранной клавиатуры. Станция сенсорная, физической
+    /// клавиатуры у неё нет, а пароль администратора буквенный не реже
+    /// цифрового, поэтому одних цифр мало.
     /// </summary>
+    private static readonly string[] KeyLayout =
+    [
+        "1234567890",
+        "qwertyuiop",
+        "asdfghjkl",
+        "zxcvbnm.-_",
+    ];
+
+    [ObservableProperty] private bool _keysUpper;
+
+    /// <summary>Клавиши по рядам, в текущем регистре.</summary>
+    public IReadOnlyList<IReadOnlyList<string>> KeyRows => KeyLayout
+        .Select(row => (IReadOnlyList<string>)row
+            .Select(key => KeysUpper ? char.ToUpperInvariant(key).ToString() : key.ToString())
+            .ToArray())
+        .ToArray();
+
+    partial void OnKeysUpperChanged(bool value) => OnPropertyChanged(nameof(KeyRows));
+
+    [RelayCommand]
+    private void ToggleKeysCase() => KeysUpper = !KeysUpper;
+
+    /// <summary>
+    /// Куда идёт нажатие: в учётную запись или в пароль. Ставится по тому,
+    /// в каком поле стоит курсор.
+    /// </summary>
+    [ObservableProperty] private bool _editingAccount;
+
+    /// <summary>Нажатие на экранной клавиатуре.</summary>
     [RelayCommand]
     private void PasswordKey(string? key)
     {
         PasswordError = "";
 
-        PasswordInput = key switch
-        {
-            null or "" => PasswordInput,
-            "C" => "",
-            "<" => PasswordInput.Length > 0 ? PasswordInput[..^1] : "",
-            _ => PasswordInput.Length < 32 ? PasswordInput + key : PasswordInput,
-        };
+        if (EditingAccount)
+            AccountInput = Typed(AccountInput, key);
+        else
+            PasswordInput = Typed(PasswordInput, key);
     }
+
+    private static string Typed(string text, string? key) => key switch
+    {
+        null or "" => text,
+        "C" => "",
+        "<" => text.Length > 0 ? text[..^1] : "",
+        _ => text.Length < 32 ? text + key : text,
+    };
 
     partial void OnPasswordInputChanged(string value) => OnPropertyChanged(nameof(PasswordMask));
 

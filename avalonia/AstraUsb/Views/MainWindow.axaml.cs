@@ -36,6 +36,12 @@ public partial class MainWindow : Window
 
         var tabs = this.FindControl<TabControl>("Tabs")!;
         var passwordBox = this.FindControl<TextBox>("PasswordBox")!;
+        var accountBox = this.FindControl<TextBox>("AccountBox")!;
+
+        // Экранная клавиатура пишет в то поле, где стоит курсор: полей два,
+        // а клавиатура под ними одна.
+        accountBox.GotFocus += (_, _) => vm.EditingAccount = true;
+        passwordBox.GotFocus += (_, _) => vm.EditingAccount = false;
 
         // Все разделы, кроме «Загрузки», закрыты паролем. Списки в них
         // читаются заново при каждом переходе: пока оператор смотрел на
@@ -83,8 +89,14 @@ public partial class MainWindow : Window
         // сенсорная, и промах по нему стоит оператору времени.
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(vm.PasswordVisible) && vm.PasswordVisible)
-                passwordBox.Focus();
+            if (e.PropertyName != nameof(vm.PasswordVisible) || !vm.PasswordVisible)
+                return;
+
+            // Учётная запись обычно та же, что в прошлый раз, поэтому курсор
+            // сразу в пароле.
+            vm.EditingAccount = false;
+            vm.KeysUpper = false;
+            passwordBox.Focus();
         };
 
         Closed += (_, _) => vm.Dispose();

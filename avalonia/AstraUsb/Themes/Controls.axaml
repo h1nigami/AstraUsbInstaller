@@ -148,10 +148,17 @@
   </Style>
 
   <!-- Клавиша экранной клавиатуры -->
+  <!-- Клавиша экранной клавиатуры: под палец, но так, чтобы полная
+       раскладка уместилась в ширину экрана станции. -->
   <Style Selector="Button.key">
-    <Setter Property="FontSize" Value="19" />
+    <Setter Property="FontSize" Value="17" />
     <Setter Property="Padding" Value="0" />
-    <Setter Property="Margin" Value="3" />
+    <Setter Property="Margin" Value="2" />
+    <Setter Property="Width" Value="66" />
+    <Setter Property="Height" Value="42" />
+    <Setter Property="MinHeight" Value="42" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="Focusable" Value="False" />
     <Setter Property="Background" Value="{StaticResource BgAppBrush}" />
   </Style>
 
@@ -251,6 +258,21 @@
 
   <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe">
     <Setter Property="IsVisible" Value="False" />
+  </Style>
+
+  <!-- Наведение не должно гасить признак открытого раздела: экран
+       сенсорный, курсор остаётся там, где последний раз коснулись, и
+       открытый раздел выглядел закрытым. -->
+  <Style Selector="TabItem:pointerover /template/ Border#PART_LayoutRoot">
+    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+  </Style>
+
+  <Style Selector="TabItem:selected:pointerover /template/ Border#PART_LayoutRoot">
+    <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+  </Style>
+
+  <Style Selector="TabItem:selected:pointerover">
+    <Setter Property="Foreground" Value="{StaticResource FgOnDarkBrush}" />
   </Style>
 
   <Style Selector="ListBox">
