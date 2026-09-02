@@ -203,23 +203,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         try
         {
-            // Файл на карте и есть источник истины. Нет файла, станция выдаёт
-            // номер и обязательно записывает его: иначе при следующем
-            // подключении камера будет опознана как новая. Имена записей
-            // идут запасным признаком: по ним узнаётся аппарат, которому
-            // поставили другую карту, и по ним же видно, у кого он на руках.
+            // Файл на карте и есть единственный источник истины. Нет файла,
+            // станция выдаёт номер и обязательно записывает его. Номер
+            // сотрудника из имён записей только показывается: на заводских
+            // настройках он одинаков у всех камер, поэтому закрепляет камеру
+            // за человеком оператор на вкладке «Устройства».
             var recording = RecordingName.FromCard(mount);
             var personnel = recording?.HasPersonnelNo == true ? recording.PersonnelNo : "";
 
             using var registry = new DeviceRegistry(AppPaths.Database);
             var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
-                device.Name, device.Name, recording);
+                device.Name, device.Name);
 
             var number = registry.FirmwareIdOf(id) ?? "";
             var name = registry.GetDeviceName(id);
 
             var staff = new StaffDirectory(AppPaths.Database);
-            var person = staff.AssignByPersonnelNo(id, personnel);
+            var person = staff.EmployeeOfDevice(id);
 
             var info = new CardInfo(
                 id,

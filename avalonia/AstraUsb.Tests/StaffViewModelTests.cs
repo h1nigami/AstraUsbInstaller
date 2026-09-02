@@ -5,9 +5,9 @@ using Xunit;
 namespace AstraUsb.Tests;
 
 /// <summary>
-/// Вкладка «Сотрудники». Камера приносит только номер человека, поэтому здесь
-/// оператор превращает номер в имя, телефон и отдел. Терять при этом никого
-/// нельзя: уволенный остаётся в базе, а удалённый отдел отдаёт своих людей выше.
+/// Вкладка «Сотрудники»: здесь оператор заводит людей и отделы. Терять при
+/// этом никого нельзя: уволенный остаётся в базе, а удалённый отдел отдаёт
+/// своих людей выше.
 /// </summary>
 public sealed class StaffViewModelTests : IDisposable
 {
@@ -85,7 +85,7 @@ public sealed class StaffViewModelTests : IDisposable
         model.PersonnelNoInput = "222222";
         model.SaveEmployeeCommand.Execute(null);
 
-        // Карточку завела станция по номеру из записей, имя вписывает оператор.
+        // Карточку завели номером, имя вписывают следующим шагом.
         model.Selected = model.Employees[0];
         Assert.Equal("222222", model.PersonnelNoInput);
 
@@ -143,18 +143,12 @@ public sealed class StaffViewModelTests : IDisposable
     }
 
     [Fact]
-    public void The_list_picks_up_a_card_created_by_a_connected_camera()
+    public void Reload_picks_up_a_card_added_elsewhere()
     {
         var model = NewModel();
         Assert.Empty(model.Employees);
 
-        // Камера сообщила номер сотрудника, станция завела карточку сама.
-        using (var registry = new DeviceRegistry(_db))
-        {
-            var device = registry.ResolveByCard(null, 1, "BESTCAM", "sdb1");
-            new StaffDirectory(_db).AssignByPersonnelNo(device, "333333");
-        }
-
+        new StaffDirectory(_db).AddEmployee("Петров П.П.", "333333");
         model.ReloadCommand.Execute(null);
 
         Assert.Equal("333333", Assert.Single(model.Employees).PersonnelNo);

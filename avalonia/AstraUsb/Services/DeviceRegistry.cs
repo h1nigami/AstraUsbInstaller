@@ -64,12 +64,6 @@ public sealed class DeviceRegistry : IDisposable
         TryExecute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_firmware"
                    + " ON devices (firmware_id) WHERE firmware_id IS NOT NULL");
 
-        // Номер, которым камера подписывает имена своих записей. Он живёт в
-        // аппарате, поэтому позволяет узнать камеру с заменённой картой.
-        // Без UNIQUE: оператор может прописать один номер двум аппаратам, и
-        // отказ вставки был бы хуже неоднозначности.
-        TryExecute("ALTER TABLE devices ADD COLUMN camera_no TEXT");
-
         // Устройства, потерянные прежней ошибкой регистрации: бэкапы на них
         // есть, а строки нет. Без неё устройство не видно в списке, ему нельзя
         // задать имя, и поиск не находит его файлы: он связывает файлы с
@@ -264,65 +258,23 @@ public sealed class DeviceRegistry : IDisposable
     /// следующем подключении будет опознана как новая. Чужой номер нашего
     /// формата не перезаписывается: камера могла приехать с другой станции.
     /// </summary>
-    /// <param name="recording">
-    /// Что удалось прочитать из имени последней записи. Запасной признак:
-    /// карту могли заменить, а номер аппарата остаётся в именах файлов.
-    /// </param>
     public long ResolveByCard(string? mountPoint, int stationNumber,
-        string? label, string? devName, RecordingInfo? recording = null)
+        string? label, string? devName)
     {
         var now = Timestamp();
         var card = CardIdentity.Read(mountPoint);
 
         if (!string.IsNullOrEmpty(card))
-            return Remember(Upsert(card, label ?? devName ?? "", now), recording);
+            return Upsert(card, label ?? devName ?? "", now);
 
-        // Номера на карте нет. Прежде чем счесть камеру новой, проверяем её
-        // собственный номер из имён записей: так узнаётся аппарат, которому
-        // поставили другую карту.
-        if (recording?.HasDeviceNo == true
-            && FindByCameraNo(recording.DeviceNo) is { } known)
-        {
-            // Прежний номер возвращаем на новую карту, иначе при следующем
-            // подключении камера опять станет новой.
-            if (FirmwareIdOf(known) is { } previous)
-                CardIdentity.Write(mountPoint, previous);
-
-            Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
-                ("$now", now), ("$label", label ?? devName ?? ""), ("$id", known));
-            return Remember(known, recording);
-        }
-
-        // Камера незнакомая, выдаём свой номер и кладём на карту.
+        // Номера на карте нет, значит камера для станции новая. Другие
+        // признаки для опознания не годятся: у этой модели и серийник USB, и
+        // номер в именах записей одинаковые на всех экземплярах, так что по
+        // ним разные камеры слились бы в одну.
         var issued = CardIdentity.Format(stationNumber, NextSequence(stationNumber));
         CardIdentity.Write(mountPoint, issued);
-        return Remember(Upsert(issued, label ?? devName ?? "", now), recording);
+        return Upsert(issued, label ?? devName ?? "", now);
     }
-
-    /// <summary>
-    /// Запоминает номер, которым камера подписывает записи. Он понадобится,
-    /// когда карту заменят и опознавать придётся по нему.
-    /// </summary>
-    private long Remember(long deviceId, RecordingInfo? recording)
-    {
-        if (recording?.HasDeviceNo == true)
-            Execute("UPDATE devices SET camera_no = $no WHERE id = $id",
-                ("$no", recording.DeviceNo), ("$id", deviceId));
-        return deviceId;
-    }
-
-    /// <summary>Камера с таким номером в именах записей, если она известна.</summary>
-    public long? FindByCameraNo(string? cameraNo)
-    {
-        if (string.IsNullOrEmpty(cameraNo))
-            return null;
-        return Scalar("SELECT id FROM devices WHERE camera_no = $no ORDER BY id LIMIT 1",
-            ("$no", cameraNo)) as long?;
-    }
-
-    /// <summary>Номер, которым камера подписывает записи, если он известен.</summary>
-    public string? CameraNoOf(long deviceId) =>
-        Scalar("SELECT camera_no FROM devices WHERE id = $id", ("$id", deviceId)) as string;
 
     /// <summary>Следующий свободный порядковый номер этой станции.</summary>
     private int NextSequence(int stationNumber)
@@ -353,45 +305,6 @@ public sealed class DeviceRegistry : IDisposable
             ("$serial", $"CARD_{cardId}"), ("$label", label), ("$now", now), ("$fw", cardId));
 
         return (long)(Scalar("SELECT last_insert_rowid()") ?? 0L);
-    }
-
-    /// <summary>
-    /// Находит или заводит камеру по её удостоверению.
-    ///
-    /// Номер из прошивки служит главным ключом: он принадлежит аппарату, а не карте.
-    /// Маркер на карте остаётся запасным путём для камер, которым номер не
-    /// прописали. Серийник USB не используется вовсе: у этой модели он зашит
-    /// одинаковым для всех экземпляров.
-    /// </summary>
-    public long ResolveByIdentity(DeviceIdentity identity, string? mountPoint,
-        string? label, string? devName)
-    {
-        var now = Timestamp();
-
-        if (identity.Kind == IdentityKind.FirmwareId)
-        {
-            if (Scalar("SELECT id FROM devices WHERE firmware_id = $fw",
-                    ("$fw", identity.Value)) is long known)
-            {
-                Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
-                    ("$now", now), ("$label", label ?? devName ?? ""), ("$id", known));
-                return known;
-            }
-
-            Execute("""
-                INSERT INTO devices (serial, label, first_seen, last_seen, firmware_id)
-                VALUES ($serial, $label, $now, $now, $fw)
-                """,
-                ("$serial", $"CAM_{identity.Value}"),
-                ("$label", label ?? devName ?? ""),
-                ("$now", now),
-                ("$fw", identity.Value));
-
-            return (long)(Scalar("SELECT last_insert_rowid()") ?? 0L);
-        }
-
-        // Номера у камеры нет, работаем по прежней схеме с маркером на карте.
-        return ResolveDeviceId(mountPoint, null, label, devName);
     }
 
     /// <summary>Номер камеры из прошивки, если он известен.</summary>
