@@ -134,12 +134,15 @@ public sealed class BackupService
             {
                 var relative = Path.GetRelativePath(mountPoint, source);
                 var dest = Path.Combine(destination, relative);
-                DateTime? shot = null;
+                // Время съёмки камера пишет прямо в имя файла, и это начало
+                // записи. Дата файла отмечает её закрытие и легче сбивается,
+                // поэтому она идёт запасным вариантом.
+                var shot = RecordingName.Parse(Path.GetFileName(source))?.ShotAt;
                 long size = 0;
                 try
                 {
                     var info = new FileInfo(source);
-                    shot = info.LastWriteTime;
+                    shot ??= info.LastWriteTime;
                     size = info.Exists ? info.Length : 0;
                 }
                 catch (Exception)
