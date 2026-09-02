@@ -182,6 +182,16 @@ station side is pinned by `UpdateTests.The_python_release_archive_is_not_taken`.
   throwing rollback cannot lose it) and restores the snapshot.
 - `ASTRA_UPDATE_API` overrides the release endpoint (mirrors on closed
   networks); Windows and macOS builds are installed and updated by hand.
+- **Install paths.** Linux: `avalonia/install.sh` (one-liner that picks the
+  `.deb` for the machine's architecture, verifies the checksum and installs it
+  via apt) or the `.deb` directly; the package is built by
+  `avalonia/packaging/build_deb.sh`, whose `postinst` calls
+  `install_native.sh --units-only` so the systemd units and the udev rule are
+  described in exactly one place. Windows: `BestCamStationSetup-<tag>.exe`,
+  built by the `windows-setup` job from `avalonia/windows/setup.iss` (Inno
+  Setup, PowerShell step — bash mangles ISCC's `/D` and `/O` switches).
+  `install_native.sh` guards every `systemctl` call behind
+  `/run/systemd/system` so the package installs cleanly in containers.
 
 ## Development branch
 

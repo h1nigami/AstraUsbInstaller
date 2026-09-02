@@ -22,17 +22,27 @@
 сборки под Linux, Windows и macOS выходят отдельными релизами с тегами вида
 `v2.x`.
 
-Поставить на станцию:
+Поставить на станцию одной командой:
 
 ```bash
-sha256sum -c bestcam-station-v2.0-linux-x64.tar.gz.sha256
-mkdir -p bestcam-station
-tar -xzf bestcam-station-v2.0-linux-x64.tar.gz -C bestcam-station
-cd bestcam-station && sudo ./install_native.sh
+curl -fsSL https://raw.githubusercontent.com/h1nigami/AstraUsbInstaller/master/avalonia/install.sh | sudo bash
 ```
 
-Установщик кладёт программу в `/opt/astra-usb-avalonia`, ставит службу киоска,
-правило udev против автомонтирования и таймер обновлений. Дальше станция
+Скрипт определяет разрядность, забирает пакет нужного релиза, сверяет
+контрольную сумму и ставит его. Нужен конкретный релиз, в том числе
+предварительный: передайте тег, `... | sudo bash -s -- v2.0.2`.
+
+Без сети на станции скачайте пакет заранее и поставьте его сами:
+
+```bash
+sudo apt install ./bestcam-station_2.0.2_amd64.deb
+```
+
+Пакет кладёт программу в `/opt/astra-usb-avalonia`, ставит службу киоска,
+правило udev против автомонтирования и таймер обновлений. Удаляется
+обычным `sudo apt remove bestcam-station`, база станции и записи при этом
+остаются. Для Windows в релизе лежит установщик `BestCamStationSetup-*.exe`,
+для macOS архив под нужный процессор. Дальше станция
 обновляется сама раз в шесть часов: сверяет контрольную сумму, проверяет, что
 новая сборка запускается, и при неудаче возвращает прежнюю версию.
 
