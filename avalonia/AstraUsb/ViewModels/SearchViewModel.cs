@@ -110,11 +110,99 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>Текст журнала регистратора: он тоже читается на месте.</summary>
     [ObservableProperty] private string _viewerText = "";
 
+    /// <summary>Длительность открытой записи в секундах: ноль значит не видео.</summary>
+    [ObservableProperty] private double _viewerLength;
+
+    /// <summary>Где стоит ползунок времени, в секундах.</summary>
+    [ObservableProperty] private double _viewerPosition;
+
     public bool ViewerHasImage => ViewerImage is not null;
     public bool ViewerHasText => ViewerText.Length > 0;
+    public bool ViewerHasVideo => ViewerLength > 0;
+
+    /// <summary>Подпись под шкалой: где стоим и сколько всего.</summary>
+    public string ViewerTimeLabel =>
+        $"{VideoPreview.Label(TimeSpan.FromSeconds(ViewerPosition))} "
+        + $"из {VideoPreview.Label(TimeSpan.FromSeconds(ViewerLength))}";
+
+    private string _videoPath = "";
+
+    // Ползунок тянут, и запросов кадра выходит больше, чем ffmpeg успевает
+    // выполнить. Показывается кадр только последнего запроса.
+    private int _frameRequest;
 
     partial void OnViewerImageChanged(Bitmap? value) => OnPropertyChanged(nameof(ViewerHasImage));
     partial void OnViewerTextChanged(string value) => OnPropertyChanged(nameof(ViewerHasText));
+
+    partial void OnViewerLengthChanged(double value)
+    {
+        OnPropertyChanged(nameof(ViewerHasVideo));
+        OnPropertyChanged(nameof(ViewerTimeLabel));
+    }
+
+    partial void OnViewerPositionChanged(double value)
+    {
+        OnPropertyChanged(nameof(ViewerTimeLabel));
+        ShowFrame(TimeSpan.FromSeconds(value));
+    }
+
+    /// <summary>Шаг по записи: искать нужный момент ползунком неудобно.</summary>
+    [RelayCommand]
+    private void StepBack() => ViewerPosition = Math.Max(0, ViewerPosition - 10);
+
+    [RelayCommand]
+    private void StepForward() => ViewerPosition = Math.Min(ViewerLength, ViewerPosition + 10);
+
+    /// <summary>Достаёт кадр записи и показывает его, если он ещё нужен.</summary>
+    private void ShowFrame(TimeSpan at)
+    {
+        if (_videoPath.Length == 0)
+            return;
+
+        var mine = ++_frameRequest;
+        var path = _videoPath;
+
+        // За последним кадром в записи пусто, а конец шкалы это ровно
+        // длительность: без отступа кадр в конце не выходил вовсе.
+        if (ViewerLength > 0.3 && at.TotalSeconds > ViewerLength - 0.3)
+            at = TimeSpan.FromSeconds(ViewerLength - 0.3);
+
+        Task.Run(() =>
+        {
+            var frame = VideoPreview.Frame(path, at);
+            if (frame is null || mine != _frameRequest)
+                return;
+
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(frame);
+            }
+            catch (IOException)
+            {
+                // Кадр перезаписывается следующим запросом: значит он и не нужен.
+                return;
+            }
+
+            Dispatcher.UIThread.Post(() =>
+            {
+                if (mine != _frameRequest)
+                    return;
+
+                try
+                {
+                    using var stream = new MemoryStream(bytes);
+                    var next = new Bitmap(stream);
+                    ViewerImage?.Dispose();
+                    ViewerImage = next;
+                }
+                catch (Exception)
+                {
+                    // Кадр не разобрался: шкала остаётся, картинка прежняя.
+                }
+            });
+        });
+    }
 
     /// <summary>Сколько строк отобрано: число выносится в подписи действий.</summary>
     public int SelectedCount => Results.Count(r => r.Selected);
@@ -232,6 +320,23 @@ public sealed partial class SearchViewModel : ObservableObject
                 }
                 break;
 
+            case MediaKind.Video:
+                // Длительность узнаётся первой: без неё шкалу строить не из
+                // чего, и запись уходит системному проигрывателю, как раньше.
+                var length = VideoPreview.Duration(file.Path);
+                if (length is null)
+                    goto default;
+
+                _videoPath = file.Path;
+                ViewerLength = length.Value.TotalSeconds;
+                ViewerPosition = 0;
+                ViewerNote = $"{file.Size}, снято {file.ShotAt}, "
+                             + $"длительность {VideoPreview.Label(length.Value)}. "
+                             + "Просмотр по кадрам, звук в системном проигрывателе";
+                ViewerVisible = true;
+                ShowFrame(TimeSpan.Zero);
+                break;
+
             default:
                 var result = MediaTools.Open(file.Path);
                 Hint = result.Ok
@@ -263,6 +368,10 @@ public sealed partial class SearchViewModel : ObservableObject
         ViewerImage = null;
         ViewerText = "";
         ViewerNote = "";
+        _videoPath = "";
+        _frameRequest++;
+        ViewerLength = 0;
+        ViewerPosition = 0;
     }
 
     /// <summary>Читает начало файла, не поднимая в память весь.</summary>

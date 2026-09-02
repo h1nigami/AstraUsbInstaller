@@ -420,7 +420,7 @@
 
           <Border Grid.Row="1" Classes="card">
             <Grid RowDefinitions="26,*">
-              <Grid Grid.Row="0" ColumnDefinitions="30,86,*,54,54,86,76,76,52" Margin="12,7,12,0">
+              <Grid Grid.Row="0" ColumnDefinitions="30,86,*,54,52,78,92,92,52" Margin="12,7,12,0">
                 <TextBlock Grid.Column="1" Text="УСТРОЙСТВО" Classes="label" />
                 <TextBlock Grid.Column="2" Text="ФАЙЛ" Classes="label" />
                 <TextBlock Grid.Column="3" Text="ТИП" Classes="label" />
@@ -435,7 +435,7 @@
                        SelectedItem="{Binding Search.Current}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:FoundFile">
-                    <Grid ColumnDefinitions="30,86,*,54,54,86,76,76,52" Height="34">
+                    <Grid ColumnDefinitions="30,86,*,54,52,78,92,92,52" Height="34">
                       <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="30"
                                 VerticalAlignment="Center" />
                       <TextBlock Grid.Column="1" Text="{Binding Camera}" Classes="mono"
@@ -1208,12 +1208,31 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" Margin="0,10,0,0"
-                      HorizontalAlignment="Right">
-            <Button Content="Открыть в системе" Height="46" FontSize="12"
-                    Command="{Binding Search.OpenExternallyCommand}" />
-            <Button Classes="primary" Content="Закрыть" Height="46" Width="140"
-                    Command="{Binding Search.CloseViewerCommand}" />
+          <StackPanel Grid.Row="2" Margin="0,10,0,0" Spacing="6">
+            <!-- Шкала времени видео: кадр берётся из записи по месту
+                 ползунка, поэтому в звуке и движении её не заменит. -->
+            <Grid ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding Search.ViewerHasVideo}">
+              <Button Grid.Column="0" Content="&lt; 10 с" Height="42" Width="82" FontSize="12"
+                      HorizontalContentAlignment="Center"
+                      Command="{Binding Search.StepBackCommand}" />
+              <Slider Grid.Column="1" Margin="10,0" VerticalAlignment="Center"
+                      Minimum="0" Maximum="{Binding Search.ViewerLength}"
+                      Value="{Binding Search.ViewerPosition}" />
+              <Button Grid.Column="2" Content="10 с &gt;" Height="42" Width="82" FontSize="12"
+                      HorizontalContentAlignment="Center"
+                      Command="{Binding Search.StepForwardCommand}" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+              <TextBlock Grid.Column="0" Text="{Binding Search.ViewerTimeLabel}" Classes="mono"
+                         FontSize="12" FontWeight="Bold" VerticalAlignment="Center"
+                         IsVisible="{Binding Search.ViewerHasVideo}" />
+              <Button Grid.Column="2" Content="Открыть в системе" Height="46" FontSize="12"
+                      Margin="0,0,8,0"
+                      Command="{Binding Search.OpenExternallyCommand}" />
+              <Button Grid.Column="3" Classes="primary" Content="Закрыть" Height="46" Width="140"
+                      Command="{Binding Search.CloseViewerCommand}" />
+            </Grid>
           </StackPanel>
         </Grid>
       </Border>
