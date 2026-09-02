@@ -1,6 +1,6 @@
 using Microsoft.Data.Sqlite;
 
-namespace AstraUsb;
+namespace AstraUsb.Services;
 
 /// <summary>
 /// Учёт устройств и сеансов копирования. Схема и правила идентификации

@@ -1,4 +1,4 @@
-using AstraUsb;
+using AstraUsb.Services;
 using Xunit;
 
 namespace AstraUsb.Tests;

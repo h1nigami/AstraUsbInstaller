@@ -8,29 +8,42 @@
   </Application.Styles>
 
   <Application.Resources>
-    <!-- Палитра BestCam: перенесена из работающей версии, чтобы киоск
-         не менял узнаваемый вид при переходе на новый интерфейс. -->
-    <Color x:Key="BgApp">#0F172A</Color>
-    <Color x:Key="BgPanel">#1E293B</Color>
-    <Color x:Key="BgSurface">#334155</Color>
-    <Color x:Key="FgMain">#F1F5F9</Color>
-    <Color x:Key="FgMuted">#94A3B8</Color>
-    <Color x:Key="Accent">#2563EB</Color>
-    <Color x:Key="AccentWarn">#D97706</Color>
-    <Color x:Key="AccentOk">#16A34A</Color>
-    <Color x:Key="AccentDanger">#DC2626</Color>
-    <Color x:Key="Brand">#38BDF8</Color>
+    <!--
+      Палитра BestCam, доведённая до тёмного техно: фон ушёл глубже и холоднее,
+      акценты стали неоновыми. Узнаваемость сохранена — синий и голубой те же,
+      что были в работающей версии.
+    -->
+    <Color x:Key="BgApp">#080B14</Color>
+    <Color x:Key="BgPanel">#0F1524</Color>
+    <Color x:Key="BgSurface">#161E33</Color>
+    <Color x:Key="Line">#1F2A44</Color>
+    <Color x:Key="FgMain">#E8EEF9</Color>
+    <Color x:Key="FgMuted">#7C8AA5</Color>
+
+    <!-- Состояния портов. Каждое читается цветом с расстояния. -->
+    <Color x:Key="Accent">#2F6BFF</Color>
+    <Color x:Key="Brand">#22D3EE</Color>
+    <Color x:Key="AccentWarn">#FFB020</Color>
+    <Color x:Key="AccentOk">#22C55E</Color>
+    <Color x:Key="AccentDanger">#FF3B5C</Color>
 
     <SolidColorBrush x:Key="BgAppBrush" Color="{StaticResource BgApp}" />
     <SolidColorBrush x:Key="BgPanelBrush" Color="{StaticResource BgPanel}" />
     <SolidColorBrush x:Key="BgSurfaceBrush" Color="{StaticResource BgSurface}" />
+    <SolidColorBrush x:Key="LineBrush" Color="{StaticResource Line}" />
     <SolidColorBrush x:Key="FgMainBrush" Color="{StaticResource FgMain}" />
     <SolidColorBrush x:Key="FgMutedBrush" Color="{StaticResource FgMuted}" />
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}" />
+    <SolidColorBrush x:Key="BrandBrush" Color="{StaticResource Brand}" />
     <SolidColorBrush x:Key="AccentWarnBrush" Color="{StaticResource AccentWarn}" />
     <SolidColorBrush x:Key="AccentOkBrush" Color="{StaticResource AccentOk}" />
     <SolidColorBrush x:Key="AccentDangerBrush" Color="{StaticResource AccentDanger}" />
-    <SolidColorBrush x:Key="BrandBrush" Color="{StaticResource Brand}" />
+
+    <!-- Подсветка шапки: холодный градиент вместо плоской заливки. -->
+    <LinearGradientBrush x:Key="HeaderBrush" StartPoint="0%,0%" EndPoint="100%,0%">
+      <GradientStop Offset="0" Color="#0F1524" />
+      <GradientStop Offset="1" Color="#131C30" />
+    </LinearGradientBrush>
   </Application.Resources>
 
 </Application>

@@ -1,4 +1,4 @@
-namespace AstraUsb;
+namespace AstraUsb.Services;
 
 /// <summary>Итог сеанса копирования.</summary>
 /// <param name="CopiedFiles">Сколько файлов скопировано в этот раз.</param>

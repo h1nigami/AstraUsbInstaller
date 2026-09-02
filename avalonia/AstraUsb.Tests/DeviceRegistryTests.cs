@@ -1,4 +1,4 @@
-using AstraUsb;
+using AstraUsb.Services;
 using Microsoft.Data.Sqlite;
 using Xunit;
 

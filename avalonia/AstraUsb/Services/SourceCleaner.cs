@@ -1,4 +1,4 @@
-namespace AstraUsb;
+namespace AstraUsb.Services;
 
 /// <summary>
 /// Удаление видео с носителя после копирования. Перенесено из Python-версии

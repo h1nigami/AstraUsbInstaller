@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace AstraUsb;
+namespace AstraUsb.Services;
 
 /// <summary>Подключённый носитель: имя устройства и точка монтирования, если есть.</summary>
 public sealed record UsbDevice(string Name, string? MountPoint);
