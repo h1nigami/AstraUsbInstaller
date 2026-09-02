@@ -144,12 +144,44 @@ happening:
    the Python archive from an explicit file list; the `avalonia/` directory is
    not in it, but a release published from a branch that reorganises the
    project would still change what points receive.
-3. **Never ship a Windows archive as `.tar.gz`.** `pick_asset` selects the
-   `.tar.gz` asset and the checksum named after it. A second `.tar.gz` in the
-   same release would be ambiguous; a `.zip` is ignored, which is what we want.
+3. **Name archives so the two updaters cannot confuse them.** The Python
+   archive is `astra-usb-monitor-<tag>.tar.gz`; cross-platform archives are
+   `bestcam-station-<tag>-<rid>.tar.gz`. `pick_asset` now requires the
+   `astra-usb-monitor-` prefix, and the station's `Release.Pick` requires the
+   `-<rid>.tar.gz` suffix plus a matching `.sha256`, so neither updater can
+   install the other's build.
 
-`tests/test_updater.py::MixedAssetsTest` pins rule 3: a release carrying both
-platforms must still hand a Python point its own archive and its own checksum.
+`tests/test_updater.py::MixedAssetsTest` pins rule 3 on the Python side; the
+station side is pinned by `UpdateTests.The_python_release_archive_is_not_taken`.
+
+## Cross-platform version: versioning, release and self-update
+
+- **Version.** `<Version>` in `AstraUsb.csproj` is compiled into the assembly;
+  `Services/VersionInfo` prefers the `VERSION` file written by the release
+  workflow (`<tag> <date>`) and falls back to the assembly version, so the
+  Настройки → О программе screen always shows a version, offline included.
+- **Release workflow.** `.github/workflows/release-station.yml` runs on a
+  published release (and by hand via `workflow_dispatch`), builds self-contained
+  archives for `linux-x64`, `linux-arm64`, `win-x64`, `osx-x64`, `osx-arm64`
+  (~50 MB each), writes `VERSION` into every one, and attaches a `.sha256` next
+  to each archive. Linux archives also carry `start_native.sh`,
+  `install_native.sh` and the udev rule. `release.yml` (the Python archive) is
+  skipped for pre-releases.
+- **Self-update.** `Services/Updater` runs as `AstraUsb --update` from a
+  separate systemd unit pair (`astra-usb-avalonia-update.{service,timer}`,
+  installed by `install_native.sh`, 10 min after boot then every 6 h). It is a
+  separate unit for the same reason as the Python one: the installer restarts
+  the kiosk service at the end, and updating from inside the kiosk would kill
+  the update mid-swap. Order: compare tags for inequality → skip while
+  `data/.copying` is fresher than a minute (`Services/BusyMarker`, stamped by
+  `UpdateSummary` while any bay is scanning or copying) → download the archive
+  for `Updater.Platform()` → verify the checksum → verify the new build runs
+  (`AstraUsb --version`) → snapshot `APP_DIR` to `APP_DIR.prev` → run
+  `install_native.sh` from the unpacked archive → check the service is active.
+  A failure records the tag in `APP_DIR.failed` (before rolling back, so a
+  throwing rollback cannot lose it) and restores the snapshot.
+- `ASTRA_UPDATE_API` overrides the release endpoint (mirrors on closed
+  networks); Windows and macOS builds are installed and updated by hand.
 
 ## Development branch
 
