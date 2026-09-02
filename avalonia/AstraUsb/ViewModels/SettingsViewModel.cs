@@ -34,6 +34,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty] private string _backupRoot = "";
     [ObservableProperty] private int _minFreeGb;
+    [ObservableProperty] private int _stationNumber;
     [ObservableProperty] private int _storageModeIndex;
     [ObservableProperty] private bool _deleteVideoAfterCopy;
     [ObservableProperty] private string _version = "";
@@ -56,6 +57,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         BackupRoot = _settings.BackupRoot;
         MinFreeGb = _settings.MinFreeGb;
+        StationNumber = _settings.StationNumber;
         StorageModeIndex = _settings.StorageMode == StorageMode.Overwrite ? 1 : 0;
         DeleteVideoAfterCopy = _settings.DeleteVideoAfterCopy;
 
@@ -68,6 +70,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _settings.BackupRoot = BackupRoot.Trim();
         _settings.MinFreeGb = Math.Max(1, MinFreeGb);
+        _settings.StationNumber = Math.Clamp(StationNumber, 0, 99);
         _settings.StorageMode = StorageModeIndex == 1 ? StorageMode.Overwrite : StorageMode.Warn;
         _settings.DeleteVideoAfterCopy = DeleteVideoAfterCopy;
 

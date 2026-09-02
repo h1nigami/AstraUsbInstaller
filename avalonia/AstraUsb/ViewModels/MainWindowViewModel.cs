@@ -20,6 +20,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
     private readonly PortMap _portMap;
+    private readonly Settings _stationSettings = Services.Settings.Load();
+    private readonly BackupService _backups;
+
+    /// <summary>Камеры, для которых выгрузка уже идёт: повторно не запускаем.</summary>
+    private readonly Dictionary<string, long> _running = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Камеры, которые уже выгружены в этом подключении. Опрос идёт каждые две
+    /// секунды, и без этой памяти выгрузка запускалась бы по кругу. Память
+    /// сбрасывается, когда камеру вынимают.
+    /// </summary>
+    private readonly Dictionary<string, BackupStage> _finished = new(StringComparer.Ordinal);
 
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
@@ -28,6 +40,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Вкладка «Настройки».</summary>
     public SettingsViewModel Settings { get; } = new();
+
+    /// <summary>Вкладка «Поиск».</summary>
+    public SearchViewModel Search { get; } = new();
 
     [ObservableProperty]
     private string _clockTime = "--:--:--";
@@ -63,10 +78,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _listDevices = listDevices;
         AppPaths.EnsureCreated();
         _portMap = portMap ?? new PortMap(AppPaths.Database);
+        _backups = new BackupService(AppPaths.Database, _stationSettings);
         Version = ReadVersion();
 
         for (var i = 0; i < PortCount; i++)
-            Ports.Add(new PortViewModel());
+            Ports.Add(new PortViewModel { Slot = i });
 
         TickClock();
         _clock.Tick += (_, _) => TickClock();
@@ -105,26 +121,123 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 continue;
             }
 
-            var identity = DeviceIdentifier.Resolve(device.MountPoint);
             var port = Ports[i];
+            var cameraId = device.Name;
+            var detail = "номер не выдан";
+            var employee = "";
+            var department = "";
 
-            port.Title = identity.IsKnown ? identity.Value : device.Name;
-            port.Detail = identity.Kind switch
+            if (!string.IsNullOrEmpty(device.MountPoint))
             {
-                IdentityKind.FirmwareId => "номер камеры",
-                IdentityKind.CardMarker => "номер с карты",
-                _ => device.MountPoint ?? "не смонтировано",
-            };
-            port.State = string.IsNullOrEmpty(device.MountPoint)
-                ? PortState.Free
-                : PortState.Detected;
+                try
+                {
+                    // Файл на карте — источник истины. Нет файла — станция
+                    // выдаёт номер и записывает его: иначе при следующем
+                    // подключении камера будет опознана как новая.
+                    using var registry = new DeviceRegistry(AppPaths.Database);
+                    var id = registry.ResolveByCard(
+                        device.MountPoint, _stationSettings.StationNumber, device.Name, device.Name);
+
+                    var card = registry.FirmwareIdOf(id) ?? "";
+                    var name = registry.GetDeviceName(id);
+
+                    cameraId = string.IsNullOrEmpty(name) ? card : name;
+                    detail = CardIdentity.StationOf(card) is { } station
+                        ? (station == _stationSettings.StationNumber
+                            ? "номер выдан этой станцией"
+                            : $"номер станции {station:00}")
+                        : "номер задан в камере";
+
+                    var staff = new StaffDirectory(AppPaths.Database);
+                    if (staff.EmployeeOfDevice(id) is { } person)
+                    {
+                        employee = person.FullName;
+                        department = staff.DepartmentPath(person.DepartmentId);
+                    }
+
+                    StartBackup(port, id, device.MountPoint);
+                }
+                catch (Exception)
+                {
+                    // База занята другим действием — плитка всё равно покажет камеру.
+                }
+            }
+
+            port.CameraId = cameraId;
+            port.Employee = employee;
+            port.Department = department;
+
+            // Пока выгрузка идёт или уже закончена, подпись и состояние
+            // принадлежат ей: иначе опрос каждые две секунды сбрасывал бы
+            // «загрузку данных» обратно в «подключена».
+            var busy = !string.IsNullOrEmpty(device.MountPoint)
+                       && (_running.ContainsKey(device.MountPoint!)
+                           || _finished.ContainsKey(device.MountPoint!));
+            if (!busy)
+            {
+                port.Detail = detail;
+                port.State = string.IsNullOrEmpty(device.MountPoint)
+                    ? PortState.Free
+                    : PortState.Detected;
+            }
         }
+
+        // Камеру вынули — забываем итог, чтобы при следующем подключении
+        // выгрузка началась заново.
+        var present = devices
+            .Select(d => d.MountPoint)
+            .Where(m => !string.IsNullOrEmpty(m))
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var gone in _finished.Keys.Where(m => !present.Contains(m)).ToArray())
+            _finished.Remove(gone);
 
         Status = devices.Count == 0
             ? "носители не подключены"
             : $"носителей: {devices.Count}";
 
         UpdateStorage();
+    }
+
+    /// <summary>
+    /// Запускает выгрузку камеры, если она ещё не идёт. Плитка показывает ход:
+    /// заливка растёт по мере копирования.
+    /// </summary>
+    private void StartBackup(PortViewModel port, long deviceId, string mountPoint)
+    {
+        if (_running.ContainsKey(mountPoint) || _finished.ContainsKey(mountPoint))
+            return;
+
+        _running[mountPoint] = deviceId;
+        port.State = PortState.Scanning;
+
+        var progress = new Progress<BackupProgress>(report =>
+        {
+            port.Progress = report.Progress;
+            port.Detail = report.Detail;
+            port.State = report.Stage switch
+            {
+                BackupStage.Scanning => PortState.Scanning,
+                BackupStage.Copying => PortState.Copying,
+                BackupStage.Done => PortState.Done,
+                _ => PortState.Failed,
+            };
+
+            if (report.Stage is BackupStage.Done or BackupStage.Failed)
+                _finished[mountPoint] = report.Stage;
+        });
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _backups.RunAsync(deviceId, mountPoint, progress);
+            }
+            finally
+            {
+                _running.Remove(mountPoint);
+            }
+        });
     }
 
     /// <summary>Версия из файла VERSION рядом с программой.</summary>

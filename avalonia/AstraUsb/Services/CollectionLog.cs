@@ -44,6 +44,9 @@ public sealed class CollectionLog
     public CollectionLog(string dbPath)
     {
         _dbPath = dbPath;
+        var dir = Path.GetDirectoryName(dbPath);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
         using var db = Open();
         Run(db, """
             CREATE TABLE IF NOT EXISTS collected_files (

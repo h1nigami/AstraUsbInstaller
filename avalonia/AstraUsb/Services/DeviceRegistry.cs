@@ -58,6 +58,12 @@ public sealed class DeviceRegistry : IDisposable
         TryExecute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''");
         TryExecute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''");
 
+        // Номер, который камера пишет в свой журнал. Он живёт в аппарате и
+        // переживает замену карты, поэтому опознание идёт прежде всего по нему.
+        TryExecute("ALTER TABLE devices ADD COLUMN firmware_id TEXT");
+        TryExecute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_firmware"
+                   + " ON devices (firmware_id) WHERE firmware_id IS NOT NULL");
+
         // Устройства, потерянные прежней ошибкой регистрации: бэкапы на них
         // есть, а строки нет. Без неё устройство не видно в списке, ему нельзя
         // задать имя, и поиск не находит его файлы — он связывает файлы с
@@ -244,7 +250,104 @@ public sealed class DeviceRegistry : IDisposable
         return result is DBNull ? null : result;
     }
 
-/// <summary>Все известные камеры для вкладки «Устройства».</summary>
+    /// <summary>
+    /// Находит или заводит камеру по номеру с её карты.
+    ///
+    /// Файл на карте — единственный источник истины. Если файла нет, станция
+    /// выдаёт номер и обязательно записывает его: без записи камера при
+    /// следующем подключении будет опознана как новая. Чужой номер нашего
+    /// формата не перезаписывается — камера могла приехать с другой станции.
+    /// </summary>
+    public long ResolveByCard(string? mountPoint, int stationNumber,
+        string? label, string? devName)
+    {
+        var now = Timestamp();
+        var card = CardIdentity.Read(mountPoint);
+
+        if (!string.IsNullOrEmpty(card))
+            return Upsert(card, label ?? devName ?? "", now);
+
+        // Номера нет — выдаём свой и кладём на карту.
+        var issued = CardIdentity.Format(stationNumber, NextSequence(stationNumber));
+        CardIdentity.Write(mountPoint, issued);
+        return Upsert(issued, label ?? devName ?? "", now);
+    }
+
+    /// <summary>Следующий свободный порядковый номер этой станции.</summary>
+    private int NextSequence(int stationNumber)
+    {
+        var prefix = $"BCU-{Math.Clamp(stationNumber, 0, 99):00}-";
+        var taken = Scalar(
+            "SELECT MAX(CAST(SUBSTR(firmware_id, LENGTH($prefix) + 1) AS INTEGER))"
+            + " FROM devices WHERE firmware_id LIKE $like",
+            ("$prefix", prefix), ("$like", prefix + "%"));
+
+        return taken is long max ? (int)max + 1 : 1;
+    }
+
+    /// <summary>Заводит камеру под этим номером или обновляет уже известную.</summary>
+    private long Upsert(string cardId, string label, string now)
+    {
+        if (Scalar("SELECT id FROM devices WHERE firmware_id = $fw", ("$fw", cardId)) is long known)
+        {
+            Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
+                ("$now", now), ("$label", label), ("$id", known));
+            return known;
+        }
+
+        Execute("""
+            INSERT INTO devices (serial, label, first_seen, last_seen, firmware_id)
+            VALUES ($serial, $label, $now, $now, $fw)
+            """,
+            ("$serial", $"CARD_{cardId}"), ("$label", label), ("$now", now), ("$fw", cardId));
+
+        return (long)(Scalar("SELECT last_insert_rowid()") ?? 0L);
+    }
+
+    /// <summary>
+    /// Находит или заводит камеру по её удостоверению.
+    ///
+    /// Номер из прошивки — главный ключ: он принадлежит аппарату, а не карте.
+    /// Маркер на карте остаётся запасным путём для камер, которым номер не
+    /// прописали. Серийник USB не используется вовсе: у этой модели он зашит
+    /// одинаковым для всех экземпляров.
+    /// </summary>
+    public long ResolveByIdentity(DeviceIdentity identity, string? mountPoint,
+        string? label, string? devName)
+    {
+        var now = Timestamp();
+
+        if (identity.Kind == IdentityKind.FirmwareId)
+        {
+            if (Scalar("SELECT id FROM devices WHERE firmware_id = $fw",
+                    ("$fw", identity.Value)) is long known)
+            {
+                Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
+                    ("$now", now), ("$label", label ?? devName ?? ""), ("$id", known));
+                return known;
+            }
+
+            Execute("""
+                INSERT INTO devices (serial, label, first_seen, last_seen, firmware_id)
+                VALUES ($serial, $label, $now, $now, $fw)
+                """,
+                ("$serial", $"CAM_{identity.Value}"),
+                ("$label", label ?? devName ?? ""),
+                ("$now", now),
+                ("$fw", identity.Value));
+
+            return (long)(Scalar("SELECT last_insert_rowid()") ?? 0L);
+        }
+
+        // Номера у камеры нет — работаем по прежней схеме с маркером на карте.
+        return ResolveDeviceId(mountPoint, null, label, devName);
+    }
+
+    /// <summary>Номер камеры из прошивки, если он известен.</summary>
+    public string? FirmwareIdOf(long deviceId) =>
+        Scalar("SELECT firmware_id FROM devices WHERE id = $id", ("$id", deviceId)) as string;
+
+    /// <summary>Все известные камеры для вкладки «Устройства».</summary>
     public IReadOnlyList<DeviceRecord> ListDevices()
     {
         using var cmd = _db.CreateCommand();

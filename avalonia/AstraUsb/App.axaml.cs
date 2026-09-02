@@ -11,6 +11,10 @@ public partial class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
+        // Каталоги готовим до окна: вью-модели вкладок создаются раньше тела
+        // конструктора главной модели и сразу открывают базу.
+        Services.AppPaths.EnsureCreated();
+
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             desktop.MainWindow = new MainWindow();

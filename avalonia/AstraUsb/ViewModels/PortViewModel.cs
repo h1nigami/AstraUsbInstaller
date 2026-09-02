@@ -3,7 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace AstraUsb.ViewModels;
 
-/// <summary>Состояние порта, как его видит оператор.</summary>
+/// <summary>Состояние гнезда, как его видит оператор.</summary>
 public enum PortState
 {
     Free,
@@ -15,79 +15,109 @@ public enum PortState
 }
 
 /// <summary>
-/// Одно гнездо на экране «Загрузка». Плитка одновременно служит индикатором:
-/// заливка снизу вверх показывает долю скопированного и читается с расстояния,
-/// в отличие от процентов мелким шрифтом.
+/// Одно гнездо на экране «Загрузка».
+///
+/// Раскладка повторяет штатную программу станции: номер отсека в углу, под ним
+/// сведения о камере и сотруднике, внизу полоса хода выгрузки со счётчиком
+/// файлов. Свободное гнездо подписано «Свободен», как там же.
 /// </summary>
 public sealed partial class PortViewModel : ObservableObject
 {
-    /// <summary>Высота плитки при сетке 5x2 на экране станции.</summary>
-    public const double TileHeight = 150;
+    /// <summary>Высота плитки при сетке 4x3 на экране станции.</summary>
+    public const double TileHeight = 148;
 
-    [ObservableProperty]
-    private string _title = "—";
+    /// <summary>Ширина полосы хода выгрузки.</summary>
+    public const double BarWidth = 218;
 
-    [ObservableProperty]
-    private string _detail = "";
-
-    [ObservableProperty]
-    private PortState _state = PortState.Free;
+    [ObservableProperty] private int _slot;
+    [ObservableProperty] private string _cameraId = "";
+    [ObservableProperty] private string _employee = "";
+    [ObservableProperty] private string _department = "";
+    [ObservableProperty] private string _detail = "";
+    [ObservableProperty] private PortState _state = PortState.Free;
 
     /// <summary>Доля скопированного, 0..1.</summary>
-    [ObservableProperty]
-    private double _progress;
+    [ObservableProperty] private double _progress;
+
+    public string SlotLabel => $"{Slot + 1:00}";
+
+    public bool IsFree => State == PortState.Free;
+    public bool IsBusy => State != PortState.Free;
 
     public string StateText => State switch
     {
-        PortState.Detected => "ПОДКЛЮЧЕНО",
-        PortState.Scanning => "СКАНИРОВАНИЕ",
-        PortState.Copying => "КОПИРОВАНИЕ",
-        PortState.Done => "ГОТОВО",
-        PortState.Failed => "ОШИБКА",
-        _ => "СВОБОДНО",
+        PortState.Detected => "Подключена",
+        PortState.Scanning => "Подсчёт объёма",
+        PortState.Copying => "Загрузка данных",
+        PortState.Done => "Загрузка завершена",
+        PortState.Failed => "Ошибка загрузки",
+        _ => "Свободен",
     };
 
-    public IBrush Fill => new SolidColorBrush(Color.Parse(State switch
+    /// <summary>Подпись под свободным гнездом — как в штатной программе.</summary>
+    public string IdleText => "Нет передачи данных";
+
+    public string CameraLine => string.IsNullOrEmpty(CameraId) ? "" : $"ID устройства: {CameraId}";
+
+    public string EmployeeLine => string.IsNullOrEmpty(Employee)
+        ? "Сотрудник: не закреплён"
+        : $"Сотрудник: {Employee}";
+
+    public string DepartmentLine => string.IsNullOrEmpty(Department)
+        ? "Отдел: не указан"
+        : $"Отдел: {Department}";
+
+    public string PercentText => State switch
+    {
+        PortState.Done => "100%",
+        PortState.Copying or PortState.Scanning => $"{Math.Clamp(Progress, 0, 1) * 100:0}%",
+        _ => "",
+    };
+
+    public IBrush Accent => new SolidColorBrush(Color.Parse(State switch
     {
         PortState.Detected or PortState.Scanning => "#2F6BFF",
-        PortState.Copying => "#FFB020",
-        PortState.Done => "#22C55E",
-        PortState.Failed => "#FF3B5C",
-        _ => "#0F1524",
-    }));
-
-    /// <summary>Полоса сверху и рамка: занятый порт заметен и без заливки.</summary>
-    public IBrush Edge => new SolidColorBrush(Color.Parse(State switch
-    {
-        PortState.Detected or PortState.Scanning => "#22D3EE",
         PortState.Copying => "#FFB020",
         PortState.Done => "#22C55E",
         PortState.Failed => "#FF3B5C",
         _ => "#1F2A44",
     }));
 
-    public double FillHeight => State switch
+    /// <summary>Заполненная часть полосы, в пикселях.</summary>
+    public double BarFill => State switch
     {
-        PortState.Free => 0,
-        PortState.Detected => TileHeight * 0.06,
-        PortState.Done => TileHeight,
-        _ => TileHeight * Math.Clamp(Progress, 0.06, 1),
+        PortState.Done => BarWidth,
+        PortState.Copying or PortState.Scanning => BarWidth * Math.Clamp(Progress, 0, 1),
+        _ => 0,
     };
 
     partial void OnStateChanged(PortState value)
     {
         OnPropertyChanged(nameof(StateText));
-        OnPropertyChanged(nameof(Fill));
-        OnPropertyChanged(nameof(Edge));
-        OnPropertyChanged(nameof(FillHeight));
+        OnPropertyChanged(nameof(Accent));
+        OnPropertyChanged(nameof(BarFill));
+        OnPropertyChanged(nameof(PercentText));
+        OnPropertyChanged(nameof(IsFree));
+        OnPropertyChanged(nameof(IsBusy));
     }
 
-    partial void OnProgressChanged(double value) => OnPropertyChanged(nameof(FillHeight));
+    partial void OnProgressChanged(double value)
+    {
+        OnPropertyChanged(nameof(BarFill));
+        OnPropertyChanged(nameof(PercentText));
+    }
+
+    partial void OnCameraIdChanged(string value) => OnPropertyChanged(nameof(CameraLine));
+    partial void OnEmployeeChanged(string value) => OnPropertyChanged(nameof(EmployeeLine));
+    partial void OnDepartmentChanged(string value) => OnPropertyChanged(nameof(DepartmentLine));
+    partial void OnSlotChanged(int value) => OnPropertyChanged(nameof(SlotLabel));
 
     /// <summary>Возвращает плитку в состояние свободного гнезда.</summary>
     public void Clear()
     {
-        Title = "—";
+        CameraId = "";
+        Employee = "";
+        Department = "";
         Detail = "";
         Progress = 0;
         State = PortState.Free;

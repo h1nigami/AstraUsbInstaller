@@ -31,7 +31,7 @@
     <Style Selector="Border.fill">
       <Setter Property="Transitions">
         <Transitions>
-          <DoubleTransition Property="Height" Duration="0:0:0.45" Easing="CubicEaseOut" />
+          <DoubleTransition Property="Width" Duration="0:0:0.45" Easing="CubicEaseOut" />
           <BrushTransition Property="Background" Duration="0:0:0.35" />
         </Transitions>
       </Setter>
@@ -126,27 +126,71 @@
     <TabControl Grid.Row="2" Padding="0" Background="Transparent">
 
       <TabItem Header="ЗАГРУЗКА">
-        <ItemsControl ItemsSource="{Binding Ports}" Margin="9,7">
+        <ItemsControl ItemsSource="{Binding Ports}" Margin="8,6">
           <ItemsControl.ItemsPanel>
             <ItemsPanelTemplate>
-              <UniformGrid Columns="5" Rows="2" />
+              <UniformGrid Columns="4" Rows="3" />
             </ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:PortViewModel">
-              <Border Classes="port" Margin="4" BorderBrush="{Binding Edge}">
-                <Grid>
-                  <Border Classes="fill" VerticalAlignment="Bottom"
-                          Background="{Binding Fill}"
-                          Height="{Binding FillHeight}" Opacity="0.9" />
-                  <!-- Тонкая линия сверху: занятый порт видно и без цвета заливки -->
-                  <Border VerticalAlignment="Top" Height="2"
-                          Background="{Binding Edge}" />
-                  <StackPanel Margin="11,10" VerticalAlignment="Center" Spacing="4">
-                    <TextBlock Classes="portNumber" Text="{Binding Title}" />
-                    <TextBlock Classes="portState" Text="{Binding StateText}" />
-                    <TextBlock Classes="portDetail" Text="{Binding Detail}" />
+              <Border Classes="port" Margin="4" BorderBrush="{Binding Accent}">
+                <Grid RowDefinitions="*,26">
+                  <!-- Полоса состояния сверху: занятое гнездо видно издалека -->
+                  <Border Grid.Row="0" VerticalAlignment="Top" Height="3"
+                          Background="{Binding Accent}" />
+
+                  <!-- Номер отсека в углу, как в штатной программе -->
+                  <TextBlock Grid.Row="0" Text="{Binding SlotLabel}"
+                             HorizontalAlignment="Right" VerticalAlignment="Top"
+                             Margin="0,8,10,0" FontSize="12"
+                             FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                             Foreground="{StaticResource FgMutedBrush}" />
+
+                  <!-- Свободное гнездо -->
+                  <TextBlock Grid.Row="0" Text="Свободен" IsVisible="{Binding IsFree}"
+                             HorizontalAlignment="Center" VerticalAlignment="Center"
+                             FontSize="20" FontWeight="SemiBold"
+                             Foreground="{StaticResource FgMutedBrush}" />
+
+                  <!-- Занятое гнездо: камера, сотрудник, отдел -->
+                  <StackPanel Grid.Row="0" IsVisible="{Binding IsBusy}"
+                              Margin="12,26,12,0" Spacing="3">
+                    <TextBlock Text="{Binding CameraLine}" FontSize="13" FontWeight="Bold"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource FgMainBrush}" />
+                    <TextBlock Text="{Binding EmployeeLine}" FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Text="{Binding DepartmentLine}" FontSize="11"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Text="{Binding Detail}" FontSize="11" Margin="0,2,0,0"
+                               TextTrimming="CharacterEllipsis"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               Foreground="{Binding Accent}" />
                   </StackPanel>
+
+                  <!-- Нижняя строка: состояние и ход выгрузки -->
+                  <Grid Grid.Row="1" Background="{StaticResource BgSurfaceBrush}">
+                    <TextBlock Text="{Binding IdleText}" IsVisible="{Binding IsFree}"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+
+                    <Grid IsVisible="{Binding IsBusy}" ColumnDefinitions="*,Auto" Margin="8,0">
+                      <Border Grid.Column="0" Height="8" CornerRadius="1"
+                              HorizontalAlignment="Stretch" VerticalAlignment="Center"
+                              Background="#0B1220" ClipToBounds="True">
+                        <Border Classes="fill" HorizontalAlignment="Left"
+                                Width="{Binding BarFill}" Background="{Binding Accent}" />
+                      </Border>
+                      <TextBlock Grid.Column="1" Text="{Binding PercentText}" Margin="8,0,0,0"
+                                 FontSize="11" VerticalAlignment="Center"
+                                 FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                                 Foreground="{StaticResource FgMainBrush}" />
+                    </Grid>
+                  </Grid>
                 </Grid>
               </Border>
             </DataTemplate>
@@ -155,8 +199,59 @@
       </TabItem>
 
       <TabItem Header="ПОИСК">
-        <TextBlock Margin="16" Foreground="{StaticResource FgMutedBrush}"
-                   Text="Раздел появится следующим шагом." />
+        <Grid RowDefinitions="Auto,*,Auto" Margin="10,8">
+          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
+            <TextBlock Text="Загружено с" VerticalAlignment="Center" FontSize="11"
+                       Foreground="{StaticResource FgMutedBrush}" />
+            <TextBox Text="{Binding Search.From}" Width="100" />
+            <TextBlock Text="по" VerticalAlignment="Center" FontSize="11"
+                       Foreground="{StaticResource FgMutedBrush}" />
+            <TextBox Text="{Binding Search.To}" Width="100" />
+            <TextBlock Text="Камера" VerticalAlignment="Center" FontSize="11" Margin="10,0,0,0"
+                       Foreground="{StaticResource FgMutedBrush}" />
+            <TextBox Text="{Binding Search.Camera}" Width="140" Watermark="номер или имя" />
+            <Button Content="Найти" Command="{Binding Search.SearchCommand}" />
+            <Button Content="Сброс" Command="{Binding Search.ResetCommand}" />
+          </StackPanel>
+
+          <Border Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                  CornerRadius="2" Background="{StaticResource BgPanelBrush}">
+            <ListBox ItemsSource="{Binding Search.Results}" Background="Transparent"
+                     BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:FoundFile">
+                  <Grid ColumnDefinitions="120,*,80,110,110" Height="26">
+                    <TextBlock Grid.Column="0" Text="{Binding Camera}" FontSize="11"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource BrandBrush}" />
+                    <TextBlock Grid.Column="1" Text="{Binding FileName}" FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMainBrush}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Size}" FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Grid.Column="3" Text="{Binding CollectedAt}" FontSize="11"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMainBrush}" />
+                    <TextBlock Grid.Column="4" Text="{Binding ShotAt}" FontSize="11"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
+
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="16" Margin="0,6,0,0">
+            <TextBlock Text="{Binding Search.Hint}" FontSize="11"
+                       Foreground="{StaticResource BrandBrush}" />
+            <TextBlock FontSize="10" VerticalAlignment="Center"
+                       Foreground="{StaticResource FgMutedBrush}"
+                       Text="колонки: камера, файл, размер, загружено в станцию, снято" />
+          </StackPanel>
+        </Grid>
       </TabItem>
       <TabItem Header="УСТРОЙСТВА">
         <Grid RowDefinitions="*,Auto" Margin="10,8">
@@ -225,8 +320,16 @@
               <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                       CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
                 <StackPanel Spacing="6">
-                  <TextBlock Text="ХРАНИЛИЩЕ" FontSize="11" LetterSpacing="1.6"
+                  <TextBlock Text="СТАНЦИЯ И ХРАНИЛИЩЕ" FontSize="11" LetterSpacing="1.6"
                              Foreground="{StaticResource BrandBrush}" />
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Номер станции" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBox Text="{Binding Settings.StationNumber}" Width="60" />
+                    <TextBlock FontSize="10" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}"
+                               Text="входит в номера камер: BCU-01-0042" />
+                  </StackPanel>
                   <TextBlock Text="Папка для копий" FontSize="11"
                              Foreground="{StaticResource FgMutedBrush}" />
                   <TextBox Text="{Binding Settings.BackupRoot}" />

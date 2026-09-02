@@ -17,6 +17,9 @@ public sealed class PortMap
     public PortMap(string dbPath)
     {
         _dbPath = dbPath;
+        var dir = Path.GetDirectoryName(dbPath);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = """

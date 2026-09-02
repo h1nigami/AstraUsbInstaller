@@ -23,6 +23,12 @@ public sealed class Settings
     /// <summary>Минуты бездействия до блокировки разделов; 0 — не блокировать.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 
+    /// <summary>
+    /// Номер станции. Входит в номера, которые станция выдаёт камерам
+    /// (BCU-01-0042), чтобы номера с разных станций не совпадали.
+    /// </summary>
+    public int StationNumber { get; set; } = 1;
+
     public long MinFreeBytes => (long)MinFreeGb * 1024 * 1024 * 1024;
 
     private static readonly JsonSerializerOptions Json = new()
