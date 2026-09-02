@@ -591,166 +591,188 @@
       </TabItem>
 
       <TabItem Header="НАСТРОЙКИ">
-        <ScrollViewer>
-          <!-- Одна колонка: две по 400 точек на экране станции превращаются
-               в столбики, где не помещается ни одно поле целиком. -->
-          <StackPanel Margin="10,8" Spacing="8">
+        <!-- Боковое меню и один подраздел справа, как в прототипе: одной
+             простынёй с прокруткой на экране станции не пользоваться, а
+             искать в ней нужное поле. -->
+        <Grid ColumnDefinitions="176,*" Margin="10,8">
 
-            <StackPanel Spacing="8">
-              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
-                <StackPanel Spacing="6">
-                  <TextBlock Text="СТАНЦИЯ И ХРАНИЛИЩЕ" FontSize="11" LetterSpacing="1.6"
-                             Foreground="{StaticResource Accent700Brush}" />
+          <StackPanel Grid.Column="0" Margin="0,0,10,0">
+            <Button Classes="nav" Content="Станция и хранилище"
+                    Classes.primary="{Binding Settings.IsStationSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="station" />
+            <Button Classes="nav" Content="Доступ"
+                    Classes.primary="{Binding Settings.IsAccessSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="access" />
+            <Button Classes="nav" Content="Разметка гнёзд"
+                    Classes.primary="{Binding Settings.IsSlotsSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="slots" />
+            <Button Classes="nav" Content="О программе"
+                    Classes.primary="{Binding Settings.IsAboutSection}"
+                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="about" />
+          </StackPanel>
+
+          <Border Grid.Column="1" Classes="card" Padding="16">
+            <Grid RowDefinitions="*,Auto">
+
+              <!-- Станция и хранилище -->
+              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="Станция и хранилище" Classes="section" />
+
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Окон сбора" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
-                    <NumericUpDown Value="{Binding Settings.BayCount}" Minimum="6" Maximum="30"
-                                   Increment="1" Width="110" FormatString="0" />
-                    <Button Content="Сохранить" Command="{Binding Settings.SaveBayCountCommand}" />
+                    <TextBlock Text="Номер станции" Classes="field" />
+                    <NumericUpDown Value="{Binding Settings.StationNumber}" Width="112"
+                                   Minimum="0" Maximum="99" FormatString="0" />
+                    <TextBlock Classes="hint" VerticalAlignment="Center"
+                               Text="входит в номера камер" />
                   </StackPanel>
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Окон сбора" Classes="field" />
+                    <NumericUpDown Value="{Binding Settings.BayCount}" Width="112"
+                                   Minimum="6" Maximum="30" FormatString="0" />
+                    <Button Classes="compact" Content="Применить"
+                            Command="{Binding Settings.SaveBayCountCommand}" />
+                  </StackPanel>
+
                   <TextBlock IsVisible="{Binding Settings.RestartNeeded}" Classes="hint"
                              Foreground="{StaticResource WarnBrush}"
                              Text="Число окон изменено. Перезапустите программу, чтобы доска перестроилась." />
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Номер станции" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBox Text="{Binding Settings.StationNumber}" Width="60" />
-                    <TextBlock FontSize="10" VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMutedBrush}"
-                               Text="входит в номера камер: BCU-01-0042" />
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="ПАПКА АРХИВА" Classes="label" />
+                    <TextBox Text="{Binding Settings.BackupRoot}" />
+                    <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}" Classes="hint"
+                               Foreground="{StaticResource WarnBrush}"
+                               Text="Архив на системном разделе. Выберите отдельный диск: системный переполнится записями." />
                   </StackPanel>
-                  <TextBlock Text="Папка для копий" FontSize="11"
-                             Foreground="{StaticResource FgMutedBrush}" />
-                  <TextBox Text="{Binding Settings.BackupRoot}" />
+
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Оставлять свободными, ГБ" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBox Text="{Binding Settings.MinFreeGb}" Width="70" />
+                    <TextBlock Text="Оставлять свободными, ГБ" Classes="field" />
+                    <NumericUpDown Value="{Binding Settings.MinFreeGb}" Width="112"
+                                   Minimum="1" Maximum="4096" FormatString="0" />
                   </StackPanel>
+
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Когда место кончается" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Text="Когда место кончается" Classes="field" />
                     <ComboBox ItemsSource="{Binding Settings.StorageModes}"
-                              SelectedIndex="{Binding Settings.StorageModeIndex}" Width="190" />
+                              SelectedIndex="{Binding Settings.StorageModeIndex}" Width="220" />
                   </StackPanel>
-                  <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}"
-                             Text="Архив лежит на системном разделе. Выберите отдельный диск: системный переполнится записями."
-                             FontSize="11" TextWrapping="Wrap" Foreground="#FFB020" />
+
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Хранить записи, дней" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBox Text="{Binding Settings.KeepDays}" Width="70" />
-                    <TextBlock Text="0 хранит бессрочно" VerticalAlignment="Center"
-                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Text="Хранить записи, дней" Classes="field" />
+                    <NumericUpDown Value="{Binding Settings.KeepDays}" Width="112"
+                                   Minimum="0" Maximum="3650" FormatString="0" />
+                    <TextBlock Classes="hint" VerticalAlignment="Center"
+                               Text="0 хранит бессрочно" />
                   </StackPanel>
-                  <CheckBox Content="Удалять видео с камеры после загрузки"
+
+                  <CheckBox Content="Удалять видео с регистратора после подтверждённой загрузки"
                             IsChecked="{Binding Settings.DeleteVideoAfterCopy}" />
-                  <Button Content="Сохранить" Command="{Binding Settings.SaveStorageCommand}"
-                          HorizontalAlignment="Left" />
+
+                  <Button Classes="primary" Content="Сохранить" HorizontalAlignment="Left"
+                          Command="{Binding Settings.SaveStorageCommand}" />
                 </StackPanel>
-              </Border>
+              </ScrollViewer>
 
-              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
-                <StackPanel Spacing="8">
-                  <TextBlock Text="ДОСТУП" FontSize="11" LetterSpacing="1.6"
-                             Foreground="{StaticResource Accent700Brush}" />
-                  <TextBlock Text="Учётной записью администратора закрыты выход из программы и все разделы, кроме сбора данных."
-                             FontSize="11" TextWrapping="Wrap"
-                             Foreground="{StaticResource FgMutedBrush}" />
-                  <TextBlock Text="Пароль ещё не меняли: станция открывается стандартным из задания."
-                             IsVisible="{Binding Settings.UsingDefaultPassword}"
-                             FontSize="11" TextWrapping="Wrap" Foreground="#FFB020" />
-
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBlock Text="Учётная запись" VerticalAlignment="Center" FontSize="12"
-                               Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBox Width="140" Text="{Binding Settings.AdminAccount}" />
-                  </StackPanel>
-
-                  <!-- Форма в одну строку: вертикаль на экране станции дороже
-                       подписей, и подсказки в самих полях их заменяют. -->
-                  <StackPanel Orientation="Horizontal" Spacing="6">
-                    <TextBox Width="112" PasswordChar="●" Watermark="текущий"
-                             Text="{Binding Settings.CurrentPassword}" />
-                    <TextBox Width="112" PasswordChar="●" Watermark="новый"
-                             Text="{Binding Settings.NewPassword}" />
-                    <TextBox Width="112" PasswordChar="●" Watermark="повторите"
-                             Text="{Binding Settings.RepeatPassword}" />
-                    <Button Content="Сменить" Command="{Binding Settings.ChangePasswordCommand}" />
-                  </StackPanel>
-
+              <!-- Доступ -->
+              <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
+                <StackPanel Spacing="10">
+                  <TextBlock Text="Доступ" Classes="section" />
+                  <TextBlock Classes="hint"
+                             Text="Учётной записью администратора закрыты выход из программы и все разделы, кроме сбора данных." />
+                  <TextBlock IsVisible="{Binding Settings.UsingDefaultPassword}" Classes="hint"
+                             Foreground="{StaticResource WarnBrush}"
+                             Text="Пароль ещё не меняли: станция открывается стандартным из задания." />
 
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Закрывать разделы через" VerticalAlignment="Center"
-                               FontSize="12" Foreground="{StaticResource FgMutedBrush}" />
-                    <NumericUpDown Value="{Binding Settings.LockTimeoutMinutes}"
-                                   Minimum="0" Maximum="240" Increment="5" Width="110"
-                                   FormatString="0" />
-                    <TextBlock Text="мин простоя" VerticalAlignment="Center" FontSize="12"
-                               Foreground="{StaticResource FgMutedBrush}" />
-                    <Button Content="Сохранить"
+                    <TextBlock Text="Учётная запись" Classes="field" />
+                    <TextBox Text="{Binding Settings.AdminAccount}" Width="220" />
+                  </StackPanel>
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Текущий пароль" Classes="field" />
+                    <TextBox Text="{Binding Settings.CurrentPassword}" Width="220"
+                             PasswordChar="●" />
+                  </StackPanel>
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Новый пароль" Classes="field" />
+                    <TextBox Text="{Binding Settings.NewPassword}" Width="220"
+                             PasswordChar="●" />
+                  </StackPanel>
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Повторите новый" Classes="field" />
+                    <TextBox Text="{Binding Settings.RepeatPassword}" Width="220"
+                             PasswordChar="●" />
+                  </StackPanel>
+
+                  <Button Classes="primary" Content="Сменить пароль" HorizontalAlignment="Left"
+                          Command="{Binding Settings.ChangePasswordCommand}" />
+
+                  <Border Height="1" Background="{StaticResource LineBrush}" Margin="0,4" />
+
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Закрывать разделы через" Classes="field" />
+                    <NumericUpDown Value="{Binding Settings.LockTimeoutMinutes}" Width="112"
+                                   Minimum="0" Maximum="240" Increment="5" FormatString="0" />
+                    <TextBlock Classes="hint" VerticalAlignment="Center" Text="мин простоя" />
+                    <Button Classes="compact" Content="Сохранить"
                             Command="{Binding Settings.SaveLockTimeoutCommand}" />
                   </StackPanel>
                 </StackPanel>
-              </Border>
+              </ScrollViewer>
 
-            </StackPanel>
+              <!-- Разметка гнёзд -->
+              <Grid Grid.Row="0" IsVisible="{Binding Settings.IsSlotsSection}"
+                    RowDefinitions="Auto,Auto,*,Auto">
+                <TextBlock Grid.Row="0" Text="Разметка гнёзд" Classes="section" />
+                <TextBlock Grid.Row="1" Classes="hint" Margin="0,4,0,8"
+                           Text="Отключите все регистраторы. Вставляйте по одному и нажимайте «Сопоставить» напротив нужного окна." />
 
-            <StackPanel Spacing="8">
-              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
-                <StackPanel Spacing="6">
-                  <TextBlock Text="РАЗМЕТКА ГНЁЗД" FontSize="11" LetterSpacing="1.6"
-                             Foreground="{StaticResource Accent700Brush}" />
-                  <TextBlock FontSize="11" TextWrapping="Wrap"
-                             Foreground="{StaticResource FgMutedBrush}"
-                             Text="Вставьте камеру в размечаемый отсек, оставив её единственной подключённой, и нажмите «Сопоставить» напротив нужного окна." />
+                <ScrollViewer Grid.Row="2">
                   <ItemsControl ItemsSource="{Binding Settings.Slots}">
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:SlotRow">
-                        <Grid ColumnDefinitions="70,*,110" Height="26">
-                          <TextBlock Grid.Column="0" Text="{Binding SlotLabel}" FontSize="11"
-                                     VerticalAlignment="Center"
-                                     Foreground="{StaticResource FgMainBrush}" />
-                          <TextBlock Grid.Column="1" Text="{Binding PortLabel}" FontSize="11"
-                                     FontFamily="DejaVu Sans Mono, Consolas, monospace"
-                                     VerticalAlignment="Center"
+                        <Grid ColumnDefinitions="70,*,Auto" Height="42">
+                          <TextBlock Grid.Column="0" Text="{Binding SlotLabel}" FontSize="12"
+                                     VerticalAlignment="Center" />
+                          <TextBlock Grid.Column="1" Text="{Binding PortLabel}" Classes="mono"
+                                     FontSize="11" VerticalAlignment="Center"
+                                     TextTrimming="CharacterEllipsis"
                                      Foreground="{StaticResource FgMutedBrush}" />
-                          <Button Grid.Column="2" Content="Сопоставить" FontSize="10"
-                                  Padding="8,2"
+                          <Button Grid.Column="2" Classes="compact" Content="Сопоставить"
                                   Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).MapSlotCommand}"
                                   CommandParameter="{Binding}" />
                         </Grid>
                       </DataTemplate>
                     </ItemsControl.ItemTemplate>
                   </ItemsControl>
-                  <Button Content="Снять разметку"
-                          Command="{Binding Settings.ClearSlotsCommand}"
-                          HorizontalAlignment="Left" />
-                </StackPanel>
-              </Border>
+                </ScrollViewer>
 
-              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="О ПРОГРАММЕ" FontSize="11" LetterSpacing="1.6"
-                             Foreground="{StaticResource Accent700Brush}" />
-                  <TextBlock Text="BestCam USB Backup Manager" FontSize="12"
-                             Foreground="{StaticResource FgMainBrush}" />
-                  <TextBlock Text="{Binding Version}" FontSize="11"
-                             Foreground="{StaticResource FgMutedBrush}" />
-                </StackPanel>
-              </Border>
+                <Button Grid.Row="3" Content="Снять разметку" HorizontalAlignment="Left"
+                        Margin="0,8,0,0"
+                        Command="{Binding Settings.ClearSlotsCommand}" />
+              </Grid>
 
-              <TextBlock Text="{Binding Settings.Hint}" FontSize="11" TextWrapping="Wrap"
-                         Foreground="{StaticResource Accent700Brush}" />
-            </StackPanel>
-          </StackPanel>
-        </ScrollViewer>
+              <!-- О программе -->
+              <StackPanel Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
+                <TextBlock Text="О программе" Classes="section" />
+                <TextBlock Text="BestCam BC-10" Classes="h2" FontSize="16" />
+                <TextBlock Text="Терминал сбора и хранения данных" Classes="hint" />
+                <TextBlock Text="{Binding Version}" Classes="mono" FontSize="12" />
+                <TextBlock Classes="hint"
+                           Text="Записи собираются с регистраторов автоматически при подключении. Выход из программы и разделы, кроме сбора данных, закрыты учётной записью администратора." />
+              </StackPanel>
+
+              <TextBlock Grid.Row="1" Text="{Binding Settings.Hint}" Classes="hint"
+                         Margin="0,10,0,0" Foreground="{StaticResource Accent700Brush}" />
+            </Grid>
+          </Border>
+        </Grid>
       </TabItem>
+
     </TabControl>
 
     <!-- Нижняя строка: слева марка, по центру заполнение хранилища, справа состояние -->

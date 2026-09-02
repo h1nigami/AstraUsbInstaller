@@ -102,6 +102,34 @@
     <Setter Property="TextElement.Foreground" Value="{StaticResource FgOnDarkBrush}" />
   </Style>
 
+  <!--
+    Кнопка внутри строки списка. Основной размер в 52 точки рассчитан на палец
+    и на отдельно стоящую кнопку; в строке таблицы такие кнопки наезжают друг
+    на друга, поэтому здесь высота равна высоте строки.
+  -->
+  <Style Selector="Button.compact">
+    <Setter Property="Height" Value="34" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="CornerRadius" Value="17" />
+  </Style>
+
+  <!-- Заголовок раздела настроек: он должен быть виден, а не угадываться -->
+  <Style Selector="TextBlock.section">
+    <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
+    <Setter Property="FontWeight" Value="ExtraBold" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="Foreground" Value="{StaticResource Accent700Brush}" />
+  </Style>
+
+  <!-- Подпись поля в форме: одна ширина на все, иначе поля разъезжаются -->
+  <Style Selector="TextBlock.field">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Width" Value="150" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
+  </Style>
+
   <!-- Клавиша экранной клавиатуры -->
   <Style Selector="Button.key">
     <Setter Property="FontSize" Value="19" />
@@ -155,10 +183,28 @@
 
   <!-- Панель: белая карточка с крупным скруглением и мягкой тенью -->
   <Style Selector="Border.card">
-    <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+    <Setter Property="Background" Value="White" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusMd}" />
-    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
-    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowSm}" />
+  </Style>
+
+  <!-- Пункт бокового меню настроек -->
+  <Style Selector="Button.nav">
+    <Setter Property="Height" Value="{StaticResource TapMin}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="Margin" Value="0,0,0,6" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Left" />
+    <Setter Property="Background" Value="White" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+
+  <!-- Открытый подраздел. Правило идёт после nav, иначе тот перекрывает фон -->
+  <Style Selector="Button.nav.primary">
+    <Setter Property="Background" Value="{StaticResource AccentBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource FgOnDarkBrush}" />
   </Style>
 
   <Style Selector="Border.panel">

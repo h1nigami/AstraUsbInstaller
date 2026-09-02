@@ -44,6 +44,36 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _version = "";
     [ObservableProperty] private string _hint = "";
 
+    /// <summary>
+    /// Открытый подраздел настроек. Разделы разведены по боковому меню, как в
+    /// прототипе: одной простынёй с прокруткой на экране станции не
+    /// пользоваться, а искать в ней нужное поле.
+    /// </summary>
+    [ObservableProperty] private string _section = "station";
+
+    public bool IsStationSection => Section == "station";
+    public bool IsAccessSection => Section == "access";
+    public bool IsSlotsSection => Section == "slots";
+    public bool IsAboutSection => Section == "about";
+
+    [RelayCommand]
+    private void OpenSection(string? name) => Section = name switch
+    {
+        "access" => "access",
+        "slots" => "slots",
+        "about" => "about",
+        _ => "station",
+    };
+
+    partial void OnSectionChanged(string value)
+    {
+        Hint = "";
+        OnPropertyChanged(nameof(IsStationSection));
+        OnPropertyChanged(nameof(IsAccessSection));
+        OnPropertyChanged(nameof(IsSlotsSection));
+        OnPropertyChanged(nameof(IsAboutSection));
+    }
+
     [ObservableProperty] private int _lockTimeoutMinutes;
 
     /// <summary>Пароль остался таким, каким станция пришла с завода.</summary>
