@@ -14,12 +14,19 @@ namespace AstraUsb.Services;
 /// Время загрузки в станцию. Ставит станция, поэтому достоверно, по нему и
 /// ищем.
 /// </param>
+/// <param name="Important">
+/// Запись отмечена как важная: уборка её не трогает ни по сроку хранения,
+/// ни при нехватке места.
+/// </param>
+/// <param name="Note">Заметка оператора: по какому случаю запись нужна.</param>
 public sealed record CollectedFile(
     long DeviceId,
     string DestPath,
     long SizeBytes,
     DateTime? ShotAt,
-    DateTime CollectedAt)
+    DateTime CollectedAt,
+    bool Important = false,
+    string Note = "")
 {
     /// <summary>Раньше этой даты съёмка невозможна: часы камеры не выставлены.</summary>
     private static readonly DateTime Sane = new(2015, 1, 1);
@@ -60,6 +67,11 @@ public sealed class CollectionLog
             """);
         Run(db, "CREATE INDEX IF NOT EXISTS idx_collected_at ON collected_files (collected_at)");
         Run(db, "CREATE INDEX IF NOT EXISTS idx_collected_device ON collected_files (device_id)");
+
+        // Защита от уборки и заметка добавились позже: базы на станциях уже
+        // накоплены, поэтому колонки досоздаются на месте.
+        TryRun(db, "ALTER TABLE collected_files ADD COLUMN important INTEGER NOT NULL DEFAULT 0");
+        TryRun(db, "ALTER TABLE collected_files ADD COLUMN note TEXT NOT NULL DEFAULT ''");
     }
 
     /// <summary>
@@ -104,7 +116,7 @@ public sealed class CollectionLog
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
-            SELECT device_id, dest_path, size_bytes, shot_at, collected_at
+            SELECT device_id, dest_path, size_bytes, shot_at, collected_at, important, note
             FROM collected_files
             WHERE collected_at >= $from AND collected_at <= $to
             """ + (deviceId is null ? "" : " AND device_id = $device")
@@ -124,13 +136,32 @@ public sealed class CollectionLog
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
-            SELECT device_id, dest_path, size_bytes, shot_at, collected_at
+            SELECT device_id, dest_path, size_bytes, shot_at, collected_at, important, note
             FROM collected_files
             WHERE collected_at < $moment
             ORDER BY collected_at
             """;
         cmd.Parameters.AddWithValue("$moment", Stamp(moment));
         return Read(cmd);
+    }
+
+    /// <summary>
+    /// Отмечает запись важной или снимает отметку. Важное уборка не трогает:
+    /// запись по случаю должна пережить и срок хранения, и нехватку места.
+    /// </summary>
+    public void SetImportant(string destPath, bool important)
+    {
+        using var db = Open();
+        Run(db, "UPDATE collected_files SET important = $flag WHERE dest_path = $dest",
+            ("$flag", important ? 1 : 0), ("$dest", destPath));
+    }
+
+    /// <summary>Заметка оператора: по какому случаю запись понадобилась.</summary>
+    public void SetNote(string destPath, string note)
+    {
+        using var db = Open();
+        Run(db, "UPDATE collected_files SET note = $note WHERE dest_path = $dest",
+            ("$note", note), ("$dest", destPath));
     }
 
     public void Forget(string destPath)
@@ -161,7 +192,9 @@ public sealed class CollectionLog
                 reader.GetString(1),
                 reader.GetInt64(2),
                 reader.IsDBNull(3) ? null : DateTime.Parse(reader.GetString(3)),
-                DateTime.Parse(reader.GetString(4))));
+                DateTime.Parse(reader.GetString(4)),
+                reader.GetInt64(5) != 0,
+                reader.GetString(6)));
         }
         return list;
     }
@@ -171,6 +204,18 @@ public sealed class CollectionLog
         var db = new SqliteConnection($"Data Source={_dbPath}");
         db.Open();
         return db;
+    }
+
+    private static void TryRun(SqliteConnection db, string sql)
+    {
+        try
+        {
+            Run(db, sql);
+        }
+        catch (SqliteException)
+        {
+            // Колонка уже есть: обычное дело при миграции.
+        }
     }
 
     private static void Run(SqliteConnection db, string sql, params (string Name, object Value)[] args)

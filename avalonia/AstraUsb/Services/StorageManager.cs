@@ -74,6 +74,12 @@ public static class StorageManager
         {
             if (freed >= bytesToFree)
                 break;
+
+            // Важное не трогаем даже ради места: такие записи держат по
+            // случаю, и вернуть их будет неоткуда.
+            if (entry.Important)
+                continue;
+
             freed += Remove(entry.DestPath, log);
         }
 
@@ -115,6 +121,10 @@ public static class StorageManager
 
         foreach (var entry in log.CollectedBefore(olderThan))
         {
+            // Срок хранения важного не касается.
+            if (entry.Important)
+                continue;
+
             bytes += Remove(entry.DestPath, log);
             files++;
         }

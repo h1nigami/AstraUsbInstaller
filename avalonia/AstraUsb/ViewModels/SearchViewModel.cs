@@ -8,7 +8,7 @@ using CommunityToolkit.Mvvm.Input;
 namespace AstraUsb.ViewModels;
 
 /// <summary>Строка результата поиска.</summary>
-public sealed class FoundFile
+public sealed partial class FoundFile : ObservableObject
 {
     public required string Camera { get; init; }
     public required string FileName { get; init; }
@@ -19,6 +19,16 @@ public sealed class FoundFile
     public required string ShotAt { get; init; }
 
     public required string Path { get; init; }
+
+    /// <summary>Запись защищена от уборки.</summary>
+    [ObservableProperty] private bool _important;
+
+    /// <summary>Заметка оператора: по какому случаю запись нужна.</summary>
+    [ObservableProperty] private string _note = "";
+
+    public string Mark => Important ? "защищено" : "";
+
+    partial void OnImportantChanged(bool value) => OnPropertyChanged(nameof(Mark));
 }
 
 /// <summary>
@@ -47,11 +57,70 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>Выгрузка идёт: второй раз запускать её не нужно.</summary>
     [ObservableProperty] private bool _exporting;
 
+    [ObservableProperty] private FoundFile? _selected;
+    [ObservableProperty] private string _noteInput = "";
+
     public SearchViewModel() : this(AppPaths.Database)
     {
     }
 
     public SearchViewModel(string dbPath) => _dbPath = dbPath;
+
+    /// <summary>Выбор в списке подставляет заметку в поле: её правят на месте.</summary>
+    partial void OnSelectedChanged(FoundFile? value) => NoteInput = value?.Note ?? "";
+
+    /// <summary>
+    /// Защищает запись от уборки или снимает защиту. Защищённое не уходит ни
+    /// по сроку хранения, ни при нехватке места: такие записи держат по
+    /// случаю, и восстановить их будет неоткуда.
+    /// </summary>
+    [RelayCommand]
+    private void ToggleImportant()
+    {
+        if (Selected is not { } file)
+        {
+            Hint = "выберите запись в списке";
+            return;
+        }
+
+        var next = !file.Important;
+
+        try
+        {
+            new CollectionLog(_dbPath).SetImportant(file.Path, next);
+            file.Important = next;
+            Hint = next
+                ? $"«{file.FileName}» защищено от автоудаления"
+                : $"с «{file.FileName}» снята защита";
+        }
+        catch (Exception e)
+        {
+            Hint = $"не удалось изменить защиту: {e.Message}";
+        }
+    }
+
+    /// <summary>Сохраняет заметку к записи.</summary>
+    [RelayCommand]
+    private void SaveNote()
+    {
+        if (Selected is not { } file)
+        {
+            Hint = "выберите запись в списке";
+            return;
+        }
+
+        try
+        {
+            var note = NoteInput.Trim();
+            new CollectionLog(_dbPath).SetNote(file.Path, note);
+            file.Note = note;
+            Hint = note.Length == 0 ? "заметка снята" : "заметка сохранена";
+        }
+        catch (Exception e)
+        {
+            Hint = $"не удалось сохранить заметку: {e.Message}";
+        }
+    }
 
     [RelayCommand]
     private void Search()
@@ -101,6 +170,8 @@ public sealed partial class SearchViewModel : ObservableObject
                             ? file.ShotAt.Value.ToString("dd.MM.yy HH:mm")
                             : "часы камеры сбиты",
                     Path = file.DestPath,
+                    Important = file.Important,
+                    Note = file.Note,
                 });
             }
 

@@ -229,11 +229,12 @@
 
           <Border Grid.Row="1" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
-            <ListBox ItemsSource="{Binding Search.Results}" Background="Transparent"
-                     BorderThickness="0">
+            <ListBox ItemsSource="{Binding Search.Results}"
+                     SelectedItem="{Binding Search.Selected}"
+                     Background="Transparent" BorderThickness="0">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:FoundFile">
-                  <Grid ColumnDefinitions="120,*,80,110,110" Height="26">
+                  <Grid ColumnDefinitions="120,*,80,110,110,80" Height="26">
                     <TextBlock Grid.Column="0" Text="{Binding Camera}" FontSize="11"
                                FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                VerticalAlignment="Center"
@@ -251,6 +252,8 @@
                     <TextBlock Grid.Column="4" Text="{Binding ShotAt}" FontSize="11"
                                VerticalAlignment="Center"
                                Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Grid.Column="5" Text="{Binding Mark}" FontSize="11"
+                               VerticalAlignment="Center" Foreground="#FFB020" />
                   </Grid>
                 </DataTemplate>
               </ListBox.ItemTemplate>
@@ -258,6 +261,16 @@
           </Border>
 
           <StackPanel Grid.Row="2" Spacing="6" Margin="0,6,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Заметка" VerticalAlignment="Center" FontSize="11"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding Search.NoteInput}" Width="240"
+                       Watermark="по какому случаю нужна запись" />
+              <Button Content="Сохранить заметку" Command="{Binding Search.SaveNoteCommand}" />
+              <Button Content="Защитить или снять"
+                      Command="{Binding Search.ToggleImportantCommand}" />
+            </StackPanel>
+
             <StackPanel Orientation="Horizontal" Spacing="8">
               <TextBlock Text="Выгрузить найденное в" VerticalAlignment="Center" FontSize="11"
                          Foreground="{StaticResource FgMutedBrush}" />
@@ -267,7 +280,7 @@
                       IsEnabled="{Binding !Search.Exporting}" />
               <TextBlock FontSize="10" VerticalAlignment="Center"
                          Foreground="{StaticResource FgMutedBrush}"
-                         Text="колонки: камера, файл, размер, загружено в станцию, снято" />
+                         Text="колонки: камера, файл, размер, загружено в станцию, снято, защита" />
             </StackPanel>
             <TextBlock Text="{Binding Search.Hint}" FontSize="11"
                        Foreground="{StaticResource BrandBrush}" />

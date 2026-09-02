@@ -140,6 +140,72 @@ public sealed class StorageCleanupTests : IDisposable
     }
 
     [Fact]
+    public void A_protected_record_outlives_its_retention_period()
+    {
+        var protectedPath = Collected("по-случаю.mp4", 1000, Now.AddDays(-100));
+        var ordinary = Collected("обычное.mp4", 1000, Now.AddDays(-100));
+        Log().SetImportant(protectedPath, true);
+
+        var (files, _) = StorageManager.DeleteExpired(Log(), Now.AddDays(-30), _root);
+
+        Assert.Equal(1, files);
+        Assert.True(File.Exists(protectedPath));
+        Assert.False(File.Exists(ordinary));
+    }
+
+    [Fact]
+    public void A_protected_record_is_not_sacrificed_for_space()
+    {
+        var protectedPath = Collected("по-случаю.mp4", 1000, Now.AddDays(-100));
+        var ordinary = Collected("обычное.mp4", 1000, Now.AddDays(-50));
+        Log().SetImportant(protectedPath, true);
+
+        var freed = StorageManager.FreeUpSpace(_root, bytesToFree: 500, StorageMode.Overwrite, Log());
+
+        // Уборка прошла мимо защищённого и взяла следующее по очереди.
+        Assert.Equal(1000, freed);
+        Assert.True(File.Exists(protectedPath));
+        Assert.False(File.Exists(ordinary));
+    }
+
+    [Fact]
+    public void Protection_can_be_lifted()
+    {
+        var path = Collected("по-случаю.mp4", 1000, Now.AddDays(-100));
+        var log = Log();
+        log.SetImportant(path, true);
+        log.SetImportant(path, false);
+
+        StorageManager.DeleteExpired(Log(), Now.AddDays(-30), _root);
+
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void A_note_stays_with_the_record()
+    {
+        var path = Collected("по-случаю.mp4", 1000, Now.AddDays(-1));
+        Log().SetNote(path, "происшествие на проходной");
+
+        var found = Log().CollectedBetween(Now.AddDays(-2), Now.AddDays(1));
+
+        Assert.Equal("происшествие на проходной", Assert.Single(found).Note);
+    }
+
+    [Fact]
+    public void A_repeated_backup_does_not_drop_the_protection()
+    {
+        var path = Collected("по-случаю.mp4", 1000, Now.AddDays(-1));
+        Log().SetImportant(path, true);
+
+        // Ту же камеру подключили снова, файл записан в журнал повторно.
+        Log().Record([new CollectedFile(1, path, 1000, Now, Now)]);
+
+        var entry = Assert.Single(Log().CollectedBetween(Now.AddDays(-2), Now.AddDays(1)));
+        Assert.True(entry.Important);
+    }
+
+    [Fact]
     public void Warning_mode_deletes_nothing()
     {
         var path = Collected("первое.mp4", 1000, Now.AddDays(-30));
