@@ -613,6 +613,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         UpdateSummary();
 
         UpdateStorage();
+        ApplyRemoteCommands();
     }
 
     /// <summary>
@@ -913,6 +914,64 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         if (_stationSettings.AlarmSound)
             Alarm.Sound(DateTime.Now);
+    }
+
+    /// <summary>
+    /// Выполняет то, о чём просила панель. Веб-запрос идёт в своём потоке и
+    /// доску сбора трогать не может, поэтому просьбы разбираются здесь.
+    /// </summary>
+    private void ApplyRemoteCommands()
+    {
+        foreach (var command in StationCommands.Take())
+        {
+            if (command.Action == StationAction.Restart)
+            {
+                _actions.Write(ActionLog.Settings, "перезапуск по просьбе панели");
+
+                // Ненулевой код завершения службе виден как сбой, и она
+                // поднимает станцию заново; парольный выход даёт ноль и
+                // останавливает её намеренно.
+                Environment.Exit(3);
+                return;
+            }
+
+            var port = Ports.FirstOrDefault(p => p.Slot == command.Slot);
+            if (port is null || MountOf(port) is not { } mount)
+                continue;
+
+            switch (command.Action)
+            {
+                case StationAction.Prioritize:
+                    _priority = mount;
+                    _chargeOnly.Remove(mount);
+                    _finished.Remove(mount);
+                    foreach (var other in _cancels.Keys.Where(m => m != mount).ToArray())
+                        Cancel(other);
+                    _actions.Write(ActionLog.Backup,
+                        $"отсек {port.Slot + 1} обслуживается первым по просьбе панели");
+                    break;
+
+                case StationAction.ChargeOnly:
+                    _chargeOnly.Add(mount);
+                    if (_priority == mount)
+                        _priority = null;
+                    Cancel(mount);
+                    port.Progress = 0;
+                    port.FilesLine = "";
+                    port.State = PortState.ChargeOnly;
+                    _actions.Write(ActionLog.Backup,
+                        $"отсек {port.Slot + 1}: загрузка отменена по просьбе панели");
+                    break;
+
+                case StationAction.Resume:
+                    _chargeOnly.Remove(mount);
+                    _finished.Remove(mount);
+                    port.State = PortState.Detected;
+                    _actions.Write(ActionLog.Backup,
+                        $"отсек {port.Slot + 1}: загрузка возобновлена по просьбе панели");
+                    break;
+            }
+        }
     }
 
     /// <summary>Сводка по отсекам, как в прототипе станции.</summary>

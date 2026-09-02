@@ -143,9 +143,11 @@ public sealed class WebPanel : IDisposable
                 Kind = Enum.TryParse<MediaKind>(kind, true, out var parsed) ? parsed : MediaKind.Any,
             };
 
+            var root = Path.GetFullPath(Settings.Load().BackupRoot);
             var rows = new ArchiveSearch(_dbPath).Find(filter, 100).Select(r => new
             {
                 file = Path.GetFileName(r.File.DestPath),
+                path = RelativeTo(root, r.File.DestPath),
                 kind = MediaKinds.Name(r.Kind),
                 camera = r.CameraName,
                 employee = r.EmployeeName,
@@ -155,6 +157,66 @@ public sealed class WebPanel : IDisposable
             });
 
             return Results.Json(rows);
+        });
+
+        app.MapGet("/api/file", (HttpContext context, string p) =>
+        {
+            if (!Authorized(context))
+                return Results.Unauthorized();
+
+            // Путь приходит относительным и складывается с корнем архива, а
+            // потом проверяется, что не вышел из него: иначе панель отдавала
+            // бы любой файл станции по «..» в запросе.
+            var root = Path.GetFullPath(Settings.Load().BackupRoot);
+            var full = Path.GetFullPath(Path.Combine(root, p));
+
+            if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && !full.Equals(root, StringComparison.OrdinalIgnoreCase))
+                return Results.BadRequest("путь вне архива");
+
+            if (!File.Exists(full))
+                return Results.NotFound("записи больше нет в архиве");
+
+            new ActionLog(_dbPath).Write(ActionLog.Export,
+                $"веб-панель: скачана запись {Path.GetFileName(full)}");
+
+            // Range нужен и для перемотки в браузере, и для докачки после
+            // обрыва: записи весят гигабайты.
+            return Results.File(full, enableRangeProcessing: true,
+                fileDownloadName: Path.GetFileName(full));
+        });
+
+        app.MapPost("/api/bay/{slot:int}/{action}", (HttpContext context, int slot, string action) =>
+        {
+            if (!Authorized(context))
+                return Results.Unauthorized();
+
+            var wanted = action.ToLowerInvariant() switch
+            {
+                "priority" => StationAction.Prioritize,
+                "charge" => StationAction.ChargeOnly,
+                "resume" => StationAction.Resume,
+                _ => (StationAction?)null,
+            };
+
+            if (wanted is not { } request)
+                return Results.BadRequest("неизвестное действие");
+
+            StationCommands.Request(request, slot);
+            new ActionLog(_dbPath).Write(ActionLog.Backup,
+                $"веб-панель: отсек {slot + 1}, {action}");
+
+            return Results.Ok(new { queued = true });
+        });
+
+        app.MapPost("/api/restart", (HttpContext context) =>
+        {
+            if (!Authorized(context))
+                return Results.Unauthorized();
+
+            StationCommands.Request(StationAction.Restart, 0);
+            new ActionLog(_dbPath).Write(ActionLog.Settings, "веб-панель: перезапуск станции");
+            return Results.Ok(new { queued = true });
         });
     }
 
@@ -178,6 +240,19 @@ public sealed class WebPanel : IDisposable
 
             _sessions[token] = DateTime.Now + SessionLife;
             return true;
+        }
+    }
+
+    /// <summary>Путь записи внутри архива: наружу абсолютные пути не отдаём.</summary>
+    private static string RelativeTo(string root, string path)
+    {
+        try
+        {
+            return Path.GetRelativePath(root, path).Replace('\\', '/');
+        }
+        catch (Exception)
+        {
+            return Path.GetFileName(path);
         }
     }
 
