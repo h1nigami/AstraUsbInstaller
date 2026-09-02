@@ -9,3 +9,4 @@ VERSION
 
 # служебные каталоги помощников
 .claude/
+avalonia/windows/payload/

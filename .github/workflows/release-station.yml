@@ -92,3 +92,55 @@ jobs:
         with:
           name: station-${{ inputs.tag }}
           path: dist
+
+  # Установщик для Windows собирается отдельно: Inno Setup идёт только на
+  # Windows-машине. Архив при этом никуда не девается, он нужен тем, кто
+  # ставит программу без установки.
+  windows-setup:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Сборка установщика
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          PUBLISHED: ${{ github.event.release.published_at }}
+        run: |
+          set -e
+          DATE="${PUBLISHED:0:10}"
+          [ -n "$DATE" ] || DATE="$(date +%F)"
+
+          dotnet publish avalonia/AstraUsb/AstraUsb.csproj             -c Release -r win-x64 --self-contained true             -p:PublishSingleFile=false -o avalonia/windows/payload
+
+          echo "$TAG $DATE" > avalonia/windows/payload/VERSION
+
+          # Номер версии установщика должен быть числовым, а тег приходит
+          # с буквой: «v2.0.1» превращается в «2.0.1».
+          NUM="${TAG#v}"
+
+          choco install innosetup --no-progress -y
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"             "/DAppVersion=$NUM"             "/O$(pwd)/dist"             "/FBestCamStationSetup-$TAG"             avalonia/windows/setup.iss
+
+          cd dist && sha256sum "BestCamStationSetup-$TAG.exe"             > "BestCamStationSetup-$TAG.exe.sha256"
+          ls -la
+
+      - name: Прикрепить к релизу
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/BestCamStationSetup-*.exe
+            dist/BestCamStationSetup-*.exe.sha256
+
+      - name: Сохранить как артефакт сборки
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup-${{ inputs.tag }}
+          path: dist
