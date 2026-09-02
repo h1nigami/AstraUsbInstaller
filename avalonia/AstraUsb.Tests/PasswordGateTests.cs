@@ -51,6 +51,38 @@ public sealed class PasswordGateTests
         Assert.False(PasswordGate.Matches(stored, PasswordGate.Fallback));
     }
 
+    [Fact]
+    public void The_default_account_works_until_it_is_renamed()
+    {
+        Assert.True(PasswordGate.AccountMatches(null, "admin"));
+        Assert.True(PasswordGate.AccountMatches("", "admin"));
+        Assert.False(PasswordGate.AccountMatches(null, "оператор"));
+    }
+
+    [Fact]
+    public void The_account_name_ignores_case_and_spaces()
+    {
+        // На сенсорном экране заглавная буква появляется случайно чаще, чем
+        // намеренно.
+        Assert.True(PasswordGate.AccountMatches("admin", "Admin"));
+        Assert.True(PasswordGate.AccountMatches("admin", " admin "));
+        Assert.True(PasswordGate.AccountMatches(" Дежурный ", "дежурный"));
+    }
+
+    [Fact]
+    public void A_renamed_account_replaces_the_default_one()
+    {
+        Assert.True(PasswordGate.AccountMatches("дежурный", "дежурный"));
+        Assert.False(PasswordGate.AccountMatches("дежурный", "admin"));
+    }
+
+    [Fact]
+    public void An_empty_entry_never_matches()
+    {
+        Assert.False(PasswordGate.AccountMatches("admin", ""));
+        Assert.False(PasswordGate.AccountMatches("admin", null));
+    }
+
     [Theory]
     [InlineData("мусор")]
     [InlineData("100000:не-base64:тоже")]

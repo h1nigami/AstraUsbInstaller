@@ -4,17 +4,21 @@ using System.Text;
 namespace AstraUsb.Services;
 
 /// <summary>
-/// Пароль станции: им закрыт выход из программы и разделы, кроме «Загрузки».
+/// Учётная запись администратора: ею закрыт выход из программы и все разделы,
+/// кроме сбора данных.
 ///
 /// В настройках лежит не сам пароль, а его хеш с солью: файл настроек читается
 /// любым, кто дотянется до диска, и открытый пароль там означал бы, что защиты
-/// нет. Пока пароль не задан, подходит значение по умолчанию, как у
-/// Python-версии, иначе первый запуск станции оказался бы запертым.
+/// нет. Пока пароль не задан, подходит значение по умолчанию из задания, иначе
+/// первый запуск станции оказался бы запертым.
 /// </summary>
 public static class PasswordGate
 {
-    /// <summary>Пароль по первому запуску, тот же, что у Python-версии.</summary>
-    public const string Fallback = "exit";
+    /// <summary>Имя учётной записи по умолчанию, как в задании.</summary>
+    public const string DefaultAccount = "admin";
+
+    /// <summary>Пароль по первому запуску, как в задании.</summary>
+    public const string Fallback = "888888";
 
     private const int Iterations = 100_000;
     private const int SaltSize = 16;
@@ -26,6 +30,16 @@ public static class PasswordGate
         var fromEnv = Environment.GetEnvironmentVariable("APP_EXIT_PASSWORD");
         return string.IsNullOrEmpty(fromEnv) ? Fallback : fromEnv;
     }
+
+    /// <summary>
+    /// Совпадает ли имя учётной записи. Регистр не учитывается: на сенсорном
+    /// экране заглавная буква появляется случайно чаще, чем намеренно.
+    /// </summary>
+    public static bool AccountMatches(string? stored, string? entered) =>
+        string.Equals(
+            string.IsNullOrWhiteSpace(stored) ? DefaultAccount : stored.Trim(),
+            entered?.Trim() ?? "",
+            StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Хеш для хранения в настройках: «итерации:соль:ключ».</summary>
     public static string Hash(string password)

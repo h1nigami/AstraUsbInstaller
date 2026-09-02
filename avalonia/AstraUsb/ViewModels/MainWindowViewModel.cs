@@ -116,7 +116,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private bool _passwordVisible;
 
     [ObservableProperty]
+    private string _accountInput = "";
+
+    [ObservableProperty]
     private string _passwordInput = "";
+
+    /// <summary>Введённый пароль точками: подглядеть через плечо нечего.</summary>
+    public string PasswordMask => new('●', PasswordInput.Length);
 
     [ObservableProperty]
     private string _passwordPrompt = "";
@@ -187,12 +193,37 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private void Ask(string prompt, bool exit)
     {
+        var settings = Services.Settings.Load();
+
         _askingForExit = exit;
         PasswordPrompt = prompt;
+        AccountInput = string.IsNullOrWhiteSpace(settings.AdminAccount)
+            ? PasswordGate.DefaultAccount
+            : settings.AdminAccount;
         PasswordInput = "";
         PasswordError = "";
         PasswordVisible = true;
     }
+
+    /// <summary>
+    /// Клавиша экранной клавиатуры. Станция сенсорная, физической клавиатуры
+    /// у неё нет, а пароль по заданию цифровой.
+    /// </summary>
+    [RelayCommand]
+    private void PasswordKey(string? key)
+    {
+        PasswordError = "";
+
+        PasswordInput = key switch
+        {
+            null or "" => PasswordInput,
+            "C" => "",
+            "<" => PasswordInput.Length > 0 ? PasswordInput[..^1] : "",
+            _ => PasswordInput.Length < 32 ? PasswordInput + key : PasswordInput,
+        };
+    }
+
+    partial void OnPasswordInputChanged(string value) => OnPropertyChanged(nameof(PasswordMask));
 
     [RelayCommand]
     private void ConfirmPassword()
@@ -200,13 +231,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // Настройки читаются заново: пароль могли сменить в этом же сеансе.
         var settings = Services.Settings.Load();
 
-        if (!PasswordGate.Matches(settings.PasswordHash, PasswordInput))
+        if (!PasswordGate.AccountMatches(settings.AdminAccount, AccountInput)
+            || !PasswordGate.Matches(settings.PasswordHash, PasswordInput))
         {
             PasswordInput = "";
-            PasswordError = "пароль не подошёл";
+            // Что именно не подошло, имя или пароль, не уточняем: это
+            // подсказало бы подбирающему, какую половину он уже угадал.
+            PasswordError = "учётная запись или пароль не подошли";
             _actions.Write(ActionLog.Access, _askingForExit
-                ? "пароль не подошёл при выходе из программы"
-                : $"пароль не подошёл при входе в раздел «{TabName(_wantedTab)}»");
+                ? $"отказ при выходе из программы, учётная запись «{AccountInput}»"
+                : $"отказ при входе в раздел «{TabName(_wantedTab)}», "
+                  + $"учётная запись «{AccountInput}»");
             return;
         }
 
@@ -215,15 +250,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         if (_askingForExit)
         {
-            _actions.Write(ActionLog.Exit, "выход из программы");
+            _actions.Write(ActionLog.Exit, $"выход из программы, {AccountInput}");
             ExitRequested?.Invoke();
             return;
         }
 
-        _actions.Write(ActionLog.Access, $"открыт раздел «{TabName(_wantedTab)}»");
-
         _access = new AccessGuard(settings.LockTimeoutMinutes);
         _access.Unlock(DateTime.Now);
+        _actions.Write(ActionLog.Access,
+            $"открыт раздел «{TabName(_wantedTab)}», {AccountInput}");
         AccessGranted?.Invoke(_wantedTab);
     }
 

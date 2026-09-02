@@ -572,14 +572,20 @@
                 <StackPanel Spacing="8">
                   <TextBlock Text="ДОСТУП" FontSize="11" LetterSpacing="1.6"
                              Foreground="{StaticResource BrandBrush}" />
-                  <TextBlock Text="Паролем закрыты выход из программы и все разделы, кроме «Загрузки»."
+                  <TextBlock Text="Учётной записью администратора закрыты выход из программы и все разделы, кроме сбора данных."
                              FontSize="11" TextWrapping="Wrap"
                              Foreground="{StaticResource FgMutedBrush}" />
-                  <TextBlock Text="Пароль ещё не меняли: станция открывается стандартным."
+                  <TextBlock Text="Пароль ещё не меняли: станция открывается стандартным из задания."
                              IsVisible="{Binding Settings.UsingDefaultPassword}"
                              FontSize="11" TextWrapping="Wrap" Foreground="#FFB020" />
 
-                  <!-- Форма в одну строку: на экране 1024x600 вертикаль дороже
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBlock Text="Учётная запись" VerticalAlignment="Center" FontSize="12"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBox Width="140" Text="{Binding Settings.AdminAccount}" />
+                  </StackPanel>
+
+                  <!-- Форма в одну строку: вертикаль на экране станции дороже
                        подписей, и подсказки в самих полях их заменяют. -->
                   <StackPanel Orientation="Horizontal" Spacing="6">
                     <TextBox Width="112" PasswordChar="●" Watermark="текущий"
@@ -696,24 +702,81 @@
          преграда между посторонним и выходом из программы. -->
     <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding PasswordVisible}"
             Background="#E6050A14">
-      <Border Width="420" Padding="24" CornerRadius="2"
+      <Border Width="580" Padding="24" CornerRadius="2"
               HorizontalAlignment="Center" VerticalAlignment="Center"
               Background="{StaticResource BgPanelBrush}"
               BorderBrush="{StaticResource BrandBrush}" BorderThickness="1">
-        <StackPanel Spacing="14">
+        <StackPanel Spacing="12">
           <TextBlock Text="{Binding PasswordPrompt}" FontSize="15" FontWeight="Bold"
                      Foreground="{StaticResource FgMainBrush}" />
-          <TextBlock Text="Введите пароль станции" FontSize="11"
+          <TextBlock Text="Введите учётную запись и пароль администратора" FontSize="11"
                      Foreground="{StaticResource FgMutedBrush}" />
-          <TextBox x:Name="PasswordBox" PasswordChar="●" FontSize="16"
-                   Text="{Binding PasswordInput}" />
-          <TextBlock Text="{Binding PasswordError}" FontSize="11"
-                     Foreground="#FF3B5C" />
-          <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
-            <Button Content="Отмена" Command="{Binding CancelPasswordCommand}" />
-            <Button Content="Подтвердить" IsDefault="True"
-                    Command="{Binding ConfirmPasswordCommand}" />
-          </StackPanel>
+
+          <Grid ColumnDefinitions="*,Auto">
+            <StackPanel Grid.Column="0" Spacing="10" Margin="0,0,16,0">
+              <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" FontSize="10"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding AccountInput}" FontSize="15" />
+
+              <TextBlock Text="ПАРОЛЬ" FontSize="10" Margin="0,4,0,0"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox x:Name="PasswordBox" PasswordChar="●" FontSize="16"
+                       Text="{Binding PasswordInput}" />
+
+              <TextBlock Text="{Binding PasswordError}" FontSize="11"
+                         TextWrapping="Wrap" Foreground="#FF3B5C" />
+
+              <StackPanel Orientation="Horizontal" Spacing="10">
+                <Button Content="Войти" IsDefault="True" Height="46" Width="120"
+                        HorizontalContentAlignment="Center"
+                        Command="{Binding ConfirmPasswordCommand}" />
+                <Button Content="Отмена" Height="46" Width="120"
+                        HorizontalContentAlignment="Center"
+                        Command="{Binding CancelPasswordCommand}" />
+              </StackPanel>
+            </StackPanel>
+
+            <!-- Экранная клавиатура: станция сенсорная, физической
+                 клавиатуры у неё нет, а пароль по заданию цифровой. -->
+            <UniformGrid Grid.Column="1" Columns="3" Rows="4" Width="216">
+            <Button Content="1" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="1" />
+            <Button Content="2" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="2" />
+            <Button Content="3" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="3" />
+            <Button Content="4" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="4" />
+            <Button Content="5" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="5" />
+            <Button Content="6" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="6" />
+            <Button Content="7" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="7" />
+            <Button Content="8" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="8" />
+            <Button Content="9" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="9" />
+            <Button Content="C" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="C" />
+            <Button Content="0" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="0" />
+            <Button Content="←" Height="52" Margin="3" FontSize="18" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="&lt;" />
+            </UniformGrid>
+          </Grid>
         </StackPanel>
       </Border>
     </Border>

@@ -32,6 +32,9 @@ public sealed class Settings
     /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 
+    /// <summary>Имя учётной записи администратора. Пусто означает admin.</summary>
+    public string AdminAccount { get; set; } = "";
+
     /// <summary>
     /// Хеш пароля станции, а не сам пароль. Пусто означает, что пароль ещё не
     /// меняли и подходит значение по умолчанию.

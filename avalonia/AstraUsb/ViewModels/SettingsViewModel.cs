@@ -50,6 +50,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// станции невелик, и записи его переполнят.
     /// </summary>
     [ObservableProperty] private bool _archiveOnSystemDrive;
+    [ObservableProperty] private string _adminAccount = "";
     [ObservableProperty] private string _currentPassword = "";
     [ObservableProperty] private string _newPassword = "";
     [ObservableProperty] private string _repeatPassword = "";
@@ -74,6 +75,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         KeepDays = _settings.KeepDays;
         LockTimeoutMinutes = _settings.LockTimeoutMinutes;
         UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
+        AdminAccount = string.IsNullOrWhiteSpace(_settings.AdminAccount)
+            ? PasswordGate.DefaultAccount
+            : _settings.AdminAccount;
         ArchiveOnSystemDrive = ArchiveGuard.OnSystemDrive(_settings.BackupRoot);
 
         ReloadSlots();
@@ -150,17 +154,25 @@ public sealed partial class SettingsViewModel : ObservableObject
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(AdminAccount))
+        {
+            Hint = "укажите имя учётной записи";
+            return;
+        }
+
         if (NewPassword != RepeatPassword)
         {
             Hint = "новый пароль и повтор не совпали";
             return;
         }
 
+        _settings.AdminAccount = AdminAccount.Trim();
         _settings.PasswordHash = PasswordGate.Hash(NewPassword);
         var saved = _settings.Save();
         UsingDefaultPassword = !saved;
         if (saved)
-            _actions.Write(ActionLog.Settings, "пароль станции изменён");
+            _actions.Write(ActionLog.Settings,
+                $"учётная запись администратора изменена: {_settings.AdminAccount}");
         Hint = saved
             ? "пароль изменён"
             : "не удалось записать настройки, проверьте права на папку data";
