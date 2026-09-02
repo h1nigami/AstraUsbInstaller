@@ -261,3 +261,35 @@ class MainTest(unittest.TestCase):
             rc = updater.main()
         apply_mock.assert_not_called()
         self.assertEqual(rc, 0)
+
+
+class MixedAssetsTest(unittest.TestCase):
+    """В релизе могут оказаться сборки для двух платформ сразу. Точка на
+    Python-версии обязана взять свой архив и сумму именно от него."""
+
+    @staticmethod
+    def _release(*names):
+        return {"tag_name": "v9.9", "assets": [
+            {"name": n, "browser_download_url": "https://example/" + n} for n in names]}
+
+    def test_ignores_release_without_tarball(self):
+        r = self._release("astra-usb-monitor-win-v9.9.zip",
+                          "astra-usb-monitor-win-v9.9.zip.sha256")
+        self.assertIsNone(updater.pick_asset(r))
+
+    def test_picks_checksum_belonging_to_the_tarball(self):
+        r = self._release("astra-usb-monitor-win-v9.9.zip",
+                          "astra-usb-monitor-win-v9.9.zip.sha256",
+                          "astra-usb-monitor-v9.9.tar.gz",
+                          "astra-usb-monitor-v9.9.tar.gz.sha256")
+        picked = updater.pick_asset(r)
+        self.assertIsNotNone(picked)
+        tarball, checksum = picked
+        self.assertTrue(tarball.endswith("astra-usb-monitor-v9.9.tar.gz"))
+        self.assertTrue(checksum.endswith("astra-usb-monitor-v9.9.tar.gz.sha256"),
+                        "сумма должна принадлежать выбранному архиву, а не чужому")
+
+    def test_none_when_tarball_has_no_own_checksum(self):
+        r = self._release("astra-usb-monitor-v9.9.tar.gz",
+                          "astra-usb-monitor-win-v9.9.zip.sha256")
+        self.assertIsNone(updater.pick_asset(r))
