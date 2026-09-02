@@ -306,7 +306,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         Hint = "параметры внешней базы сохранены";
     }
 
-    /// <summary>Проверяет, отвечает ли сервер базы на своём порту.</summary>
+    /// <summary>
+    /// Проверяет базу: сначала отвечает ли сервер на порту, потом принимает ли
+    /// он учётную запись и хватает ли прав на таблицу учёта. Узнать о нехватке
+    /// прав лучше при настройке, чем в первую же смену.
+    /// </summary>
     [RelayCommand]
     private async Task TestSql()
     {
@@ -318,7 +322,26 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         try
         {
-            SqlState = await SqlProbe.CheckAsync(SqlHost, SqlPort, TimeSpan.FromSeconds(5));
+            var reachable = await SqlProbe.CheckAsync(SqlHost, SqlPort, TimeSpan.FromSeconds(5));
+            if (!reachable.StartsWith("сервер отвечает", StringComparison.Ordinal))
+            {
+                SqlState = reachable;
+                return;
+            }
+
+            var probe = new Settings
+            {
+                SqlHost = SqlHost.Trim(),
+                SqlPort = SqlPort,
+                SqlDatabase = SqlDatabase.Trim(),
+                SqlUser = SqlUser.Trim(),
+                SqlPassword = SqlPassword,
+            };
+
+            var result = await new ExternalDatabase(probe).CheckAsync();
+            SqlState = result.Ok
+                ? $"{result.Message}, таблица учёта готова"
+                : result.Message;
         }
         catch (Exception e)
         {
@@ -329,6 +352,44 @@ public sealed partial class SettingsViewModel : ObservableObject
             SqlTesting = false;
         }
     }
+
+    /// <summary>
+    /// Отправляет во внешнюю базу сведения о собранном за последний месяц.
+    /// Локальный журнал остаётся источником истины: наружу уходит отражение.
+    /// </summary>
+    [RelayCommand]
+    private async Task SyncSql()
+    {
+        if (SqlTesting)
+            return;
+
+        SqlTesting = true;
+        SqlState = "отправляем";
+
+        try
+        {
+            var files = new CollectionLog(_dbPath)
+                .CollectedBetween(DateTime.Now.AddDays(-30), DateTime.Now);
+
+            var station = $"BC-{Math.Clamp(_settings.StationNumber, 0, 99):00}";
+            var result = await new ExternalDatabase(_settings).SendAsync(files, station);
+
+            SqlState = result.Message;
+            if (result.Ok && result.Sent > 0)
+                _actions.Write(ActionLog.Export,
+                    $"во внешнюю базу отправлено записей: {result.Sent}");
+        }
+        catch (Exception e)
+        {
+            SqlState = e.Message;
+        }
+        finally
+        {
+            SqlTesting = false;
+        }
+    }
+
+    /// <summary>Сохраняет параметры отправки на сервер.</summary>
 
     /// <summary>Подставляет обычный порт выбранного сервера.</summary>
     partial void OnSqlKindIndexChanged(int value)

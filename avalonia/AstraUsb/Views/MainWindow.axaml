@@ -1007,8 +1007,10 @@
                   <TextBlock Text="Внешняя база" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Станция работает на своей базе рядом с программой, и настраивать здесь нечего, пока внешнего сервера нет." />
+                  <TextBlock Classes="hint"
+                             Text="Наружу уходит не работа станции, а сведения о собранном: сколько записей, с какого регистратора, когда сняты и когда загружены. Своя база остаётся источником истины, поэтому обрыв связи с сервером сбор не останавливает." />
                   <TextBlock Classes="hint" Foreground="{StaticResource WarnBrush}"
-                             Text="Пока станция только проверяет, отвечает ли сервер на своём порту. Хранение записей на внешней базе не ведётся: драйвер чужой базы в сборку станции не входит." />
+                             Text="Поддерживается MySQL и совместимые с ним. Таблицу учёта станция создаёт сама, ручной подготовки на сервере не нужно." />
 
                   <CheckBox Content="Работать с внешним сервером базы"
                             IsChecked="{Binding Settings.SqlEnabled}" />
@@ -1059,6 +1061,9 @@
                     <Button Content="Проверить" Height="52" Width="150"
                             IsEnabled="{Binding !Settings.SqlTesting}"
                             Command="{Binding Settings.TestSqlCommand}" />
+                    <Button Content="Отправить сведения" Height="52"
+                            IsEnabled="{Binding !Settings.SqlTesting}"
+                            Command="{Binding Settings.SyncSqlCommand}" />
                   </StackPanel>
 
                   <TextBlock Text="{Binding Settings.SqlState}" Classes="hint"

@@ -29,6 +29,9 @@
     <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <!-- Драйвер внешней базы: управляемый, без нативных библиотек, поэтому
+         самодостаточная сборка станции от него не тяжелеет заметно. -->
+    <PackageReference Include="MySqlConnector" Version="2.3.7" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.3.2" />
   </ItemGroup>
 
