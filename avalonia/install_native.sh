@@ -43,8 +43,11 @@ echo "--- Проверка системных библиотек..."
 NEEDED_LIBS="libfontconfig.so.1 libX11.so.6 libSM.so.6 libICE.so.6"
 PACKAGES="libfontconfig1 libx11-6 libsm6 libice6"
 
-# Не обязательны, но без них молчат тревога и подсказки: alsa-utils играет
-# сигнал, speech-dispatcher произносит фразы. Ставим, если репозиторий доступен.
+# Не обязательны, но без них станция теряет часть работы: alsa-utils играет
+# тревогу, speech-dispatcher произносит подсказки, ffmpeg переводит записи
+# в другой формат и достаёт кадры для просмотра по временной шкале (кадры
+# берёт ffprobe с ffmpeg, оба идут одним пакетом).
+# Ставим, если репозиторий доступен.
 OPTIONAL_PACKAGES="alsa-utils speech-dispatcher ffmpeg"
 
 missing_libs() {
