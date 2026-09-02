@@ -11,7 +11,7 @@ namespace AstraUsb.Services;
 /// приезжают даты вроде 1970 года.
 /// </param>
 /// <param name="CollectedAt">
-/// Время загрузки в станцию. Ставит станция, поэтому достоверно — по нему и
+/// Время загрузки в станцию. Ставит станция, поэтому достоверно, по нему и
 /// ищем.
 /// </param>
 public sealed record CollectedFile(
@@ -34,7 +34,7 @@ public sealed record CollectedFile(
 ///
 /// Время съёмки берётся с камеры и потому ненадёжно: часы на регистраторе
 /// сбиваются, а выставить их станция не умеет. Поэтому каждая запись
-/// получает ещё и время загрузки — его ставит сама станция, и именно оно
+/// получает ещё и время загрузки, его ставит сама станция, и именно оно
 /// служит опорой для поиска и для чистки по давности.
 /// </summary>
 public sealed class CollectionLog
@@ -118,7 +118,7 @@ public sealed class CollectionLog
         return Read(cmd);
     }
 
-    /// <summary>Файлы, загруженные раньше указанной даты, — для чистки по давности.</summary>
+    /// <summary>Файлы, загруженные раньше указанной даты, для чистки по давности.</summary>
     public IReadOnlyList<CollectedFile> CollectedBefore(DateTime moment)
     {
         using var db = Open();

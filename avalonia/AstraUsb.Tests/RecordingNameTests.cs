@@ -25,7 +25,7 @@ public sealed class RecordingNameTests
     [Fact]
     public void Shot_time_comes_from_the_name_not_the_file_date()
     {
-        // Дата файла меняется при копировании, а имя — нет.
+        // Дата файла меняется при копировании, а имя нет.
         var info = RecordingName.Parse("A11_2222222_222222_20260101093000_0042.MP4");
 
         Assert.Equal(new DateTime(2026, 1, 1, 9, 30, 0), info!.ShotAt);

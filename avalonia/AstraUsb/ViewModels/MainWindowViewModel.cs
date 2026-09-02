@@ -33,6 +33,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private readonly Dictionary<string, BackupStage> _finished = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Опознанные камеры. Разбор карты стоит дорого: читается файл номера и
+    /// обходятся записи, а опрос идёт каждые две секунды. Поэтому результат
+    /// держим до извлечения носителя.
+    /// </summary>
+    private readonly Dictionary<string, CardInfo> _identified = new(StringComparer.Ordinal);
+
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
     /// <summary>Вкладка «Устройства».</summary>
@@ -51,13 +58,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private string _clockDate = "";
 
     [ObservableProperty]
-    private string _version = "версия —";
+    private string _version = "версия неизвестна";
 
     [ObservableProperty]
     private string _status = "мониторинг: запуск";
 
     [ObservableProperty]
-    private string _storageLabel = "хранилище —";
+    private string _storageLabel = "хранилище недоступно";
 
     /// <summary>Ширина заполненной части полосы хранилища, в пикселях.</summary>
     [ObservableProperty]
@@ -123,47 +130,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var port = Ports[i];
             var cameraId = device.Name;
-            var detail = "номер не выдан";
+            var detail = "опознаём камеру";
+            var personnel = "";
             var employee = "";
             var department = "";
 
-            if (!string.IsNullOrEmpty(device.MountPoint))
+            if (Identify(device) is { } card)
             {
-                try
-                {
-                    // Файл на карте — источник истины. Нет файла — станция
-                    // выдаёт номер и записывает его: иначе при следующем
-                    // подключении камера будет опознана как новая.
-                    using var registry = new DeviceRegistry(AppPaths.Database);
-                    var id = registry.ResolveByCard(
-                        device.MountPoint, _stationSettings.StationNumber, device.Name, device.Name);
-
-                    var card = registry.FirmwareIdOf(id) ?? "";
-                    var name = registry.GetDeviceName(id);
-
-                    cameraId = string.IsNullOrEmpty(name) ? card : name;
-                    detail = CardIdentity.StationOf(card) is { } station
-                        ? (station == _stationSettings.StationNumber
-                            ? "номер выдан этой станцией"
-                            : $"номер станции {station:00}")
-                        : "номер задан в камере";
-
-                    var staff = new StaffDirectory(AppPaths.Database);
-                    if (staff.EmployeeOfDevice(id) is { } person)
-                    {
-                        employee = person.FullName;
-                        department = staff.DepartmentPath(person.DepartmentId);
-                    }
-
-                    StartBackup(port, id, device.MountPoint);
-                }
-                catch (Exception)
-                {
-                    // База занята другим действием — плитка всё равно покажет камеру.
-                }
+                cameraId = card.CameraId;
+                detail = card.Origin;
+                personnel = card.PersonnelNo;
+                employee = card.Employee;
+                department = card.Department;
+                StartBackup(port, card.DeviceId, device.MountPoint!);
             }
 
             port.CameraId = cameraId;
+            port.PersonnelNo = personnel;
             port.Employee = employee;
             port.Department = department;
 
@@ -182,7 +165,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
         }
 
-        // Камеру вынули — забываем итог, чтобы при следующем подключении
+        // Камеру вынули, забываем итог, чтобы при следующем подключении
         // выгрузка началась заново.
         var present = devices
             .Select(d => d.MountPoint)
@@ -192,12 +175,74 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         foreach (var gone in _finished.Keys.Where(m => !present.Contains(m)).ToArray())
             _finished.Remove(gone);
 
+        foreach (var gone in _identified.Keys.Where(m => !present.Contains(m)).ToArray())
+            _identified.Remove(gone);
+
         Status = devices.Count == 0
             ? "носители не подключены"
             : $"носителей: {devices.Count}";
 
         UpdateStorage();
     }
+
+    /// <summary>
+    /// Опознаёт камеру и подтягивает сотрудника. Результат кэшируется до
+    /// извлечения носителя.
+    /// </summary>
+    private CardInfo? Identify(UsbDevice device)
+    {
+        if (string.IsNullOrEmpty(device.MountPoint))
+            return null;
+
+        var mount = device.MountPoint;
+        if (_identified.TryGetValue(mount, out var cached))
+            return cached;
+
+        try
+        {
+            // Файл на карте и есть источник истины. Нет файла, станция выдаёт
+            // номер и обязательно записывает его: иначе при следующем
+            // подключении камера будет опознана как новая. Имена записей
+            // идут запасным признаком: по ним узнаётся аппарат, которому
+            // поставили другую карту, и по ним же видно, у кого он на руках.
+            var recording = RecordingName.FromCard(mount);
+            var personnel = recording?.HasPersonnelNo == true ? recording.PersonnelNo : "";
+
+            using var registry = new DeviceRegistry(AppPaths.Database);
+            var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
+                device.Name, device.Name, recording);
+
+            var number = registry.FirmwareIdOf(id) ?? "";
+            var name = registry.GetDeviceName(id);
+
+            var staff = new StaffDirectory(AppPaths.Database);
+            var person = staff.AssignByPersonnelNo(id, personnel);
+
+            var info = new CardInfo(
+                id,
+                string.IsNullOrEmpty(name) ? number : name,
+                Origin(number),
+                personnel,
+                person?.FullName ?? "",
+                staff.DepartmentPath(person?.DepartmentId));
+
+            _identified[mount] = info;
+            return info;
+        }
+        catch (Exception)
+        {
+            // База занята другим действием, повторим на следующем опросе.
+            return null;
+        }
+    }
+
+    /// <summary>Откуда у камеры номер: от этой станции, от чужой или из самой камеры.</summary>
+    private string Origin(string number) =>
+        CardIdentity.StationOf(number) is { } station
+            ? station == _stationSettings.StationNumber
+                ? "номер выдан этой станцией"
+                : $"номер станции {station:00}"
+            : "номер задан в камере";
 
     /// <summary>
     /// Запускает выгрузку камеры, если она ещё не идёт. Плитка показывает ход:
@@ -252,9 +297,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
         catch (Exception)
         {
-            // Файла нет или он испорчен — приложение из-за версии падать не должно.
+            // Файла нет или он испорчен, приложение из-за версии падать не должно.
         }
-        return "версия —";
+        return "версия неизвестна";
     }
 
     /// <summary>Показывает заполнение хранилища и краснеет, когда места мало.</summary>
@@ -284,7 +329,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
         catch (Exception)
         {
-            // Диск недоступен — полоса остаётся в прежнем состоянии.
+            // Диск недоступен, полоса остаётся в прежнем состоянии.
         }
     }
 
@@ -302,3 +347,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _clock.Stop();
     }
 }
+
+/// <summary>Что станция знает о подключённой камере.</summary>
+/// <param name="Origin">Откуда у неё номер, для строки под плиткой.</param>
+/// <param name="PersonnelNo">Номер сотрудника, прописанный в самой камере.</param>
+internal sealed record CardInfo(
+    long DeviceId,
+    string CameraId,
+    string Origin,
+    string PersonnelNo,
+    string Employee,
+    string Department);

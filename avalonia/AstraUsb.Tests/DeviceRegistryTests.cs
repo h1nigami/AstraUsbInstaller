@@ -154,7 +154,7 @@ public sealed class DeviceRegistryTests : IDisposable
         }
         catch (IOException)
         {
-            // Файл базы может ещё держаться — для временной папки это неважно.
+            // Файл базы может ещё держаться, для временной папки это неважно.
         }
     }
 }

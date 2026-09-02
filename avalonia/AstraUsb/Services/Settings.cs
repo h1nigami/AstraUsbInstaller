@@ -4,7 +4,7 @@ namespace AstraUsb.Services;
 
 /// <summary>
 /// Настройки станции. Лежат рядом с базой в data/settings.json, чтобы
-/// переустановка программы их не трогала — так же, как у Python-версии.
+/// переустановка программы их не трогала, так же, как у Python-версии.
 /// </summary>
 public sealed class Settings
 {
@@ -20,7 +20,7 @@ public sealed class Settings
     /// <summary>Удалять с камеры видео после успешной загрузки.</summary>
     public bool DeleteVideoAfterCopy { get; set; }
 
-    /// <summary>Минуты бездействия до блокировки разделов; 0 — не блокировать.</summary>
+    /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 
     /// <summary>
@@ -53,7 +53,7 @@ public sealed class Settings
         }
         catch (Exception)
         {
-            // Файла нет или он испорчен — берём значения по умолчанию.
+            // Файла нет или он испорчен, берём значения по умолчанию.
             // Из-за настроек станция запускаться не перестаёт.
         }
 

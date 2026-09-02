@@ -19,8 +19,8 @@ public sealed record Employee(
 /// Справочник отделов и сотрудников.
 ///
 /// В прежней версии за человека отвечало одно текстовое поле у устройства.
-/// Этого не хватало: по инструкции к станции сотрудник заводится карточкой —
-/// персональный номер, имя, телефон, роль, отдел, — а отделы образуют дерево.
+/// Этого не хватало: по инструкции к станции сотрудник заводится карточкой:
+/// персональный номер, имя, телефон, роль, отдел. Отделы образуют дерево.
 /// Старое поле не выбрасывается: при первом запуске из него создаются
 /// карточки, чтобы накопленные записи не потерялись.
 /// </summary>
@@ -100,7 +100,7 @@ public sealed class StaffDirectory
         }
         catch (SqliteException)
         {
-            // Старой колонки нет — переносить нечего.
+            // Старой колонки нет, переносить нечего.
         }
     }
 
@@ -255,6 +255,37 @@ public sealed class StaffDirectory
             ("$emp", (object?)employeeId ?? DBNull.Value), ("$id", deviceId));
     }
 
+    /// <summary>
+    /// Закрепляет камеру за сотрудником с этим номером, заводя карточку, если
+    /// её ещё нет.
+    ///
+    /// Номер сотрудника камера пишет в имена своих записей, и станция ему
+    /// доверяет: он говорит, у кого аппарат на руках сейчас. Так же поступает
+    /// штатная программа: она заводит учётную запись с тем же номером. Имя
+    /// оператор впишет позже, пока в нём стоит сам номер.
+    /// </summary>
+    /// <returns>Сотрудник, за которым закреплена камера, или null.</returns>
+    public Employee? AssignByPersonnelNo(long deviceId, string? personnelNo)
+    {
+        // Номера в записях нет, прежняя привязка остаётся в силе.
+        if (string.IsNullOrWhiteSpace(personnelNo))
+            return EmployeeOfDevice(deviceId);
+
+        var number = personnelNo.Trim();
+        var employee = FindByPersonnelNo(number);
+
+        if (employee is null)
+        {
+            AddEmployee(number, number);
+            employee = FindByPersonnelNo(number);
+        }
+
+        if (employee is not null && EmployeeOfDevice(deviceId)?.Id != employee.Id)
+            AssignDevice(deviceId, employee.Id);
+
+        return employee;
+    }
+
     public Employee? EmployeeOfDevice(long deviceId)
     {
         using var db = Open();
@@ -288,7 +319,7 @@ public sealed class StaffDirectory
         }
         catch (SqliteException)
         {
-            // Колонка уже существует — обычное дело при миграции.
+            // Колонка уже существует, обычное дело при миграции.
         }
     }
 

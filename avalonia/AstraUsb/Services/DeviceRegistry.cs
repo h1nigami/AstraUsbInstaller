@@ -64,9 +64,15 @@ public sealed class DeviceRegistry : IDisposable
         TryExecute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_firmware"
                    + " ON devices (firmware_id) WHERE firmware_id IS NOT NULL");
 
+        // Номер, которым камера подписывает имена своих записей. Он живёт в
+        // аппарате, поэтому позволяет узнать камеру с заменённой картой.
+        // Без UNIQUE: оператор может прописать один номер двум аппаратам, и
+        // отказ вставки был бы хуже неоднозначности.
+        TryExecute("ALTER TABLE devices ADD COLUMN camera_no TEXT");
+
         // Устройства, потерянные прежней ошибкой регистрации: бэкапы на них
         // есть, а строки нет. Без неё устройство не видно в списке, ему нельзя
-        // задать имя, и поиск не находит его файлы — он связывает файлы с
+        // задать имя, и поиск не находит его файлы: он связывает файлы с
         // устройствами джойном.
         TryExecute("""
             INSERT INTO devices (id, serial, label, first_seen, last_seen)
@@ -116,7 +122,7 @@ public sealed class DeviceRegistry : IDisposable
     /// <summary>
     /// Заводит устройство под номером, который принёс носитель.
     /// Серийник может быть уже занят: USB-эмуляторы отдают один и тот же на все
-    /// экземпляры. Тогда берём серийник, уникализированный номером устройства —
+    /// экземпляры. Тогда берём серийник, уникализированный номером устройства:
     /// номер и так первичный ключ, столкнуться он не может.
     /// </summary>
     private void RegisterIdFromUsb(long deviceId, string? serial, string label, string now)
@@ -140,7 +146,7 @@ public sealed class DeviceRegistry : IDisposable
             }
             catch (SqliteException)
             {
-                // Серийник занят другим устройством — пробуем следующий вариант.
+                // Серийник занят другим устройством, пробуем следующий вариант.
             }
         }
     }
@@ -196,7 +202,7 @@ public sealed class DeviceRegistry : IDisposable
         }
         catch (Exception)
         {
-            // Маркера нет, носитель только что извлекли, файл нечитаем —
+            // Маркера нет, носитель только что извлекли, файл нечитаем,
             // всё это штатно: номер просто будет определён другим путём.
             return null;
         }
@@ -212,7 +218,7 @@ public sealed class DeviceRegistry : IDisposable
         }
         catch (Exception)
         {
-            // Носитель может быть только для чтения — это не повод прерывать копирование.
+            // Носитель может быть только для чтения, это не повод прерывать копирование.
         }
     }
 
@@ -236,7 +242,7 @@ public sealed class DeviceRegistry : IDisposable
         }
         catch (SqliteException)
         {
-            // Колонка уже есть или вставлять нечего — обычное дело при миграции.
+            // Колонка уже есть или вставлять нечего, обычное дело при миграции.
         }
     }
 
@@ -253,25 +259,70 @@ public sealed class DeviceRegistry : IDisposable
     /// <summary>
     /// Находит или заводит камеру по номеру с её карты.
     ///
-    /// Файл на карте — единственный источник истины. Если файла нет, станция
+    /// Файл на карте и есть единственный источник истины. Если файла нет, станция
     /// выдаёт номер и обязательно записывает его: без записи камера при
     /// следующем подключении будет опознана как новая. Чужой номер нашего
-    /// формата не перезаписывается — камера могла приехать с другой станции.
+    /// формата не перезаписывается: камера могла приехать с другой станции.
     /// </summary>
+    /// <param name="recording">
+    /// Что удалось прочитать из имени последней записи. Запасной признак:
+    /// карту могли заменить, а номер аппарата остаётся в именах файлов.
+    /// </param>
     public long ResolveByCard(string? mountPoint, int stationNumber,
-        string? label, string? devName)
+        string? label, string? devName, RecordingInfo? recording = null)
     {
         var now = Timestamp();
         var card = CardIdentity.Read(mountPoint);
 
         if (!string.IsNullOrEmpty(card))
-            return Upsert(card, label ?? devName ?? "", now);
+            return Remember(Upsert(card, label ?? devName ?? "", now), recording);
 
-        // Номера нет — выдаём свой и кладём на карту.
+        // Номера на карте нет. Прежде чем счесть камеру новой, проверяем её
+        // собственный номер из имён записей: так узнаётся аппарат, которому
+        // поставили другую карту.
+        if (recording?.HasDeviceNo == true
+            && FindByCameraNo(recording.DeviceNo) is { } known)
+        {
+            // Прежний номер возвращаем на новую карту, иначе при следующем
+            // подключении камера опять станет новой.
+            if (FirmwareIdOf(known) is { } previous)
+                CardIdentity.Write(mountPoint, previous);
+
+            Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
+                ("$now", now), ("$label", label ?? devName ?? ""), ("$id", known));
+            return Remember(known, recording);
+        }
+
+        // Камера незнакомая, выдаём свой номер и кладём на карту.
         var issued = CardIdentity.Format(stationNumber, NextSequence(stationNumber));
         CardIdentity.Write(mountPoint, issued);
-        return Upsert(issued, label ?? devName ?? "", now);
+        return Remember(Upsert(issued, label ?? devName ?? "", now), recording);
     }
+
+    /// <summary>
+    /// Запоминает номер, которым камера подписывает записи. Он понадобится,
+    /// когда карту заменят и опознавать придётся по нему.
+    /// </summary>
+    private long Remember(long deviceId, RecordingInfo? recording)
+    {
+        if (recording?.HasDeviceNo == true)
+            Execute("UPDATE devices SET camera_no = $no WHERE id = $id",
+                ("$no", recording.DeviceNo), ("$id", deviceId));
+        return deviceId;
+    }
+
+    /// <summary>Камера с таким номером в именах записей, если она известна.</summary>
+    public long? FindByCameraNo(string? cameraNo)
+    {
+        if (string.IsNullOrEmpty(cameraNo))
+            return null;
+        return Scalar("SELECT id FROM devices WHERE camera_no = $no ORDER BY id LIMIT 1",
+            ("$no", cameraNo)) as long?;
+    }
+
+    /// <summary>Номер, которым камера подписывает записи, если он известен.</summary>
+    public string? CameraNoOf(long deviceId) =>
+        Scalar("SELECT camera_no FROM devices WHERE id = $id", ("$id", deviceId)) as string;
 
     /// <summary>Следующий свободный порядковый номер этой станции.</summary>
     private int NextSequence(int stationNumber)
@@ -307,7 +358,7 @@ public sealed class DeviceRegistry : IDisposable
     /// <summary>
     /// Находит или заводит камеру по её удостоверению.
     ///
-    /// Номер из прошивки — главный ключ: он принадлежит аппарату, а не карте.
+    /// Номер из прошивки служит главным ключом: он принадлежит аппарату, а не карте.
     /// Маркер на карте остаётся запасным путём для камер, которым номер не
     /// прописали. Серийник USB не используется вовсе: у этой модели он зашит
     /// одинаковым для всех экземпляров.
@@ -339,7 +390,7 @@ public sealed class DeviceRegistry : IDisposable
             return (long)(Scalar("SELECT last_insert_rowid()") ?? 0L);
         }
 
-        // Номера у камеры нет — работаем по прежней схеме с маркером на карте.
+        // Номера у камеры нет, работаем по прежней схеме с маркером на карте.
         return ResolveDeviceId(mountPoint, null, label, devName);
     }
 
@@ -375,7 +426,7 @@ public sealed class DeviceRegistry : IDisposable
         }
         catch (SqliteException)
         {
-            // Справочник сотрудников ещё не создан — читаем без него.
+            // Справочник сотрудников ещё не создан, читаем без него.
             return ListDevicesWithoutStaff();
         }
         return list;

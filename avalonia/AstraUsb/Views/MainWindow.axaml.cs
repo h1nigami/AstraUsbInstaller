@@ -12,7 +12,7 @@ public partial class MainWindow : Window
 
         // На киоске окно занимает весь экран. На машине разработчика экран
         // крупнее целевого, поэтому ASTRA_WINDOWED открывает окно ровно в
-        // размер станции — иначе вид на 1024x600 не оценить.
+        // размер станции, иначе вид на 1024x600 не оценить.
         if (Environment.GetEnvironmentVariable("ASTRA_WINDOWED") == "1")
         {
             WindowState = WindowState.Normal;

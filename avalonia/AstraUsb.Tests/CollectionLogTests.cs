@@ -4,7 +4,7 @@ using Xunit;
 namespace AstraUsb.Tests;
 
 /// <summary>
-/// Журнал сбора. Опора — время загрузки в станцию: часы камеры сбиваются,
+/// Журнал сбора. Опора здесь на время загрузки в станцию: часы камеры сбиваются,
 /// и время съёмки нельзя считать надёжным.
 /// </summary>
 public sealed class CollectionLogTests : IDisposable

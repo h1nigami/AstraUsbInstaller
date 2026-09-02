@@ -31,6 +31,7 @@ public sealed partial class PortViewModel : ObservableObject
 
     [ObservableProperty] private int _slot;
     [ObservableProperty] private string _cameraId = "";
+    [ObservableProperty] private string _personnelNo = "";
     [ObservableProperty] private string _employee = "";
     [ObservableProperty] private string _department = "";
     [ObservableProperty] private string _detail = "";
@@ -54,10 +55,18 @@ public sealed partial class PortViewModel : ObservableObject
         _ => "Свободен",
     };
 
-    /// <summary>Подпись под свободным гнездом — как в штатной программе.</summary>
+    /// <summary>Подпись под свободным гнездом, как в штатной программе.</summary>
     public string IdleText => "Нет передачи данных";
 
     public string CameraLine => string.IsNullOrEmpty(CameraId) ? "" : $"ID устройства: {CameraId}";
+
+    /// <summary>
+    /// Номер сотрудника, прописанный в самой камере. Штатная станция
+    /// показывает его на плитке рядом с номером устройства.
+    /// </summary>
+    public string PersonnelLine => string.IsNullOrEmpty(PersonnelNo)
+        ? "ID пользователя: не задан"
+        : $"ID пользователя: {PersonnelNo}";
 
     public string EmployeeLine => string.IsNullOrEmpty(Employee)
         ? "Сотрудник: не закреплён"
@@ -108,6 +117,7 @@ public sealed partial class PortViewModel : ObservableObject
     }
 
     partial void OnCameraIdChanged(string value) => OnPropertyChanged(nameof(CameraLine));
+    partial void OnPersonnelNoChanged(string value) => OnPropertyChanged(nameof(PersonnelLine));
     partial void OnEmployeeChanged(string value) => OnPropertyChanged(nameof(EmployeeLine));
     partial void OnDepartmentChanged(string value) => OnPropertyChanged(nameof(DepartmentLine));
     partial void OnSlotChanged(int value) => OnPropertyChanged(nameof(SlotLabel));
@@ -116,6 +126,7 @@ public sealed partial class PortViewModel : ObservableObject
     public void Clear()
     {
         CameraId = "";
+        PersonnelNo = "";
         Employee = "";
         Department = "";
         Detail = "";

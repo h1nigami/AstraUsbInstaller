@@ -4,7 +4,7 @@ using System.Text.RegularExpressions;
 namespace AstraUsb.Services;
 
 /// <summary>
-/// Удостоверение камеры — файл на карте.
+/// Удостоверение камеры: файл на карте.
 ///
 /// Это единственный источник истины. Серийник USB для опознания не годится:
 /// камера представляется как «Linux File-Stor Gadget» с зашитым серийником
@@ -48,7 +48,7 @@ public static class CardIdentity
             : null;
     }
 
-    /// <summary>Читает номер с карты. Пусто — файла нет или он нечитаем.</summary>
+    /// <summary>Читает номер с карты. Пусто, если файла нет или он нечитаем.</summary>
     public static string? Read(string? mountPoint)
     {
         if (string.IsNullOrEmpty(mountPoint))
@@ -61,13 +61,13 @@ public static class CardIdentity
         }
         catch (Exception)
         {
-            // Карту вынули, файла нет, носитель только для чтения — всё это
+            // Карту вынули, файла нет, носитель только для чтения, всё это
             // штатно: номер будет выдан заново.
             return null;
         }
     }
 
-    /// <summary>Записывает номер на карту. False — записать не удалось.</summary>
+    /// <summary>Записывает номер на карту. False, если записать не удалось.</summary>
     public static bool Write(string? mountPoint, string id)
     {
         if (string.IsNullOrEmpty(mountPoint))

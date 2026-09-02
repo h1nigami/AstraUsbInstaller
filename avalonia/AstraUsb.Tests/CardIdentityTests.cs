@@ -4,7 +4,7 @@ using Xunit;
 namespace AstraUsb.Tests;
 
 /// <summary>
-/// Номер на карте — единственный источник истины. Проверяем маску, выдачу
+/// Номер на карте и есть единственный источник истины. Проверяем маску, выдачу
 /// номеров и то, что чужой номер не перезаписывается.
 /// </summary>
 public sealed class CardIdentityTests : IDisposable
@@ -96,7 +96,7 @@ public sealed class CardIdentityTests : IDisposable
     [Fact]
     public void Camera_numbered_by_hand_is_kept_too()
     {
-        // На карте номер не нашего формата — например заводской. Не трогаем.
+        // На карте номер не нашего формата, например заводской. Не трогаем.
         using var registry = new DeviceRegistry(Db);
         var card = Card("manual", "2222222");
 

@@ -37,7 +37,7 @@
       </Setter>
     </Style>
 
-    <!-- Номер устройства — моноширинным: цифры не пляшут при смене значения. -->
+    <!-- Номер устройства моноширинным: цифры не пляшут при смене значения. -->
     <Style Selector="TextBlock.portNumber">
       <Setter Property="FontFamily" Value="DejaVu Sans Mono, Consolas, monospace" />
       <Setter Property="FontSize" Value="34" />
@@ -153,13 +153,17 @@
                              FontSize="20" FontWeight="SemiBold"
                              Foreground="{StaticResource FgMutedBrush}" />
 
-                  <!-- Занятое гнездо: камера, сотрудник, отдел -->
+                  <!-- Занятое гнездо: номера, сотрудник, отдел -->
                   <StackPanel Grid.Row="0" IsVisible="{Binding IsBusy}"
-                              Margin="12,26,12,0" Spacing="3">
+                              Margin="12,26,12,0" Spacing="2">
                     <TextBlock Text="{Binding CameraLine}" FontSize="13" FontWeight="Bold"
                                FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                TextTrimming="CharacterEllipsis"
                                Foreground="{StaticResource FgMainBrush}" />
+                    <TextBlock Text="{Binding PersonnelLine}" FontSize="11"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               TextTrimming="CharacterEllipsis"
+                               Foreground="{StaticResource FgMutedBrush}" />
                     <TextBlock Text="{Binding EmployeeLine}" FontSize="11"
                                TextTrimming="CharacterEllipsis"
                                Foreground="{StaticResource FgMutedBrush}" />

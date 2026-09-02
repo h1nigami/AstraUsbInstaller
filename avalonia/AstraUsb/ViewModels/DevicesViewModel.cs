@@ -22,7 +22,7 @@ public sealed partial class DeviceRow : ObservableObject
 
 /// <summary>
 /// Вкладка «Устройства»: список камер, присвоение имени и закрепление за
-/// сотрудником. Номер камеры не редактируется — он приходит от аппарата.
+/// сотрудником. Номер камеры не редактируется: он приходит от аппарата.
 /// </summary>
 public sealed partial class DevicesViewModel : ObservableObject
 {
@@ -144,7 +144,7 @@ public sealed partial class DevicesViewModel : ObservableObject
         }
     }
 
-    /// <summary>Даты в базе хранятся с микросекундами — оператору нужны минуты.</summary>
+    /// <summary>Даты в базе хранятся с микросекундами, оператору нужны минуты.</summary>
     private static string Short(string stamp) =>
         DateTime.TryParse(stamp, out var moment) ? moment.ToString("dd.MM.yy HH:mm") : stamp;
 }

@@ -5,7 +5,7 @@ using Xunit;
 namespace AstraUsb.Tests;
 
 /// <summary>
-/// Справочник отделов и сотрудников. Главное здесь — не потерять накопленное:
+/// Справочник отделов и сотрудников. Главное здесь не потерять накопленное:
 /// прежнее текстовое поле «человек» должно превратиться в карточки, а
 /// перестановки в структуре не должны уносить с собой людей.
 /// </summary>
@@ -148,6 +148,81 @@ public sealed class StaffDirectoryTests : IDisposable
         var staff = NewDirectory();
 
         Assert.Single(staff.Employees(), e => e.FullName == "Смирнов С.С.");
+    }
+
+    [Fact]
+    public void Personnel_number_from_the_camera_creates_a_card_and_binds_it()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var device = registry.ResolveByCard(null, 1, "BESTCAM", "sdb1");
+        var staff = NewDirectory();
+
+        var person = staff.AssignByPersonnelNo(device, "222222");
+
+        Assert.NotNull(person);
+        Assert.Equal("222222", person.PersonnelNo);
+        Assert.Equal(person.Id, staff.EmployeeOfDevice(device)?.Id);
+    }
+
+    [Fact]
+    public void The_same_number_does_not_create_a_second_card()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var first = registry.ResolveByCard(null, 1, "CAM1", "sdb1");
+        var second = registry.ResolveByCard(null, 1, "CAM2", "sdc1");
+        var staff = NewDirectory();
+
+        staff.AssignByPersonnelNo(first, "222222");
+        staff.AssignByPersonnelNo(second, "222222");
+
+        Assert.Single(staff.Employees(), e => e.PersonnelNo == "222222");
+    }
+
+    [Fact]
+    public void An_existing_card_is_reused_with_its_name_and_department()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var device = registry.ResolveByCard(null, 1, "BESTCAM", "sdb1");
+        var staff = NewDirectory();
+        var guard = staff.AddDepartment("Охрана");
+        staff.AddEmployee("Смирнов С.С.", "222222", departmentId: guard);
+
+        var person = staff.AssignByPersonnelNo(device, "222222");
+
+        Assert.Equal("Смирнов С.С.", person?.FullName);
+        Assert.Equal(guard, person?.DepartmentId);
+        Assert.Single(staff.Employees());
+    }
+
+    [Fact]
+    public void A_new_number_moves_the_camera_to_another_employee()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var device = registry.ResolveByCard(null, 1, "BESTCAM", "sdb1");
+        var staff = NewDirectory();
+
+        staff.AssignByPersonnelNo(device, "222222");
+        var next = staff.AssignByPersonnelNo(device, "333333");
+
+        // Камеру передали другому: в её записях уже стоит новый номер.
+        Assert.Equal("333333", next?.PersonnelNo);
+        Assert.Equal("333333", staff.EmployeeOfDevice(device)?.PersonnelNo);
+    }
+
+    [Fact]
+    public void Without_a_number_the_previous_binding_survives()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var device = registry.ResolveByCard(null, 1, "BESTCAM", "sdb1");
+        var staff = NewDirectory();
+        var employee = staff.AddEmployee("Смирнов С.С.", "222222");
+        staff.AssignDevice(device, employee);
+
+        var person = staff.AssignByPersonnelNo(device, null);
+
+        Assert.Equal(employee, person?.Id);
+        Assert.Equal(employee, staff.EmployeeOfDevice(device)?.Id);
+        Assert.Single(staff.Employees());
     }
 
     public void Dispose()

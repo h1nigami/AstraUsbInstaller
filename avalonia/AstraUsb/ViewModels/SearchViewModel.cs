@@ -89,7 +89,7 @@ public sealed partial class SearchViewModel : ObservableObject
                     Size = Size(file.SizeBytes),
                     CollectedAt = file.CollectedAt.ToString("dd.MM.yy HH:mm"),
                     ShotAt = file.ShotAt is null
-                        ? "—"
+                        ? "неизвестно"
                         : file.ShotAtTrusted
                             ? file.ShotAt.Value.ToString("dd.MM.yy HH:mm")
                             : "часы камеры сбиты",

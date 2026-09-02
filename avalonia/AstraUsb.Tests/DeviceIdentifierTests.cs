@@ -65,7 +65,7 @@ public sealed class DeviceIdentifierTests : IDisposable
     [Fact]
     public void Firmware_number_wins_over_the_card_marker()
     {
-        // Карту могли переставить из другой камеры — верить надо аппарату.
+        // Карту могли переставить из другой камеры, верить надо аппарату.
         DeviceRegistry.WriteDeviceIdToUsb(_card, 17);
         WriteLog("20260902.txt", "2026/09/02-15:49:29 #ID:2222222 #Включение системы");
 
