@@ -79,27 +79,27 @@
            станции нужнее, чем полный список служб. -->
       <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" ClipToBounds="True"
                   Margin="12,0,0,8" VerticalAlignment="Center">
-        <Border Padding="10,4" CornerRadius="14" Background="{StaticResource Teal100Brush}">
+        <Border Classes="pill" Padding="10,4" CornerRadius="14" Background="{StaticResource Teal100Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
-            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+            <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}" />
             <TextBlock Text="Монитор USB активен" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource Teal900Brush}" />
           </StackPanel>
         </Border>
-        <Border Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
+        <Border Classes="pill" Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
-            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+            <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}" />
             <TextBlock Text="Локальная база" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource FgMutedBrush}" />
           </StackPanel>
         </Border>
 
-        <Border Padding="10,4" CornerRadius="14" IsVisible="{Binding FtpEnabled}"
+        <Border Classes="pill" Padding="10,4" CornerRadius="14" IsVisible="{Binding FtpEnabled}"
                 Background="{StaticResource Accent100Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
-            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+            <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Accent500Brush}" />
             <TextBlock Text="{Binding FtpLabel}" FontSize="11" FontWeight="Bold"
                        Foreground="{StaticResource Accent900Brush}" />
@@ -108,12 +108,12 @@
 
         <!-- Состояние сети видно всегда: при её отсутствии отправка наружу
              молча копилась бы в очереди. -->
-        <Border Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
+        <Border Classes="pill" Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
-            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+            <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Neutral500Brush}"
                      IsVisible="{Binding !NetworkUp}" />
-            <Ellipse Width="7" Height="7" VerticalAlignment="Center"
+            <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}"
                      IsVisible="{Binding NetworkUp}" />
             <TextBlock Text="{Binding NetworkLabel}" FontSize="11" FontWeight="Bold"
@@ -158,7 +158,7 @@
           </Grid>
 
           <!-- Сетка: до двенадцати окон, компоновка по умолчанию -->
-          <ScrollViewer Grid.Row="1" IsVisible="{Binding IsGridLayout}">
+          <ScrollViewer Classes="fade" Grid.Row="1" IsVisible="{Binding IsGridLayout}">
           <ItemsControl ItemsSource="{Binding Ports}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
@@ -214,7 +214,7 @@
           </ScrollViewer>
 
           <!-- Список: строки, когда окон больше двенадцати -->
-          <ScrollViewer Grid.Row="1" IsVisible="{Binding IsListLayout}">
+          <ScrollViewer Classes="fade" Grid.Row="1" IsVisible="{Binding IsListLayout}">
             <ItemsControl ItemsSource="{Binding Ports}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:PortViewModel">
@@ -270,7 +270,7 @@
           </ScrollViewer>
 
           <!-- Схема стойки: карта отсеков для сверки номеров с железом -->
-          <Border Grid.Row="1" Classes="panel" Padding="10" IsVisible="{Binding IsRackLayout}">
+          <Border Grid.Row="1" Classes="panel fade" Padding="10" IsVisible="{Binding IsRackLayout}">
             <Grid RowDefinitions="Auto,*">
               <TextBlock Grid.Row="0" Margin="4,2,0,8" Classes="hint"
                          Text="Номера соответствуют физическим отсекам после сопоставления портов" />
