@@ -106,6 +106,23 @@ jobs:
           name: station-${{ inputs.tag }}
           path: dist
 
+      # Инструкция по установке дописывается в конец описания каждого релиза,
+      # чтобы её не приходилось копировать руками. Текст, набранный при
+      # публикации, сохраняется: блок добавляется после него.
+      - name: Дописать инструкцию по установке
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release view "$TAG" --json body -q .body > /tmp/body.md
+          if ! grep -q '^## Установка$' /tmp/body.md; then
+            printf '\n' >> /tmp/body.md
+            sed -e "s/TAG_HERE/$TAG/g" -e "s/VERSION_HERE/${TAG#v}/g" \
+              .github/release-station-install.md >> /tmp/body.md
+            gh release edit "$TAG" --notes-file /tmp/body.md
+          fi
+
   # Установщик для Windows собирается отдельно: Inno Setup идёт только на
   # Windows-машине. Архив при этом никуда не девается, он нужен тем, кто
   # ставит программу без установки.
