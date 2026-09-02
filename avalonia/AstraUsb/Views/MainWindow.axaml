@@ -829,6 +829,9 @@
                   <CheckBox Content="Удалять видео с регистратора после подтверждённой загрузки"
                             IsChecked="{Binding Settings.DeleteVideoAfterCopy}" />
 
+                  <CheckBox Content="Звуковая тревога при нехватке места и обрыве сети"
+                            IsChecked="{Binding Settings.AlarmSound}" />
+
                   <Button Classes="primary" Content="Сохранить" Height="52" Width="180"
                           HorizontalAlignment="Left"
                           Command="{Binding Settings.SaveStorageCommand}" />

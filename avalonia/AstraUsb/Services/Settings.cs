@@ -50,6 +50,12 @@ public sealed class Settings
     /// <summary>Отправлять по защищённому соединению.</summary>
     public bool FtpSsl { get; set; }
 
+    /// <summary>
+    /// Звуковая тревога при нехватке места и обрыве сети. Экран станции стоит
+    /// в стороне, и цветная полоса внизу остаётся незамеченной до конца смены.
+    /// </summary>
+    public bool AlarmSound { get; set; } = true;
+
     /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 

@@ -143,6 +143,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Отправка идёт прямо сейчас: второй раз запускать не нужно.</summary>
     private bool _sending;
 
+    /// <summary>О чём станция уже сообщила: повторять одно и то же незачем.</summary>
+    private string _lastTrouble = "";
+
     /// <summary>
     /// Выбранная компоновка доски: сетка, список или схема стойки. Все три
     /// живут на одной кодовой базе и переключаются оператором.
@@ -882,6 +885,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         });
     }
 
+    /// <summary>
+    /// Сообщает о происшествии: пишет в журнал и подаёт звук, если он включён.
+    /// Об одном и том же станция говорит один раз, пока положение не изменится.
+    /// </summary>
+    private void Trouble(string what)
+    {
+        if (_lastTrouble == what)
+            return;
+
+        _lastTrouble = what;
+        Status = what;
+        _actions.Write(ActionLog.Cleanup, what);
+
+        if (_stationSettings.AlarmSound)
+            Alarm.Sound(DateTime.Now);
+    }
+
     /// <summary>Сводка по отсекам, как в прототипе станции.</summary>
     private void UpdateSummary()
     {
@@ -947,6 +967,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var used = drive.TotalSize - drive.AvailableFreeSpace;
             var ratio = (double)used / drive.TotalSize;
+
+            // Тревога по заданию: место кончается или архив недоступен.
+            if (drive.AvailableFreeSpace < _stationSettings.MinFreeBytes)
+                Trouble("места в архиве почти нет");
+            else if (!ArchiveGuard.Available(_stationSettings.BackupRoot))
+                Trouble("том архива не смонтирован");
+            else if (!NetworkUp && _stationSettings.FtpEnabled)
+                Trouble("сети нет, отправка на сервер ждёт");
+            else
+                _lastTrouble = "";
 
             StorageLabel = $"хранилище {Size(used)} из {Size(drive.TotalSize)}";
             StorageWidth = Math.Clamp(ratio, 0, 1) * 150;

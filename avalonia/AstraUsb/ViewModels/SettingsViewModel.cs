@@ -90,6 +90,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// станции невелик, и записи его переполнят.
     /// </summary>
     [ObservableProperty] private bool _archiveOnSystemDrive;
+    [ObservableProperty] private bool _alarmSound;
     [ObservableProperty] private bool _ftpEnabled;
     [ObservableProperty] private string _ftpHost = "";
     [ObservableProperty] private int _ftpPort = 21;
@@ -131,6 +132,7 @@ public sealed partial class SettingsViewModel : ObservableObject
             : _settings.AdminAccount;
         ArchiveOnSystemDrive = ArchiveGuard.OnSystemDrive(_settings.BackupRoot);
 
+        AlarmSound = _settings.AlarmSound;
         FtpEnabled = _settings.FtpEnabled;
         FtpHost = _settings.FtpHost;
         FtpPort = _settings.FtpPort;
@@ -152,6 +154,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.DeleteVideoAfterCopy = DeleteVideoAfterCopy;
         _settings.KeepDays = Math.Clamp(KeepDays, 0, 3650);
         KeepDays = _settings.KeepDays;
+        _settings.AlarmSound = AlarmSound;
 
         // Метка тома ставится здесь: дальше по ней станция понимает, что диск
         // смонтирован. Без неё выгрузка останавливается с ошибкой.
