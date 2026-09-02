@@ -1107,10 +1107,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         _lastTrouble = what;
         Status = what;
-        _actions.Write(ActionLog.Cleanup, what);
 
-        if (_stationSettings.AlarmSound)
-            Alarm.Sound(DateTime.Now);
+        // Запись в журнал и звук идут в стороне: и то и другое трогает диск,
+        // а происшествие показывается сразу.
+        var sound = _stationSettings.AlarmSound;
+        _ = Task.Run(() =>
+        {
+            _actions.Write(ActionLog.Cleanup, what);
+
+            if (sound)
+                Alarm.Sound(DateTime.Now);
+        });
     }
 
     /// <summary>

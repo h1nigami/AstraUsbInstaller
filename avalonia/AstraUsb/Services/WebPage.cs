@@ -32,6 +32,42 @@ public static class WebPage
             --t200: #c8eaee; --t500: #3f9ba6; --t600: #2c7d88; --t900: #0f2f34;
           }
           * { box-sizing: border-box; }
+
+          /* Плавность как в станции: цвет и нажатие приходят переходом, а не
+             щелчком. Ход короткий, иначе панель кажется задумчивой. */
+          button, input, .bay, .file, .event, .metric, .card, .pill, .tag {
+            transition: background-color .14s ease-out, color .14s ease-out,
+                        border-color .14s ease-out, transform .09s ease-out,
+                        opacity .14s ease-out;
+          }
+          button:active { transform: scale(.97); }
+
+          /* Полоса заполнения и полосы гнёзд догоняют новое значение сами. */
+          .fill { transition: width .5s cubic-bezier(.25, .8, .25, 1),
+                              background-color .3s ease-out; }
+
+          /* Смена раздела: содержимое проявляется и чуть поднимается. */
+          @keyframes appear {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: none; }
+          }
+          .appear { animation: appear .18s cubic-bezier(.25, .8, .25, 1) both; }
+
+          @keyframes rise {
+            from { transform: translateY(100%); }
+            to   { transform: none; }
+          }
+
+          @keyframes dim {
+            from { opacity: 0; }
+            to   { opacity: 1; }
+          }
+
+          /* Кому анимации мешают, тот их и не увидит: браузер об этом
+             спрашивают, а не решают за него. */
+          @media (prefers-reduced-motion: reduce) {
+            *, .appear { animation: none !important; transition: none !important; }
+          }
           /* Скрытое должно быть скрыто: вход и панель заданы через grid и
              flex, а это перебивает атрибут hidden, и форма входа оставалась
              поверх панели. */
@@ -187,8 +223,10 @@ public static class WebPage
           .sheet {
             position: fixed; inset: 0; z-index: 80; display: flex; flex-direction: column;
             justify-content: flex-end; background: #212d3b73;
+            animation: dim .16s ease-out both;
           }
           .sheet .inner {
+            animation: rise .24s cubic-bezier(.25, .8, .25, 1) both;
             padding: 20px 18px 30px; border-radius: 32px 32px 0 0; background: var(--surface);
             display: flex; flex-direction: column; gap: 12px;
           }
@@ -334,6 +372,45 @@ public static class WebPage
         let kind = '';
         let query = '';
         let timer = 0;
+        let _shown = '';
+
+        // Панель обновляется каждые три секунды. Если каждый раз переписывать
+        // разметку целиком, список мигает, нажатие теряется под пальцем, а
+        // переходы не успевают доиграть. Поэтому разметка ставится только
+        // тогда, когда она и правда стала другой.
+        function put(id, html, animate) {
+          const node = document.getElementById(id);
+          if (!node || node.dataset.html === html) return false;
+
+          // Панель обновляется под руками: если в этот момент оператор
+          // набирает условие поиска, перерисовка не должна съесть ни текст,
+          // ни место каретки.
+          const active = document.activeElement;
+          const keep = active && node.contains(active) && active.id
+            ? { id: active.id, value: active.value, at: active.selectionStart }
+            : null;
+
+          node.dataset.html = html;
+          node.innerHTML = html;
+
+          if (keep) {
+            const back = document.getElementById(keep.id);
+            if (back) {
+              back.value = keep.value;
+              back.focus();
+              try { back.setSelectionRange(keep.at, keep.at); } catch (e) { }
+            }
+          }
+
+          if (animate) {
+            node.classList.remove('appear');
+            // Пересчёт нужен, чтобы анимация запустилась заново.
+            void node.offsetWidth;
+            node.classList.add('appear');
+          }
+
+          return true;
+        }
 
         function esc(text) {
           return String(text ?? '').replace(/[&<>"]/g,
@@ -383,13 +460,15 @@ public static class WebPage
               <i>${t.icon}</i><span>${t.label}</span>
             </button>`).join('');
 
-          document.getElementById('bottomTabs').innerHTML = buttons;
-          document.getElementById('sideTabs').innerHTML = buttons;
+          put('bottomTabs', buttons, false);
+          put('sideTabs', buttons, false);
           document.getElementById('desk').textContent =
             (TABS.find(t => t.id === view) || TABS[0]).label;
         }
 
         function show(name) {
+          if (view === name) return;
+
           view = name;
           drawTabs();
           tick();
@@ -420,9 +499,9 @@ public static class WebPage
           document.getElementById('clock').textContent =
             new Date(s.at).toLocaleTimeString('ru-RU') + ' · ' + (s.os || '');
           document.getElementById('sidePath').textContent = s.archiveLabel || '';
-          document.getElementById('pills').innerHTML = services(s)
+          put('pills', services(s)
             .map(x => `<span class="pill"><span class="dot ${x.up ? 'up' : ''}"></span>${esc(x.k)} · ${esc(x.v)}</span>`)
-            .join('');
+            .join(''), false);
 
           if (view === 'overview') drawOverview(s);
           if (view === 'bays') drawBays(s);
@@ -452,7 +531,7 @@ public static class WebPage
           const failed = s.failed > 0
             ? `<div class="metric bad"><b>${s.failed}</b><span>ошибки</span></div>` : '';
 
-          document.getElementById('view').innerHTML = `
+          put('view', `
             <div class="metrics">
               <div class="metric work"><b>${s.copying}</b><span>копируется</span></div>
               <div class="metric done"><b>${s.done}</b><span>готово</span></div>
@@ -483,7 +562,9 @@ public static class WebPage
                   </div>`).join('')}
                 <div class="muted">Версия: ${esc(s.version || 'неизвестна')}</div>
               </div>
-            </div>`;
+            </div>`, view !== _shown);
+
+          _shown = view;
         }
 
         function bayClass(state) {
@@ -523,8 +604,10 @@ public static class WebPage
               <span class="track"><span class="fill" style="width:${b.percent}%;display:block"></span></span>
             </button>`;
 
-          document.getElementById('view').innerHTML =
-            '<div class="bays">' + s.bays.map(wide ? card : row).join('') + '</div>';
+          put('view', '<div class="bays">' + s.bays.map(wide ? card : row).join('') + '</div>',
+            view !== _shown);
+
+          _shown = view;
         }
 
         async function drawArchive() {
@@ -576,7 +659,8 @@ public static class WebPage
                     </div>
                   </div>`).join('');
 
-          document.getElementById('view').innerHTML = head + body;
+          put('view', head + body, view !== _shown);
+          _shown = view;
         }
 
         function meta(row) {
@@ -601,7 +685,7 @@ public static class WebPage
 
         async function drawLog() {
           const rows = await get('/api/log') || [];
-          document.getElementById('view').innerHTML = rows.length === 0
+          const html = rows.length === 0
             ? '<div class="empty">Событий за сутки нет.</div>'
             : rows.map(l => `
                 <div class="event">
@@ -611,6 +695,9 @@ public static class WebPage
                   </div>
                   <div class="text">${esc(l.text)}</div>
                 </div>`).join('');
+
+          put('view', html, view !== _shown);
+          _shown = view;
         }
 
         // Запись отдаётся с ключом в заголовке, поэтому ссылкой её не открыть:

@@ -329,7 +329,7 @@
           <Border Grid.Row="0" Background="{StaticResource BgSurfaceBrush}"
                   CornerRadius="24" Padding="14,12" Margin="0,0,0,8">
             <StackPanel Spacing="10">
-              <UniformGrid Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
+              <UniformGrid Classes="fade" Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ОТДЕЛ" Classes="field" />
                   <ComboBox Classes="form" ItemsSource="{Binding Search.Departments}"
@@ -356,7 +356,7 @@
                 </StackPanel>
               </UniformGrid>
 
-              <UniformGrid Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
+              <UniformGrid Classes="fade" Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="НОМЕР УСТРОЙСТВА" Classes="field" />
                   <TextBox Classes="form" Text="{Binding Search.Camera}"
