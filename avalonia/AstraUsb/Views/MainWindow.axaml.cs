@@ -43,6 +43,7 @@ public partial class MainWindow : Window
             vm.NoteActivity();
             vm.Devices.Reload();
             vm.Staff.Reload();
+            vm.Log.Reload();
         };
 
         vm.AccessGranted += index => tabs.SelectedIndex = index;

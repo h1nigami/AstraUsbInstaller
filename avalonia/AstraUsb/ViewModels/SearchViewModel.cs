@@ -166,6 +166,8 @@ public sealed partial class SearchViewModel : ObservableObject
                 parts.Add($"не скопировалось: {result.Failed}");
 
             Hint = string.Join(", ", parts);
+            new ActionLog(_dbPath).Write(ActionLog.Export,
+                $"выгружено {Numerals.Plural(result.Copied, "файл", "файла", "файлов")} в {target}");
         }
         catch (Exception e)
         {

@@ -24,6 +24,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 {
     private readonly string _dbPath;
     private readonly PortMap _portMap;
+    private readonly ActionLog _actions;
     private Settings _settings;
 
     public ObservableCollection<SlotRow> Slots { get; } = new();
@@ -56,6 +57,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         _dbPath = dbPath;
         _portMap = new PortMap(dbPath);
+        _actions = new ActionLog(dbPath);
         _settings = Settings.Load();
 
         BackupRoot = _settings.BackupRoot;
@@ -81,7 +83,14 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.KeepDays = Math.Clamp(KeepDays, 0, 3650);
         KeepDays = _settings.KeepDays;
 
-        Hint = !_settings.Save()
+        var stored = _settings.Save();
+        if (stored)
+            _actions.Write(ActionLog.Settings,
+                $"хранилище: {BackupRoot}, порог {MinFreeGb} ГБ, "
+                + $"срок хранения {(KeepDays == 0 ? "бессрочно" : KeepDays + " дн")}, "
+                + $"станция {StationNumber}");
+
+        Hint = !stored
             ? "не удалось записать настройки, проверьте права на папку data"
             : KeepDays == 0
                 ? "настройки сохранены, записи хранятся бессрочно"
@@ -135,6 +144,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.PasswordHash = PasswordGate.Hash(NewPassword);
         var saved = _settings.Save();
         UsingDefaultPassword = !saved;
+        if (saved)
+            _actions.Write(ActionLog.Settings, "пароль станции изменён");
         Hint = saved
             ? "пароль изменён"
             : "не удалось записать настройки, проверьте права на папку data";
@@ -151,7 +162,13 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.LockTimeoutMinutes = Math.Clamp(LockTimeoutMinutes, 0, 240);
         LockTimeoutMinutes = _settings.LockTimeoutMinutes;
 
-        Hint = !_settings.Save()
+        var stored = _settings.Save();
+        if (stored)
+            _actions.Write(ActionLog.Settings, LockTimeoutMinutes == 0
+                ? "разделы больше не закрываются по простою"
+                : $"разделы закрываются после {LockTimeoutMinutes} мин простоя");
+
+        Hint = !stored
             ? "не удалось записать настройки, проверьте права на папку data"
             : LockTimeoutMinutes == 0
                 ? "разделы больше не закрываются по простою"

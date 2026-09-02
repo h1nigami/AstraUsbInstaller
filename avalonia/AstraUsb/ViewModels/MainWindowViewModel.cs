@@ -49,6 +49,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Пароль спрашивают перед выходом, а не перед разделом.</summary>
     private bool _askingForExit;
 
+    /// <summary>Названия разделов для журнала: индекс совпадает с вкладкой.</summary>
+    private static readonly string[] TabNames =
+        ["Загрузка", "Поиск", "Устройства", "Сотрудники", "Журнал", "Настройки"];
+
+    private readonly ActionLog _actions = new(AppPaths.Database);
+
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
     /// <summary>Вкладка «Устройства».</summary>
@@ -62,6 +68,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Вкладка «Сотрудники».</summary>
     public StaffViewModel Staff { get; } = new();
+
+    /// <summary>Вкладка «Журнал».</summary>
+    public LogViewModel Log { get; } = new();
 
     [ObservableProperty]
     private string _clockTime = "--:--:--";
@@ -125,6 +134,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         for (var i = 0; i < PortCount; i++)
             Ports.Add(new PortViewModel { Slot = i });
 
+        // Журнал за годы работы разрастается вместе с базой, поэтому при
+        // запуске он подрезается до последних событий.
+        _actions.Trim(20_000);
+
         TickClock();
         _clock.Tick += (_, _) => TickClock();
         _clock.Start();
@@ -167,6 +180,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             PasswordInput = "";
             PasswordError = "пароль не подошёл";
+            _actions.Write(ActionLog.Access, _askingForExit
+                ? "пароль не подошёл при выходе из программы"
+                : $"пароль не подошёл при входе в раздел «{TabName(_wantedTab)}»");
             return;
         }
 
@@ -175,9 +191,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         if (_askingForExit)
         {
+            _actions.Write(ActionLog.Exit, "выход из программы");
             ExitRequested?.Invoke();
             return;
         }
+
+        _actions.Write(ActionLog.Access, $"открыт раздел «{TabName(_wantedTab)}»");
 
         _access = new AccessGuard(settings.LockTimeoutMinutes);
         _access.Unlock(DateTime.Now);
@@ -194,6 +213,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Оператор работает: отсчёт простоя начинается заново.</summary>
     public void NoteActivity() => _access.Touch(DateTime.Now);
+
+    private static string TabName(int index) =>
+        index >= 0 && index < TabNames.Length ? TabNames[index] : $"раздел {index}";
 
     /// <summary>Часы станции: по ним сверяется время подключённых регистраторов.</summary>
     private void TickClock()

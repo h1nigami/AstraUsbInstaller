@@ -78,6 +78,12 @@ public sealed class BackupService
                     $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}")
                 : new BackupProgress(BackupStage.Failed, 1,
                     $"не скопировано: {Numerals.Plural(result.Failed, "файл", "файла", "файлов")}"));
+
+            new ActionLog(_dbPath).Write(ActionLog.Backup, result.Failed == 0
+                ? $"камера {deviceId}: загружено "
+                  + $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}"
+                : $"камера {deviceId}: не скопировано "
+                  + $"{Numerals.Plural(result.Failed, "файл", "файла", "файлов")}");
         }
         catch (OperationCanceledException)
         {
@@ -133,10 +139,15 @@ public sealed class BackupService
 
         try
         {
-            StorageManager.DeleteExpired(
+            var (files, bytes) = StorageManager.DeleteExpired(
                 new CollectionLog(_dbPath),
                 DateTime.Now.AddDays(-_settings.KeepDays),
                 _settings.BackupRoot);
+
+            if (files > 0)
+                new ActionLog(_dbPath).Write(ActionLog.Cleanup,
+                    $"по сроку хранения удалено {Numerals.Plural(files, "запись", "записи", "записей")}"
+                    + $", освобождено {Size(bytes)}");
         }
         catch (Exception)
         {
