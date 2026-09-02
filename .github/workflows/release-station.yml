@@ -73,8 +73,8 @@ jobs:
             # Для Linux рядом с архивом кладётся пакет: с ним зависимости
             # ставит apt, а удаление идёт штатно, вместе со службами.
             case "$RID" in
-              linux-x64)   DEB=$(avalonia/packaging/build_deb.sh "$OUT" "$TAG" amd64 dist) ;;
-              linux-arm64) DEB=$(avalonia/packaging/build_deb.sh "$OUT" "$TAG" arm64 dist) ;;
+              linux-x64)   DEB=$(bash avalonia/packaging/build_deb.sh "$OUT" "$TAG" amd64 dist) ;;
+              linux-arm64) DEB=$(bash avalonia/packaging/build_deb.sh "$OUT" "$TAG" arm64 dist) ;;
               *)           DEB="" ;;
             esac
 
@@ -138,8 +138,11 @@ jobs:
 
           [IO.File]::WriteAllText("$PWD/avalonia/windows/payload/VERSION", "$tag $date`n")
 
-          # Номер версии установщика числовой, а тег приходит с буквой.
-          $number = $tag.TrimStart('v')
+          # Номер версии установщика должен состоять из цифр и точек, а тег
+          # приходит и с буквой, и с хвостом вроде «-test».
+          $number = ($tag -replace '^v', '') -replace '[^0-9.].*$', ''
+          $number = $number.Trim('.')
+          if (-not $number) { $number = '0.0.0' }
           $name = "BestCamStationSetup-$tag"
           New-Item -ItemType Directory -Force dist | Out-Null
 
