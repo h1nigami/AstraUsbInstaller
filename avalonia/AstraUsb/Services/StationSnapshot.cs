@@ -13,6 +13,8 @@ public sealed record BaySnapshot(
 /// <summary>Состояние станции целиком, каким его видит веб-панель.</summary>
 public sealed record StationState(
     DateTime At,
+    string Station,
+    string Os,
     string Version,
     int Copying,
     int Done,
@@ -44,5 +46,6 @@ public static class StationSnapshot
     public static void Publish(StationState state) => Volatile.Write(ref _state, state);
 
     private static StationState Empty() => new(
-        DateTime.Now, "", 0, 0, 0, 0, false, false, "", "", 0, 0, "", []);
+        DateTime.Now, StationTitle.Model, StationTitle.System(),
+        "", 0, 0, 0, 0, false, false, "", "", 0, 0, "", []);
 }

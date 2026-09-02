@@ -1140,6 +1140,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         StationSnapshot.Publish(new StationState(
             DateTime.Now,
+            StationTitle.Compose(StationTitle.Model, _stationSettings.StationPlace),
+            StationTitle.System(),
             Version,
             copying,
             done,

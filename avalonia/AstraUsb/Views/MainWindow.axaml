@@ -802,6 +802,13 @@
                     </StackPanel>
 
                     <StackPanel>
+                      <TextBlock Text="НАЗВАНИЕ ТОЧКИ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.StationPlace}" />
+                      <TextBlock Classes="hint" Margin="0,4,0,0"
+                                 Text="улица или объект: видна в шапке веб-панели, чтобы станции не путали между собой" />
+                    </StackPanel>
+
+                    <StackPanel>
                       <TextBlock Text="ОКОН: ВСЕГО И В СТРОКЕ" Classes="field" />
                       <Grid ColumnDefinitions="*,8,*,8,Auto">
                         <TextBox Grid.Column="0" Classes="form"

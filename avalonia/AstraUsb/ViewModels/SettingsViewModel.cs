@@ -95,6 +95,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>Название точки: идёт в шапку веб-панели рядом с моделью.</summary>
+    [ObservableProperty] private string _stationPlace = "";
+
     [ObservableProperty] private int _lockTimeoutMinutes;
 
     /// <summary>Пароль остался таким, каким станция пришла с завода.</summary>
@@ -155,6 +158,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         BackupRoot = _settings.BackupRoot;
         MinFreeGb = _settings.MinFreeGb;
         StationNumber = _settings.StationNumber;
+        StationPlace = _settings.StationPlace;
         StorageModeIndex = _settings.StorageMode == StorageMode.Overwrite ? 1 : 0;
         DeleteVideoAfterCopy = _settings.DeleteVideoAfterCopy;
         KeepDays = _settings.KeepDays;
@@ -197,6 +201,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.BackupRoot = BackupRoot.Trim();
         _settings.MinFreeGb = Math.Max(1, MinFreeGb);
         _settings.StationNumber = Math.Clamp(StationNumber, 0, 99);
+        _settings.StationPlace = StationPlace.Trim();
+        StationPlace = _settings.StationPlace;
         _settings.StorageMode = StorageModeIndex == 1 ? StorageMode.Overwrite : StorageMode.Warn;
         _settings.DeleteVideoAfterCopy = DeleteVideoAfterCopy;
         _settings.KeepDays = Math.Clamp(KeepDays, 0, 3650);
