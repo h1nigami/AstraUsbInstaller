@@ -40,6 +40,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private readonly Dictionary<string, CardInfo> _identified = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Карты, которые станция смонтировала сама. Рабочему столу это запрещено
+    /// правилом udev, иначе один FAT писался бы с двух сторон.
+    /// </summary>
+    private readonly Dictionary<string, Mounted> _mounted = new(StringComparer.Ordinal);
+
+    /// <summary>Носители, которые монтируются прямо сейчас.</summary>
+    private readonly HashSet<string> _mounting = new(StringComparer.Ordinal);
+
     /// <summary>Открыт ли доступ к закрытым разделам и до каких пор.</summary>
     private AccessGuard _access = new(0);
 
@@ -249,20 +258,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             var port = Ports[i];
+            var mount = MountPointFor(device);
             var cameraId = device.Name;
-            var detail = "опознаём камеру";
+            var detail = mount is null ? "готовим носитель" : "опознаём камеру";
             var personnel = "";
             var employee = "";
             var department = "";
 
-            if (Identify(device) is { } card)
+            if (mount is not null && Identify(device, mount) is { } card)
             {
                 cameraId = card.CameraId;
                 detail = card.Origin;
                 personnel = card.PersonnelNo;
                 employee = card.Employee;
                 department = card.Department;
-                StartBackup(port, card.DeviceId, device.MountPoint!);
+                StartBackup(port, card.DeviceId, mount);
             }
 
             port.CameraId = cameraId;
@@ -273,30 +283,29 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             // Пока выгрузка идёт или уже закончена, подпись и состояние
             // принадлежат ей: иначе опрос каждые две секунды сбрасывал бы
             // «загрузку данных» обратно в «подключена».
-            var busy = !string.IsNullOrEmpty(device.MountPoint)
-                       && (_running.ContainsKey(device.MountPoint!)
-                           || _finished.ContainsKey(device.MountPoint!));
+            var busy = mount is not null
+                       && (_running.ContainsKey(mount) || _finished.ContainsKey(mount));
             if (!busy)
             {
                 port.Detail = detail;
-                port.State = string.IsNullOrEmpty(device.MountPoint)
-                    ? PortState.Free
-                    : PortState.Detected;
+                port.State = PortState.Detected;
             }
         }
 
         // Камеру вынули, забываем итог, чтобы при следующем подключении
         // выгрузка началась заново.
         var present = devices
-            .Select(d => d.MountPoint)
+            .Select(d => MountPointFor(d))
             .Where(m => !string.IsNullOrEmpty(m))
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(StringComparer.Ordinal)!;
 
         foreach (var gone in _finished.Keys.Where(m => !present.Contains(m)).ToArray())
             _finished.Remove(gone);
 
         foreach (var gone in _identified.Keys.Where(m => !present.Contains(m)).ToArray())
             _identified.Remove(gone);
+
+        ReleaseGoneMedia(devices);
 
         Status = devices.Count == 0
             ? "носители не подключены"
@@ -306,15 +315,60 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
+    /// Точка монтирования носителя. Если система его не смонтировала, станция
+    /// монтирует сама, и делает это в стороне от интерфейса: ожидание в
+    /// несколько секунд заморозило бы экран.
+    /// </summary>
+    private string? MountPointFor(UsbDevice device)
+    {
+        if (!string.IsNullOrEmpty(device.MountPoint))
+            return device.MountPoint;
+
+        if (_mounted.TryGetValue(device.Name, out var ours))
+            return ours.Path;
+
+        if (_mounting.Add(device.Name))
+        {
+            var name = device.Name;
+            var grace = TimeSpan.FromSeconds(_stationSettings.MountGraceSeconds);
+
+            _ = Task.Run(() =>
+            {
+                var mounted = MountManager.Ensure(name, grace);
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (mounted is not null)
+                        _mounted[name] = mounted;
+                    _mounting.Remove(name);
+                });
+            });
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Отпускает то, что смонтировали мы, когда носитель вынули. Чужие
+    /// монтирования не трогаем: их сделал рабочий стол для человека.
+    /// </summary>
+    private void ReleaseGoneMedia(IReadOnlyList<UsbDevice> devices)
+    {
+        var connected = devices.Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+
+        foreach (var name in _mounted.Keys.Where(n => !connected.Contains(n)).ToArray())
+        {
+            var mount = _mounted[name];
+            _mounted.Remove(name);
+            Task.Run(() => MountManager.Release(mount));
+        }
+    }
+
+    /// <summary>
     /// Опознаёт камеру и подтягивает сотрудника. Результат кэшируется до
     /// извлечения носителя.
     /// </summary>
-    private CardInfo? Identify(UsbDevice device)
+    private CardInfo? Identify(UsbDevice device, string mount)
     {
-        if (string.IsNullOrEmpty(device.MountPoint))
-            return null;
-
-        var mount = device.MountPoint;
         if (_identified.TryGetValue(mount, out var cached))
             return cached;
 
@@ -465,6 +519,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         _poll.Stop();
         _clock.Stop();
+
+        // Свои монтирования отпускаем при выходе: иначе карта останется
+        // смонтированной, и рабочий стол не сможет с ней работать.
+        foreach (var mount in _mounted.Values)
+            MountManager.Release(mount);
+        _mounted.Clear();
     }
 }
 

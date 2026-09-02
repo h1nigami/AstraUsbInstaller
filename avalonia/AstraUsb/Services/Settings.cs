@@ -23,6 +23,12 @@ public sealed class Settings
     /// <summary>Сколько дней держать собранные записи; 0 хранит их бессрочно.</summary>
     public int KeepDays { get; set; }
 
+    /// <summary>
+    /// Сколько секунд ждать, не смонтирует ли карту система, прежде чем
+    /// монтировать её самим. Двойное монтирование одного FAT опаснее задержки.
+    /// </summary>
+    public int MountGraceSeconds { get; set; } = 4;
+
     /// <summary>Минуты бездействия до блокировки разделов; 0 отключает блокировку.</summary>
     public int LockTimeoutMinutes { get; set; } = 10;
 
