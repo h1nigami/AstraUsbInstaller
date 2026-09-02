@@ -115,6 +115,12 @@ public sealed class Settings
     /// </summary>
     public int BayCount { get; set; } = 10;
 
+    /// <summary>
+    /// Сколько окон помещать в строку. При ширине станции в 800 точек читаемо
+    /// не больше трёх, но на широком экране веб-режима бывает нужно иначе.
+    /// </summary>
+    public int BaysPerRow { get; set; } = 3;
+
     public long MinFreeBytes => (long)MinFreeGb * 1024 * 1024 * 1024;
 
     private static readonly JsonSerializerOptions Json = new()

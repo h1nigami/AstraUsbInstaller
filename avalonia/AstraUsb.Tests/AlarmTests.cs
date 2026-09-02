@@ -7,6 +7,7 @@ namespace AstraUsb.Tests;
 /// Звуковая тревога. Сигнал собирается сам, без файла в поставке, поэтому
 /// проверяется, что получается настоящий WAV, а не набор байтов.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class AlarmTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-alarm-").FullName;

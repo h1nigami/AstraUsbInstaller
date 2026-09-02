@@ -15,6 +15,9 @@
     <!-- Окно отсека. Обводка, фон и полоса приходят из модели: состояние
          кодируется ими одновременно, а не одним цветом. -->
     <Style Selector="Border.bay">
+      <!-- Ниже этого окно теряет состояние: строка с ним сжимается до нуля,
+           а состояние это главное, что оператор читает с расстояния. -->
+      <Setter Property="MinHeight" Value="92" />
       <Setter Property="CornerRadius" Value="16" />
       <Setter Property="BorderThickness" Value="2" />
       <Setter Property="Padding" Value="12,10" />
@@ -155,8 +158,8 @@
           </Grid>
 
           <!-- Сетка: до двенадцати окон, компоновка по умолчанию -->
-          <ItemsControl Grid.Row="1" ItemsSource="{Binding Ports}"
-                        IsVisible="{Binding IsGridLayout}">
+          <ScrollViewer Grid.Row="1" IsVisible="{Binding IsGridLayout}">
+          <ItemsControl ItemsSource="{Binding Ports}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
                 <UniformGrid Columns="3" />
@@ -207,6 +210,7 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
+          </ScrollViewer>
 
           <!-- Список: строки, когда окон больше двенадцати -->
           <ScrollViewer Grid.Row="1" IsVisible="{Binding IsListLayout}">
@@ -788,15 +792,17 @@
                     </StackPanel>
 
                     <StackPanel>
-                      <TextBlock Text="ОКОН СБОРА" Classes="field" />
-                      <Grid ColumnDefinitions="*,8,Auto">
+                      <TextBlock Text="ОКОН: ВСЕГО И В СТРОКЕ" Classes="field" />
+                      <Grid ColumnDefinitions="*,8,*,8,Auto">
                         <TextBox Grid.Column="0" Classes="form"
                                  Text="{Binding Settings.BayCount}" />
-                        <Button Grid.Column="2" Content="Применить" Height="52"
+                        <TextBox Grid.Column="2" Classes="form"
+                                 Text="{Binding Settings.BaysPerRow}" />
+                        <Button Grid.Column="4" Content="Применить" Height="52"
                                 Command="{Binding Settings.SaveBayCountCommand}" />
                       </Grid>
                       <TextBlock Classes="hint" Margin="0,4,0,0"
-                                 Text="от 6 до 30, вступает в силу после перезапуска" />
+                                 Text="всего от 6 до 30, в строке от 2 до 6; вступает в силу после перезапуска" />
                     </StackPanel>
                   </UniformGrid>
 
@@ -1111,6 +1117,11 @@
               <!-- О программе -->
               <StackPanel Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
                 <TextBlock Text="О программе" Classes="section" />
+                <Button Content="Показать все состояния окон" Height="52"
+                        HorizontalAlignment="Left"
+                        Command="{Binding DemonstrateCommand}" />
+                <TextBlock Classes="hint"
+                           Text="Доска по очереди покажет каждое состояние отсека: подключение, чтение списка, копирование, готово, ошибку, только зарядку и свободный. Нужно для приёмки: ошибку копирования на живой станции по заказу не устроить." />
                 <TextBlock Text="BestCam BC-10" Classes="h2" FontSize="16" />
                 <TextBlock Text="Терминал сбора и хранения данных" Classes="hint" />
                 <TextBlock Text="{Binding Version}" Classes="mono" FontSize="12" />

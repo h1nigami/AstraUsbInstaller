@@ -38,6 +38,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private bool _deleteVideoAfterCopy;
     [ObservableProperty] private int _keepDays;
     [ObservableProperty] private int _bayCount;
+    [ObservableProperty] private int _baysPerRow;
 
     /// <summary>Число окон изменено: доска строится один раз при запуске.</summary>
     [ObservableProperty] private bool _restartNeeded;
@@ -153,6 +154,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         DeleteVideoAfterCopy = _settings.DeleteVideoAfterCopy;
         KeepDays = _settings.KeepDays;
         BayCount = Math.Clamp(_settings.BayCount, 6, 30);
+        BaysPerRow = Math.Clamp(_settings.BaysPerRow, 2, 6);
         LockTimeoutMinutes = _settings.LockTimeoutMinutes;
         UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
         AdminAccount = string.IsNullOrWhiteSpace(_settings.AdminAccount)
@@ -556,10 +558,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void SaveBayCount()
     {
         var wanted = Math.Clamp(BayCount, 6, 30);
-        var changed = wanted != _settings.BayCount;
+        var perRow = Math.Clamp(BaysPerRow, 2, 6);
+        var changed = wanted != _settings.BayCount || perRow != _settings.BaysPerRow;
 
         _settings.BayCount = wanted;
+        _settings.BaysPerRow = perRow;
         BayCount = wanted;
+        BaysPerRow = perRow;
         ReloadSlots();
 
         if (!_settings.Save())

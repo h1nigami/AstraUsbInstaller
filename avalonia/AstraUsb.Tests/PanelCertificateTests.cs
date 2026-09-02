@@ -8,6 +8,7 @@ namespace AstraUsb.Tests;
 /// что он годен для сервера, живёт достаточно долго и не выпускается заново на
 /// каждый запуск: иначе браузер ругался бы каждый день.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class PanelCertificateTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-cert-").FullName;

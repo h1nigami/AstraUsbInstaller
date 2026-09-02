@@ -146,6 +146,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>О чём станция уже сообщила: повторять одно и то же незачем.</summary>
     private string _lastTrouble = "";
 
+    /// <summary>Идёт показ состояний: опрос носителей в это время не мешает.</summary>
+    private bool _demonstrating;
+
     /// <summary>Веб-панель, если она включена в настройках.</summary>
     private readonly WebPanel? _web;
 
@@ -155,6 +158,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     [ObservableProperty]
     private string _layout = "grid";
+
+    /// <summary>Сколько окон в строке: задаётся в настройках.</summary>
+    [ObservableProperty]
+    private int _baysPerRow = 3;
 
     public bool IsGridLayout => Layout == "grid";
     public bool IsListLayout => Layout == "list";
@@ -231,6 +238,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // Число окон задаётся в настройках: у станций от шести до тридцати
         // отсеков, и окна должны совпадать с железом.
+        BaysPerRow = Math.Clamp(_stationSettings.BaysPerRow, 2, 6);
         var bays = Math.Clamp(_stationSettings.BayCount, 6, 30);
         for (var i = 0; i < bays; i++)
             Ports.Add(new PortViewModel { Slot = i });
@@ -274,6 +282,65 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// Выход закрыт паролем. В киоске это единственный способ покинуть
     /// программу, поэтому спрашиваем пароль, а не закрываемся сразу.
     /// </summary>
+    /// <summary>
+    /// Показывает все состояния окон по очереди. Задание требует, чтобы каждое
+    /// состояние было воспроизводимо для приёмки, а ошибку копирования и
+    /// недоступный архив на живой станции по заказу не устроить.
+    /// </summary>
+    [RelayCommand]
+    private async Task Demonstrate()
+    {
+        if (_demonstrating)
+            return;
+
+        _demonstrating = true;
+        _actions.Write(ActionLog.Settings, "показ состояний окон для приёмки");
+
+        var states = new[]
+        {
+            PortState.Detected, PortState.Scanning, PortState.Copying,
+            PortState.Done, PortState.Failed, PortState.ChargeOnly, PortState.Idle,
+        };
+
+        try
+        {
+            foreach (var state in states)
+            {
+                for (var i = 0; i < Ports.Count; i++)
+                {
+                    var port = Ports[i];
+                    port.CameraId = state == PortState.Idle ? "" : $"BCU-00-{i + 1:0000}";
+                    port.Employee = state == PortState.Idle ? "" : "Показ состояний";
+                    port.Department = state == PortState.Idle ? "" : "приёмка";
+                    port.PersonnelNo = state == PortState.Idle ? "" : "000000";
+                    port.Progress = state switch
+                    {
+                        PortState.Copying => 0.35 + i * 0.05,
+                        PortState.Done or PortState.Failed => 1,
+                        _ => 0,
+                    };
+                    port.FilesLine = state switch
+                    {
+                        PortState.Copying => $"{12 + i} из 40",
+                        PortState.Done => "40 файлов, 1.2 ГБ",
+                        PortState.Failed => "не скопировано: 3 файла",
+                        _ => "",
+                    };
+                    port.State = state;
+                }
+
+                Status = $"показ состояний: {Ports[0].StateText}";
+                await Task.Delay(2500);
+            }
+
+            Status = "показ состояний закончен";
+        }
+        finally
+        {
+            _demonstrating = false;
+        }
+    }
+
     [RelayCommand]
     private void SetLayout(string? name) => Layout = name switch
     {
@@ -529,6 +596,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Опрашивает носители и раскладывает их по гнёздам.</summary>
     public void Refresh()
     {
+        // Во время показа состояний доска занята: опрос перерисовал бы её.
+        if (_demonstrating)
+            return;
+
         var devices = HoldBriefly(_listDevices());
 
         // Диск, на котором лежит архив, источником не считается: иначе
