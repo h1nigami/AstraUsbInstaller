@@ -1,10 +1,18 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AstraUsb.Services;
 
-/// <summary>Подключённый носитель: имя устройства и точка монтирования, если есть.</summary>
-public sealed record UsbDevice(string Name, string? MountPoint);
+/// <summary>Подключённый носитель.</summary>
+/// <param name="Name">Имя устройства: sdb1 или буква диска.</param>
+/// <param name="MountPoint">Точка монтирования, если носитель смонтирован.</param>
+/// <param name="PortPath">
+/// Адрес физического гнезда на шине, например «1-4.2». Не меняется при
+/// переподключении того же гнезда, поэтому по нему плитка закрепляется за
+/// конкретным разъёмом станции.
+/// </param>
+public sealed record UsbDevice(string Name, string? MountPoint, string? PortPath = null);
 
 /// <summary>
 /// Обнаружение съёмных носителей. Логика перенесена из Python-версии
@@ -13,6 +21,9 @@ public sealed record UsbDevice(string Name, string? MountPoint);
 /// </summary>
 public static class UsbWatcher
 {
+    /// <summary>Из пути sysfs достаём адрес гнезда: usb1/1-4/1-4.2/... → 1-4.2.</summary>
+    private static readonly Regex PortInSysPath = new(@"/(\d+-[\d.]+)(?=/|$)", RegexOptions.Compiled);
+
     public static IReadOnlyList<UsbDevice> List() =>
         OperatingSystem.IsWindows() ? ListWindows() : ListLinux();
 
@@ -66,6 +77,8 @@ public static class UsbWatcher
         if (string.IsNullOrEmpty(name))
             return;
 
+        var port = ReadPortPath(name);
+
         if (disk.TryGetProperty("children", out var children)
             && children.ValueKind == JsonValueKind.Array
             && children.GetArrayLength() > 0)
@@ -76,12 +89,36 @@ public static class UsbWatcher
             {
                 var partName = Text(part, "name");
                 if (!string.IsNullOrEmpty(partName))
-                    found.Add(new UsbDevice(partName, Text(part, "mountpoint")));
+                    found.Add(new UsbDevice(partName, Text(part, "mountpoint"), port));
             }
             return;
         }
 
-        found.Add(new UsbDevice(name, Text(disk, "mountpoint")));
+        found.Add(new UsbDevice(name, Text(disk, "mountpoint"), port));
+    }
+
+    /// <summary>
+    /// Адрес гнезда, в которое воткнут носитель. Берётся из пути sysfs:
+    /// /sys/class/block/sdb → .../usb1/1-4/1-4.2/... Последний такой участок и
+    /// есть разъём; он одинаков при каждом подключении в тот же порт.
+    /// </summary>
+    public static string? ReadPortPath(string deviceName)
+    {
+        try
+        {
+            var disk = new string(deviceName.TakeWhile(c => !char.IsDigit(c)).ToArray());
+            var link = $"/sys/class/block/{(disk.Length > 0 ? disk : deviceName)}";
+            if (!Directory.Exists(link))
+                return null;
+
+            var real = Path.GetFullPath(new DirectoryInfo(link).ResolveLinkTarget(true)?.FullName ?? link);
+            var matches = PortInSysPath.Matches(real.Replace('\\', '/'));
+            return matches.Count > 0 ? matches[^1].Groups[1].Value : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static string? Text(JsonElement el, string property) =>

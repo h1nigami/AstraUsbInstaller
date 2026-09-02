@@ -19,6 +19,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
+    private readonly PortMap _portMap;
 
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
@@ -51,9 +52,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Опрос носителей передаётся снаружи: так экран можно проверить без железа.</summary>
-    public MainWindowViewModel(Func<IReadOnlyList<UsbDevice>> listDevices)
+    public MainWindowViewModel(Func<IReadOnlyList<UsbDevice>> listDevices, PortMap? portMap = null)
     {
         _listDevices = listDevices;
+        AppPaths.EnsureCreated();
+        _portMap = portMap ?? new PortMap(AppPaths.Database);
+        Version = ReadVersion();
 
         for (var i = 0; i < PortCount; i++)
             Ports.Add(new PortViewModel());
@@ -83,15 +87,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         var devices = _listDevices();
 
+        // Носители раскладываются по закреплённым гнёздам: камера из второго
+        // разъёма занимает второе окно независимо от очерёдности подключения.
+        var placed = _portMap.Arrange(devices, Ports.Count);
+
         for (var i = 0; i < Ports.Count; i++)
         {
-            if (i >= devices.Count)
+            if (placed[i] is not { } device)
             {
                 Ports[i].Clear();
                 continue;
             }
 
-            var device = devices[i];
             var identity = DeviceIdentifier.Resolve(device.MountPoint);
             var port = Ports[i];
 
@@ -112,6 +119,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             : $"носителей: {devices.Count}";
 
         UpdateStorage();
+    }
+
+    /// <summary>Версия из файла VERSION рядом с программой.</summary>
+    private static string ReadVersion()
+    {
+        try
+        {
+            var parts = File.ReadAllText(AppPaths.VersionFile).Split(
+                (char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 2 && DateTime.TryParse(parts[1], out var date))
+                return $"версия {parts[0].TrimStart('v')} от {date:dd.MM.yy}";
+        }
+        catch (Exception)
+        {
+            // Файла нет или он испорчен — приложение из-за версии падать не должно.
+        }
+        return "версия —";
     }
 
     /// <summary>Показывает заполнение хранилища и краснеет, когда места мало.</summary>
