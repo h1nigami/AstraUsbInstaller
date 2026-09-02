@@ -1,5 +1,6 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:AstraUsb"
         x:Class="AstraUsb.MainWindow"
         Title="BestCam USB Backup Manager"
         Width="1024" Height="600"
@@ -81,7 +82,7 @@
             </ItemsPanelTemplate>
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
-            <DataTemplate>
+            <DataTemplate x:DataType="local:PortTile">
               <Border Classes="port" Margin="5" Height="132">
                 <Grid>
                   <!-- Слой заливки: высота задаётся из кода по доле скопированного -->
