@@ -123,7 +123,7 @@
 
     <Border Grid.Row="1" Background="{StaticResource BrandBrush}" Opacity="0.55" />
 
-    <TabControl Grid.Row="2" Padding="0" Background="Transparent">
+    <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
 
       <TabItem Header="ЗАГРУЗКА">
         <ItemsControl ItemsSource="{Binding Ports}" Margin="8,6">
@@ -312,6 +312,112 @@
               <Button Content="Обновить" Command="{Binding Devices.ReloadCommand}" />
             </StackPanel>
             <TextBlock Text="{Binding Devices.Hint}" FontSize="11"
+                       Foreground="{StaticResource BrandBrush}" />
+          </StackPanel>
+        </Grid>
+      </TabItem>
+      <TabItem Header="СОТРУДНИКИ">
+        <Grid ColumnDefinitions="290,*" RowDefinitions="*,Auto" Margin="10,8">
+
+          <!-- Отделы. Путь показан целиком: вложенность иначе не видна. -->
+          <Border Grid.Row="0" Grid.Column="0" Margin="0,0,8,0"
+                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                  CornerRadius="2" Background="{StaticResource BgPanelBrush}">
+            <Grid RowDefinitions="24,*">
+              <TextBlock Grid.Row="0" Text="ОТДЕЛЫ" Margin="10,6,0,0" FontSize="10"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBlock Grid.Row="1" IsVisible="{Binding Staff.NoDepartments}"
+                         Text="Отделов пока нет. Введите название внизу и нажмите «Добавить отдел»."
+                         Margin="12,8" TextWrapping="Wrap" FontSize="11"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <ListBox Grid.Row="1" ItemsSource="{Binding Staff.Departments}"
+                       SelectedItem="{Binding Staff.SelectedDepartment}"
+                       Background="Transparent" BorderThickness="0">
+                <ListBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:DepartmentRow">
+                    <TextBlock Text="{Binding Path}" Height="26" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMainBrush}" />
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+          </Border>
+
+          <Border Grid.Row="0" Grid.Column="1"
+                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                  CornerRadius="2" Background="{StaticResource BgPanelBrush}">
+            <Grid RowDefinitions="24,*">
+              <Grid Grid.Row="0" ColumnDefinitions="110,*,150,80" Margin="10,6,10,0">
+                <TextBlock Grid.Column="0" Text="НОМЕР" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="1" Text="ИМЯ" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="2" Text="ТЕЛЕФОН" FontSize="10"
+                           Foreground="{StaticResource FgMutedBrush}" />
+              </Grid>
+              <ListBox Grid.Row="1" ItemsSource="{Binding Staff.Employees}"
+                     SelectedItem="{Binding Staff.Selected}"
+                     Background="Transparent" BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="svc:Employee">
+                  <Grid ColumnDefinitions="110,*,150,80" Height="28">
+                    <TextBlock Grid.Column="0" Text="{Binding PersonnelNo}"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               FontWeight="Bold" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrandBrush}" />
+                    <TextBlock Grid.Column="1" Text="{Binding FullName}"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMainBrush}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Phone}"
+                               FontSize="11" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Grid.Column="3" Text="уволен" IsVisible="{Binding !Active}"
+                               FontSize="11" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+          </Border>
+
+          <StackPanel Grid.Row="1" Grid.Column="0" Spacing="6" Margin="0,8,8,0">
+            <TextBox Text="{Binding Staff.DepartmentNameInput}" Watermark="Название отдела" />
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="Добавить отдел" Command="{Binding Staff.AddDepartmentCommand}" />
+              <Button Content="Удалить" Command="{Binding Staff.DeleteDepartmentCommand}" />
+            </StackPanel>
+          </StackPanel>
+
+          <StackPanel Grid.Row="1" Grid.Column="1" Spacing="6" Margin="0,8,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Номер" VerticalAlignment="Center"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding Staff.PersonnelNoInput}" Width="100"
+                       FontFamily="DejaVu Sans Mono, Consolas, monospace" />
+              <TextBlock Text="Имя" VerticalAlignment="Center"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding Staff.FullNameInput}" Width="190" />
+              <TextBlock Text="Телефон" VerticalAlignment="Center"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding Staff.PhoneInput}" Width="120" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Отдел" VerticalAlignment="Center"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <ComboBox ItemsSource="{Binding Staff.Departments}"
+                        SelectedItem="{Binding Staff.DepartmentInput}" Width="200">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="vm:DepartmentRow">
+                    <TextBlock Text="{Binding Path}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Button Content="Новый" Command="{Binding Staff.NewEmployeeCommand}" />
+              <Button Content="Сохранить" Command="{Binding Staff.SaveEmployeeCommand}" />
+              <Button Content="Уволить" Command="{Binding Staff.DeactivateCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding Staff.Hint}" FontSize="11"
                        Foreground="{StaticResource BrandBrush}" />
           </StackPanel>
         </Grid>

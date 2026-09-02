@@ -24,6 +24,15 @@ public partial class MainWindow : Window
         vm.ExitRequested += Close;
         DataContext = vm;
 
+        // Списки читаются из базы один раз при создании. Пока оператор был на
+        // «Загрузке», камеры и сотрудники успевают появиться, поэтому при
+        // переходе на вкладку список перечитывается.
+        this.FindControl<TabControl>("Tabs")!.SelectionChanged += (_, _) =>
+        {
+            vm.Devices.Reload();
+            vm.Staff.Reload();
+        };
+
         Closed += (_, _) => vm.Dispose();
     }
 }

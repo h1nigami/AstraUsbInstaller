@@ -51,6 +51,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Вкладка «Поиск».</summary>
     public SearchViewModel Search { get; } = new();
 
+    /// <summary>Вкладка «Сотрудники».</summary>
+    public StaffViewModel Staff { get; } = new();
+
     [ObservableProperty]
     private string _clockTime = "--:--:--";
 

@@ -74,9 +74,9 @@ public sealed class BackupService
 
             progress.Report(result.Failed == 0
                 ? new BackupProgress(BackupStage.Done, 1,
-                    $"{result.CopiedFiles} файлов, {Size(result.CopiedBytes)}")
+                    $"{Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}")
                 : new BackupProgress(BackupStage.Failed, 1,
-                    $"{result.Failed} не скопировано"));
+                    $"не скопировано: {Plural(result.Failed, "файл", "файла", "файлов")}"));
         }
         catch (OperationCanceledException)
         {
@@ -161,6 +161,30 @@ public sealed class BackupService
     private static string Size(long bytes)
     {
         var gb = bytes / 1024d / 1024 / 1024;
-        return gb >= 1 ? $"{gb:0.0} ГБ" : $"{bytes / 1024d / 1024:0} МБ";
+        if (gb >= 1)
+            return $"{gb:0.0} ГБ";
+
+        // Одна фотография весит меньше мегабайта, и округление до целых
+        // показывало бы честно скопированный файл как «0 МБ».
+        var mb = bytes / 1024d / 1024;
+        return mb >= 1 ? $"{mb:0} МБ" : $"{bytes / 1024d:0} КБ";
+    }
+
+    /// <summary>
+    /// Число с существительным в нужной форме: 1 файл, 2 файла, 5 файлов.
+    /// Одиннадцать и двенадцать берут форму множественного числа, поэтому
+    /// вторая цифра проверяется отдельно.
+    /// </summary>
+    public static string Plural(long count, string one, string few, string many)
+    {
+        var tens = Math.Abs(count) % 100;
+        var unit = tens % 10;
+
+        var form = tens is >= 11 and <= 14 ? many
+            : unit == 1 ? one
+            : unit is >= 2 and <= 4 ? few
+            : many;
+
+        return $"{count} {form}";
     }
 }
