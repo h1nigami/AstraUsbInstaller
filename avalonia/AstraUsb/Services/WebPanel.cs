@@ -86,6 +86,13 @@ public sealed class WebPanel : IDisposable
     {
         app.MapGet("/", () => Results.Content(Page(), "text/html; charset=utf-8"));
 
+        // Логотип берётся из ресурсов программы, тот же, что в киоске: на
+        // станции нет каталога со статикой, а панель должна выглядеть своей.
+        // Ключ для него не нужен: это картинка, её видно и на входе.
+        app.MapGet("/logo.png", () => Logo() is { } bytes
+            ? Results.File(bytes, "image/png")
+            : Results.NotFound());
+
         app.MapPost("/api/login", async (HttpContext context) =>
         {
             var form = await context.Request.ReadFormAsync();
@@ -232,6 +239,30 @@ public sealed class WebPanel : IDisposable
             new ActionLog(_dbPath).Write(ActionLog.Settings, "веб-панель: перезапуск станции");
             return Results.Ok(new { queued = true });
         });
+    }
+
+    private static byte[]? _logo;
+
+    /// <summary>Читает логотип из ресурсов один раз.</summary>
+    private static byte[]? Logo()
+    {
+        if (_logo is not null)
+            return _logo;
+
+        try
+        {
+            using var stream = Avalonia.Platform.AssetLoader.Open(
+                new Uri("avares://AstraUsb/Assets/logo.png"));
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            _logo = memory.ToArray();
+        }
+        catch (Exception)
+        {
+            // Ресурса нет: панель обойдётся буквами, как в шаблоне.
+        }
+
+        return _logo;
     }
 
     /// <summary>Проверяет вход и продлевает его: панель открыта, пока ею пользуются.</summary>

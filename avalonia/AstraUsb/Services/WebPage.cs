@@ -32,6 +32,10 @@ public static class WebPage
             --t200: #c8eaee; --t500: #3f9ba6; --t600: #2c7d88; --t900: #0f2f34;
           }
           * { box-sizing: border-box; }
+          /* Скрытое должно быть скрыто: вход и панель заданы через grid и
+             flex, а это перебивает атрибут hidden, и форма входа оставалась
+             поверх панели. */
+          [hidden] { display: none !important; }
           body {
             margin: 0; background: var(--bg); color: var(--text);
             font: 15px/1.5 "Manrope", system-ui, sans-serif;
@@ -64,11 +68,9 @@ public static class WebPage
             flex: none; display: flex; align-items: center; gap: 12px;
             padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
           }
-          .logo {
-            width: 40px; height: 40px; flex: none; border-radius: 999px;
-            background: var(--accent); color: var(--panel); display: grid; place-items: center;
-            font-family: "Nunito", system-ui, sans-serif; font-weight: 800; font-size: 15px;
-          }
+          /* Логотип тот же, что в киоске: панель должна узнаваться своей.
+             Если картинка не пришла, остаётся подпись под ней. */
+          .logo { height: 34px; width: auto; flex: none; object-fit: contain; }
           .top .who { flex: 1; min-width: 0; }
           /* Заголовок раздела и пилюли служб живут в шапке только на широком
              экране: на телефоне разделы подписаны полосой снизу, а служб
@@ -99,7 +101,8 @@ public static class WebPage
           .tabs button.on { background: var(--a100); color: var(--a700); }
 
           /* обзор */
-          .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+          .metrics { display: grid; gap: 8px;
+            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); }
           .metric { padding: 12px 10px; border-radius: 22px; background: var(--panel); }
           .metric b { font-family: "Nunito", system-ui, sans-serif; font-weight: 800;
             font-size: 26px; line-height: 1; display: block; }
@@ -138,6 +141,7 @@ public static class WebPage
             font-size: 15px; font-weight: 700;
           }
           .bay .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+          .bay .state { font-family: "Nunito", system-ui, sans-serif; font-weight: 800; }
           .bay .person { font-size: 14px; font-weight: 700; overflow: hidden;
             text-overflow: ellipsis; white-space: nowrap; }
           .bay .line { font-size: 12px; opacity: .8; }
@@ -209,6 +213,7 @@ public static class WebPage
               padding: 18px 14px; background: var(--panel); border-right: 1px solid var(--line);
             }
             aside .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+            aside .brand .logo { height: 30px; }
             aside .brand .name { font-family: "Nunito", system-ui, sans-serif;
               font-weight: 800; font-size: 15px; }
             aside .brand .place { font-size: 11.5px; color: var(--n600); }
@@ -227,20 +232,25 @@ public static class WebPage
             .top .desk { display: block; font-family: "Nunito", system-ui, sans-serif;
               font-weight: 800; font-size: 18px; }
             .top .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+            .top .logo, .top > .ghost { display: none; }
             .pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px;
               border-radius: 999px; background: var(--bg); font-size: 12.5px; font-weight: 600; }
             .tabs { display: none; }
             main { padding: 20px 22px 26px; }
-            .metrics { grid-template-columns: repeat(3, 1fr); gap: 14px; }
+            .metrics { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
             .metric { padding: 20px 22px; border-radius: 26px; }
             .metric b { font-size: 44px; }
             .metric span { font-size: 13.5px; }
-            .two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+            /* Карточки по содержимому: иначе том архива растягивался под
+               соседнюю и внутри оставалась пустота. */
+            .two { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px;
+              align-items: start; }
             .bays { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
               gap: 14px; }
             .bay { flex-direction: column; align-items: stretch; min-height: 168px;
               padding: 16px 18px; border-width: 2px; border-radius: 28px; gap: 9px; }
             .bay .head { display: flex; align-items: center; gap: 10px; }
+            .bay .head .person { flex: 1; min-width: 0; }
             .bay .state { font-family: "Nunito", system-ui, sans-serif; font-weight: 800;
               font-size: 19px; }
             .bay .track { margin-top: auto; height: 10px; }
@@ -260,6 +270,7 @@ public static class WebPage
         <body>
         <div id="login">
           <form onsubmit="signIn(event)">
+            <img class="logo" src="/logo.png" alt="BestCam" style="height:38px;align-self:start">
             <div class="t">BestCam BC-10</div>
             <div class="s">Панель показывает состояние станции, её архив и журнал.</div>
             <input id="account" value="admin" autocomplete="username">
@@ -272,7 +283,7 @@ public static class WebPage
         <div id="panel" hidden>
           <aside>
             <div class="brand">
-              <div class="logo">BC</div>
+              <img class="logo" src="/logo.png" alt="BestCam">
               <div>
                 <div class="name">BC-10</div>
                 <div class="place" id="place"></div>
@@ -285,7 +296,7 @@ public static class WebPage
 
           <div class="side">
             <div class="top">
-              <div class="logo">BC</div>
+              <img class="logo" src="/logo.png" alt="BestCam">
               <div class="who">
                 <div class="name" id="station">BC-10</div>
                 <div class="desk" id="desk"></div>
@@ -457,7 +468,7 @@ public static class WebPage
                 </div>
                 <div class="track"><div class="fill" style="width:${width}%"></div></div>
                 <div class="muted">${esc(s.archiveLabel || 'архив')}</div>
-                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:auto">
                   <button class="go" style="padding:0 22px" onclick="askRestart()">Перезапустить станцию</button>
                   <button class="ghost" style="min-height:52px" onclick="tick()">Обновить состояние</button>
                 </div>
@@ -482,20 +493,38 @@ public static class WebPage
           return '';
         }
 
+        // На телефоне отсек это строка, на компьютере карточка: так в шаблоне
+        // задания, и одной разметкой это не выразить без перекосов.
         function drawBays(s) {
-          document.getElementById('view').innerHTML = '<div class="bays">' + s.bays.map(b => `
+          const wide = window.matchMedia('(min-width: 900px)').matches;
+
+          const row = b => `
             <button class="bay ${bayClass(b.state)}" onclick="askBay(${b.slot}, '${esc(b.state)}')">
-              <span class="head">
-                <span class="n">${b.slot + 1}</span>
-                <span class="person">${esc(b.employee || b.camera || 'Свободный')}</span>
-              </span>
+              <span class="n">${b.slot + 1}</span>
               <span class="body">
-                <span class="state">${esc(b.state)}</span>
-                <span class="line">${esc(b.files || '')}</span>
+                <span class="person">${esc(b.employee || b.camera || 'нет регистратора')}</span>
+                <span class="line">${esc(b.state)}${b.files ? ' · ' + esc(b.files) : ''}</span>
                 <span class="track"><span class="fill" style="width:${b.percent}%;display:block"></span></span>
               </span>
               <span class="pct">${b.percent > 0 ? b.percent + '%' : ''}</span>
-            </button>`).join('') + '</div>';
+            </button>`;
+
+          const card = b => `
+            <button class="bay ${bayClass(b.state)}" onclick="askBay(${b.slot}, '${esc(b.state)}')">
+              <span class="head">
+                <span class="n">${b.slot + 1}</span>
+                <span class="person">${esc(b.employee || b.camera || 'нет регистратора')}</span>
+              </span>
+              <span class="head">
+                <span class="state" style="flex:1">${esc(b.state)}</span>
+                <span class="pct">${b.percent > 0 ? b.percent + '%' : ''}</span>
+              </span>
+              <span class="line">${esc(b.files || '')}</span>
+              <span class="track"><span class="fill" style="width:${b.percent}%;display:block"></span></span>
+            </button>`;
+
+          document.getElementById('view').innerHTML =
+            '<div class="bays">' + s.bays.map(wide ? card : row).join('') + '</div>';
         }
 
         async function drawArchive() {
@@ -519,16 +548,17 @@ public static class WebPage
             ? '<div class="empty">Записей по этим условиям нет.</div>'
             : wide
               ? `<div class="files"><table>
-                   <thead><tr><th>Файл</th><th style="width:110px">Тип</th>
-                   <th>Сотрудник, устройство, размер</th><th style="width:220px"></th></tr></thead>
+                   <thead><tr><th>Файл</th><th style="width:104px">Тип</th>
+                   <th>Сотрудник, устройство, размер</th><th style="width:270px"></th></tr></thead>
                    <tbody>${rows.map(r => `
                      <tr>
                        <td>${esc(r.file)}</td>
                        <td><span class="tag">${esc(r.kind)}</span></td>
                        <td class="muted">${esc(meta(r))}</td>
-                       <td style="display:flex;gap:8px">
-                         <button class="ghost" onclick="watch('${esc(r.path)}')">Смотреть</button>
-                         <button class="go" style="min-height:40px;padding:0 16px"
+                       <td style="display:flex;gap:8px;justify-content:flex-end">
+                         <button class="ghost" style="padding:0 14px"
+                                 onclick="watch('${esc(r.path)}')">Смотреть</button>
+                         <button class="go" style="min-height:40px;padding:0 16px;font-size:13.5px"
                                  onclick="download('${esc(r.path)}', '${esc(r.file)}')">Скачать</button>
                        </td>
                      </tr>`).join('')}
@@ -661,7 +691,9 @@ public static class WebPage
           ]);
         }
 
-        window.addEventListener('resize', () => { if (view === 'archive') drawArchive(); });
+        // Ширина решает, строка это или карточка, поэтому поворот телефона
+        // требует перерисовки.
+        window.addEventListener('resize', () => tick());
 
         if (token) start();
         </script>
