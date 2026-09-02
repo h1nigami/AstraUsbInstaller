@@ -152,10 +152,59 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE_NAME.service"
 $SUDO systemctl restart "$SERVICE_NAME.service"
 
+# --- 6. Обновление ------------------------------------------------------------
+# Обновление идёт отдельной службой по таймеру, а не изнутри киоска: установка
+# в конце перезапускает киоск, и обновление изнутри убило бы себя посреди
+# подмены файлов. Отдельная служба это переживает и работает даже тогда, когда
+# киоск не поднимается, а ради такого случая откат и нужен.
+echo "--- Настройка обновления по расписанию..."
+
+if [ ! -f "$APP_DIR/VERSION" ] && command -v git >/dev/null 2>&1    && git -C "$SRC_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+    TAG="$(git -C "$SRC_DIR" describe --tags --abbrev=0 2>/dev/null || true)"
+    if [ -n "$TAG" ]; then
+        echo "$TAG $(date +%F)" | $SUDO tee "$APP_DIR/VERSION" > /dev/null
+    fi
+fi
+
+$SUDO tee "/etc/systemd/system/$SERVICE_NAME-update.service" > /dev/null << EOF
+[Unit]
+Description=Обновление BestCam USB Backup Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=$APP_DIR
+ExecStart=$APP_DIR/AstraUsb --update
+EOF
+
+$SUDO tee "/etc/systemd/system/$SERVICE_NAME-update.timer" > /dev/null << EOF
+[Unit]
+Description=Проверка обновлений BestCam раз в шесть часов
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+
+[Install]
+WantedBy=timers.target
+EOF
+
+$SUDO systemctl daemon-reload
+$SUDO systemctl enable --now "$SERVICE_NAME-update.timer"
+
+if [ ! -f "$APP_DIR/VERSION" ]; then
+    echo
+    echo "ВНИМАНИЕ: версия не определена, файла VERSION нет."
+    echo "Станция считает себя устаревшей и при первой же проверке заменит"
+    echo "эту сборку тем, что помечено на GitHub как последний релиз."
+fi
+
 echo
 echo "Установлено в $APP_DIR"
 echo "Состояние:  systemctl status $SERVICE_NAME"
 echo "Журнал:     journalctl -u $SERVICE_NAME -f"
+echo "Обновление: systemctl list-timers $SERVICE_NAME-update.timer"
 echo
 echo "Учётная запись по умолчанию: admin, пароль 888888."
 echo "Смените их в разделе «Настройки», подраздел «Доступ»."

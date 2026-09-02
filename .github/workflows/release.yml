@@ -9,6 +9,10 @@ permissions:
 
 jobs:
   package:
+    # Предварительные релизы этот архив не получают: их публикуют для
+    # кроссплатформенной версии, а станции на Python берут releases/latest и
+    # не должны увидеть в нём чужой архив.
+    if: github.event.release.prerelease == false
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.release.tag_name }}

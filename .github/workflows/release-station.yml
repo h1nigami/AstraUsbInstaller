@@ -1,0 +1,94 @@
+name: Release — сборка станции для всех систем
+
+# Кроссплатформенная версия собирается отдельно от Python-версии: у них разные
+# архивы и разные установщики. Станция качает архив своей платформы и сверяет
+# его контрольную сумму, поэтому сумма кладётся рядом с каждым архивом.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Тег для пробной сборки
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Проверки
+        run: dotnet test avalonia/AstraUsb.Tests/AstraUsb.Tests.csproj -c Release
+
+      - name: Сборка архивов
+        env:
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+          PUBLISHED: ${{ github.event.release.published_at }}
+        run: |
+          set -e
+          DATE="${PUBLISHED:0:10}"
+          [ -n "$DATE" ] || DATE="$(date +%F)"
+          mkdir -p dist
+
+          for RID in linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64; do
+            echo "--- $RID"
+            OUT="build/$RID"
+            dotnet publish avalonia/AstraUsb/AstraUsb.csproj \
+              -c Release -r "$RID" --self-contained true \
+              -p:PublishSingleFile=false -o "$OUT"
+
+            echo "$TAG $DATE" > "$OUT/VERSION"
+
+            # Установщик, запуск и правило udev нужны только станциям на Linux.
+            case "$RID" in
+              linux-*)
+                cp avalonia/start_native.sh avalonia/install_native.sh \
+                   avalonia/99-astra-usb-avalonia-udisks.rules "$OUT/"
+                chmod +x "$OUT/AstraUsb" "$OUT/start_native.sh" "$OUT/install_native.sh"
+                ;;
+            esac
+
+            NAME="bestcam-station-$TAG-$RID"
+            case "$RID" in
+              win-*)
+                (cd build && zip -qr "../dist/$NAME.zip" "$RID")
+                FILE="dist/$NAME.zip"
+                ;;
+              *)
+                tar -czf "dist/$NAME.tar.gz" -C "build/$RID" .
+                FILE="dist/$NAME.tar.gz"
+                ;;
+            esac
+
+            # Сумма считается от имени файла без пути: станция сверяет её
+            # ровно в том виде, в каком пишет sha256sum.
+            (cd dist && sha256sum "$(basename "$FILE")" > "$(basename "$FILE").sha256")
+          done
+
+          ls -la dist
+
+      - name: Прикрепить к релизу
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
+
+      - name: Сохранить как артефакт сборки
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: station-${{ inputs.tag }}
+          path: dist

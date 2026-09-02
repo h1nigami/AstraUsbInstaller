@@ -236,7 +236,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         AppPaths.EnsureCreated();
         _portMap = portMap ?? new PortMap(AppPaths.Database);
         _backups = new BackupService(AppPaths.Database, _stationSettings);
-        Version = ReadVersion();
+        Version = VersionInfo.Label();
 
         // Число окон задаётся в настройках: у станций от шести до тридцати
         // отсеков, и окна должны совпадать с железом.
@@ -1106,6 +1106,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         Summary = $"копирование {copying} · готово {done} · ошибки {failed} · свободно {free}";
 
+        // Отметка занятости для службы обновления: пока идёт чтение списка
+        // или запись, подменять файлы программы нельзя.
+        if (copying > 0)
+            BusyMarker.Touch();
+
         PublishSnapshot(copying, done, failed, free);
     }
 
@@ -1183,22 +1188,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>Версия из файла VERSION рядом с программой.</summary>
-    private static string ReadVersion()
-    {
-        try
-        {
-            var parts = File.ReadAllText(AppPaths.VersionFile).Split(
-                (char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 2 && DateTime.TryParse(parts[1], out var date))
-                return $"версия {parts[0].TrimStart('v')} от {date:dd.MM.yy}";
-        }
-        catch (Exception)
-        {
-            // Файла нет или он испорчен, приложение из-за версии падать не должно.
-        }
-        return "версия неизвестна";
-    }
 
     /// <summary>Показывает заполнение хранилища и краснеет, когда места мало.</summary>
     private void UpdateStorage()

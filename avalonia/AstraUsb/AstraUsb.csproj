@@ -10,6 +10,9 @@
     <AssemblyName>AstraUsb</AssemblyName>
     <RootNamespace>AstraUsb</RootNamespace>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <!-- Версия видна в разделе «О программе» и тогда, когда файла VERSION
+         рядом нет: на объекте сети может не быть неделями. -->
+    <Version>2.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
