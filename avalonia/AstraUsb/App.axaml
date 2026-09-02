@@ -1,0 +1,36 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="AstraUsb.App"
+             RequestedThemeVariant="Dark">
+
+  <Application.Styles>
+    <FluentTheme />
+  </Application.Styles>
+
+  <Application.Resources>
+    <!-- Палитра BestCam: перенесена из работающей версии, чтобы киоск
+         не менял узнаваемый вид при переходе на новый интерфейс. -->
+    <Color x:Key="BgApp">#0F172A</Color>
+    <Color x:Key="BgPanel">#1E293B</Color>
+    <Color x:Key="BgSurface">#334155</Color>
+    <Color x:Key="FgMain">#F1F5F9</Color>
+    <Color x:Key="FgMuted">#94A3B8</Color>
+    <Color x:Key="Accent">#2563EB</Color>
+    <Color x:Key="AccentWarn">#D97706</Color>
+    <Color x:Key="AccentOk">#16A34A</Color>
+    <Color x:Key="AccentDanger">#DC2626</Color>
+    <Color x:Key="Brand">#38BDF8</Color>
+
+    <SolidColorBrush x:Key="BgAppBrush" Color="{StaticResource BgApp}" />
+    <SolidColorBrush x:Key="BgPanelBrush" Color="{StaticResource BgPanel}" />
+    <SolidColorBrush x:Key="BgSurfaceBrush" Color="{StaticResource BgSurface}" />
+    <SolidColorBrush x:Key="FgMainBrush" Color="{StaticResource FgMain}" />
+    <SolidColorBrush x:Key="FgMutedBrush" Color="{StaticResource FgMuted}" />
+    <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource Accent}" />
+    <SolidColorBrush x:Key="AccentWarnBrush" Color="{StaticResource AccentWarn}" />
+    <SolidColorBrush x:Key="AccentOkBrush" Color="{StaticResource AccentOk}" />
+    <SolidColorBrush x:Key="AccentDangerBrush" Color="{StaticResource AccentDanger}" />
+    <SolidColorBrush x:Key="BrandBrush" Color="{StaticResource Brand}" />
+  </Application.Resources>
+
+</Application>

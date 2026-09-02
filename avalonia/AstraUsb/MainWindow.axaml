@@ -1,0 +1,127 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="AstraUsb.MainWindow"
+        Title="BestCam USB Backup Manager"
+        Width="1024" Height="600"
+        WindowState="FullScreen"
+        SystemDecorations="None"
+        Background="{StaticResource BgAppBrush}"
+        FontFamily="Noto Sans, DejaVu Sans, Segoe UI, sans-serif">
+
+  <Window.Styles>
+    <!-- Плитка порта. Она же индикатор: заливка снизу вверх показывает,
+         сколько скопировано — читается через комнату, в отличие от процентов. -->
+    <Style Selector="Border.port">
+      <Setter Property="CornerRadius" Value="6" />
+      <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
+      <Setter Property="BorderBrush" Value="#243044" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="ClipToBounds" Value="True" />
+    </Style>
+
+    <Style Selector="TextBlock.portLabel">
+      <Setter Property="FontSize" Value="30" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
+    </Style>
+
+    <Style Selector="TextBlock.portState">
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style Selector="TabItem">
+      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
+      <Setter Property="Padding" Value="18,8" />
+      <Setter Property="MinHeight" Value="0" />
+    </Style>
+    <Style Selector="TabItem:selected">
+      <Setter Property="Foreground" Value="{StaticResource BrandBrush}" />
+    </Style>
+  </Window.Styles>
+
+  <Grid RowDefinitions="64,2,*,26">
+
+    <!-- Шапка -->
+    <Grid Grid.Row="0" Background="{StaticResource BgPanelBrush}"
+          ColumnDefinitions="Auto,*,Auto" Margin="0">
+      <Border Grid.Column="0" Margin="14,8" Padding="10,4"
+              BorderBrush="{StaticResource FgMainBrush}" BorderThickness="2"
+              CornerRadius="3" VerticalAlignment="Center">
+        <TextBlock Text="BestCam" FontSize="18" FontWeight="Bold"
+                   Foreground="{StaticResource FgMainBrush}" />
+      </Border>
+
+      <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+        <TextBlock Text="USB Backup Manager" FontSize="17" FontWeight="Bold"
+                   Foreground="{StaticResource BrandBrush}" />
+        <TextBlock x:Name="HeaderVersion" Text="Версия —" FontSize="11"
+                   Foreground="{StaticResource FgMutedBrush}" />
+      </StackPanel>
+
+      <Button Grid.Column="2" Content="Выход" Margin="14,0"
+              Padding="18,8" VerticalAlignment="Center"
+              Background="{StaticResource AccentDangerBrush}"
+              Foreground="White" FontWeight="SemiBold"
+              CornerRadius="4" Click="OnExitClick" />
+    </Grid>
+
+    <Border Grid.Row="1" Background="{StaticResource BrandBrush}" />
+
+    <TabControl Grid.Row="2" Padding="0" Background="Transparent">
+
+      <TabItem Header="Загрузка">
+        <ItemsControl x:Name="PortsHost" Margin="10,8">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="4" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Classes="port" Margin="5" Height="132">
+                <Grid>
+                  <!-- Слой заливки: высота задаётся из кода по доле скопированного -->
+                  <Border VerticalAlignment="Bottom"
+                          Background="{Binding Fill}"
+                          Height="{Binding FillHeight}" Opacity="0.85" />
+                  <StackPanel Margin="12,10" VerticalAlignment="Center" Spacing="6">
+                    <TextBlock Classes="portLabel" Text="{Binding Title}" />
+                    <TextBlock Classes="portState" Text="{Binding State}" />
+                    <TextBlock Classes="portState" Text="{Binding Detail}"
+                               Foreground="{StaticResource FgMainBrush}" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </TabItem>
+
+      <TabItem Header="Поиск">
+        <TextBlock Margin="16" Foreground="{StaticResource FgMutedBrush}"
+                   Text="Раздел появится следующим шагом." />
+      </TabItem>
+      <TabItem Header="Устройства">
+        <TextBlock Margin="16" Foreground="{StaticResource FgMutedBrush}"
+                   Text="Раздел появится следующим шагом." />
+      </TabItem>
+      <TabItem Header="Настройки">
+        <TextBlock Margin="16" Foreground="{StaticResource FgMutedBrush}"
+                   Text="Раздел появится следующим шагом." />
+      </TabItem>
+    </TabControl>
+
+    <Grid Grid.Row="3" Background="{StaticResource BgPanelBrush}"
+          ColumnDefinitions="Auto,*,Auto">
+      <TextBlock Grid.Column="0" Text="© BestCam" Margin="12,0" FontSize="11"
+                 VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
+      <TextBlock Grid.Column="2" x:Name="StatusText" Margin="12,0" FontSize="11"
+                 VerticalAlignment="Center" Foreground="{StaticResource BrandBrush}"
+                 Text="Мониторинг: запуск" />
+    </Grid>
+  </Grid>
+</Window>
