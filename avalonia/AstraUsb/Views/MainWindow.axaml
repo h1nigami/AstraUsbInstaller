@@ -1073,10 +1073,18 @@
                   <TextBlock Classes="hint"
                              Text="Панель показывает состояние отсеков, архив и журнал с телефона или компьютера в той же сети. Один адрес, одни данные, раскладка меняется по ширине экрана." />
                   <TextBlock Classes="hint" Foreground="{StaticResource WarnBrush}"
-                             Text="Соединение идёт без шифрования, поэтому панель годится только для локальной сети. Выключена по умолчанию: открытый порт на станции это решение того, кто её ставит." />
+                             Text="Панель выключена по умолчанию: открытый порт на станции это решение того, кто её ставит." />
 
                   <CheckBox Content="Открыть веб-панель"
                             IsChecked="{Binding Settings.WebEnabled}" />
+
+                  <CheckBox Content="Защищённое соединение"
+                            IsChecked="{Binding Settings.WebSsl}" />
+                  <TextBlock Classes="hint"
+                             Text="Сертификат станция выпускает себе сама, поэтому браузер при первом входе предупредит о недоверии. Пароль и записи при этом по сети открытым текстом не идут." />
+                  <TextBlock Text="{Binding Settings.WebFingerprint}" Classes="mono" FontSize="11"
+                             TextWrapping="Wrap" IsVisible="{Binding Settings.WebSsl}"
+                             Foreground="{StaticResource FgMutedBrush}" />
 
                   <StackPanel>
                     <TextBlock Text="ПОРТ" Classes="field" />
@@ -1145,6 +1153,45 @@
                  VerticalAlignment="Center" Foreground="{StaticResource Accent700Brush}"
                  />
     </Grid>
+
+    <!-- Просмотр записи. Снимки и журналы станция показывает сама: для них
+         кодеки не нужны, а видео и звук уходят системному проигрывателю. -->
+    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding Search.ViewerVisible}"
+            Background="#E6212D3B">
+      <Border Width="700" Height="480" Padding="16" CornerRadius="20"
+              HorizontalAlignment="Center" VerticalAlignment="Center"
+              Background="{StaticResource BgPanelBrush}"
+              BoxShadow="{StaticResource ShadowLg}">
+        <Grid RowDefinitions="Auto,*,Auto">
+          <StackPanel Grid.Row="0" Margin="0,0,0,10">
+            <TextBlock Text="{Binding Search.ViewerTitle}" Classes="h2" FontSize="16"
+                       TextTrimming="CharacterEllipsis" />
+            <TextBlock Text="{Binding Search.ViewerNote}" Classes="hint" />
+          </StackPanel>
+
+          <Border Grid.Row="1" Background="{StaticResource BgAppBrush}" CornerRadius="12"
+                  ClipToBounds="True">
+            <Grid>
+              <Image Source="{Binding Search.ViewerImage}" Stretch="Uniform"
+                     IsVisible="{Binding Search.ViewerHasImage}" Margin="8" />
+
+              <ScrollViewer IsVisible="{Binding Search.ViewerHasText}" Padding="12">
+                <TextBlock Text="{Binding Search.ViewerText}" Classes="mono" FontSize="12"
+                           TextWrapping="Wrap" />
+              </ScrollViewer>
+            </Grid>
+          </Border>
+
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" Margin="0,10,0,0"
+                      HorizontalAlignment="Right">
+            <Button Content="Открыть в системе" Height="46" FontSize="12"
+                    Command="{Binding Search.OpenExternallyCommand}" />
+            <Button Classes="primary" Content="Закрыть" Height="46" Width="140"
+                    Command="{Binding Search.CloseViewerCommand}" />
+          </StackPanel>
+        </Grid>
+      </Border>
+    </Border>
 
     <!-- Карточка отсека. Открывается нажатием по окну и не требует пароля:
          это работа сменного оператора, а не администратора. -->

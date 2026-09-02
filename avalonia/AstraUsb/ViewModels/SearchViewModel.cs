@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using AstraUsb.Services;
+using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -97,6 +98,24 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>Преобразование идёт: второй раз запускать не нужно.</summary>
     [ObservableProperty] private bool _converting;
 
+    /// <summary>Открыт ли просмотр записи поверх экрана.</summary>
+    [ObservableProperty] private bool _viewerVisible;
+
+    [ObservableProperty] private string _viewerTitle = "";
+    [ObservableProperty] private string _viewerNote = "";
+
+    /// <summary>Снимок для показа: фото станция умеет показывать сама.</summary>
+    [ObservableProperty] private Bitmap? _viewerImage;
+
+    /// <summary>Текст журнала регистратора: он тоже читается на месте.</summary>
+    [ObservableProperty] private string _viewerText = "";
+
+    public bool ViewerHasImage => ViewerImage is not null;
+    public bool ViewerHasText => ViewerText.Length > 0;
+
+    partial void OnViewerImageChanged(Bitmap? value) => OnPropertyChanged(nameof(ViewerHasImage));
+    partial void OnViewerTextChanged(string value) => OnPropertyChanged(nameof(ViewerHasText));
+
     /// <summary>Сколько строк отобрано: число выносится в подписи действий.</summary>
     public int SelectedCount => Results.Count(r => r.Selected);
 
@@ -158,8 +177,10 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Открывает запись тем, чем система открывает такие файлы. Своего
-    /// проигрывателя у станции нет: он потребовал бы кодеки в сборке.
+    /// Открывает запись. Снимки и журналы станция показывает сама: для них
+    /// кодеки не нужны. Видео и звук отдаются системному проигрывателю, потому
+    /// что свой потребовал бы кодеки в сборке и отдельную возню с каждым
+    /// форматом регистратора.
     /// </summary>
     [RelayCommand]
     private void Play()
@@ -170,12 +191,91 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
+        if (!File.Exists(file.Path))
+        {
+            Hint = "записи больше нет в архиве";
+            return;
+        }
+
+        CloseViewer();
+        ViewerTitle = file.FileName;
+
+        switch (file.Row.Kind)
+        {
+            case MediaKind.Photo:
+                try
+                {
+                    using var stream = File.OpenRead(file.Path);
+                    ViewerImage = new Bitmap(stream);
+                    ViewerNote = $"{file.Size}, снято {file.ShotAt}";
+                    ViewerVisible = true;
+                }
+                catch (Exception e)
+                {
+                    Hint = $"снимок не открылся: {e.Message}";
+                }
+                break;
+
+            case MediaKind.Log:
+                try
+                {
+                    // Журнал регистратора бывает на десятки мегабайт, а
+                    // оператору нужно начало: читаем первые страницы.
+                    var head = Read(file.Path, 64 * 1024);
+                    ViewerText = head.Length > 0 ? head : "файл пуст";
+                    ViewerNote = file.Size;
+                    ViewerVisible = true;
+                }
+                catch (Exception e)
+                {
+                    Hint = $"журнал не открылся: {e.Message}";
+                }
+                break;
+
+            default:
+                var result = MediaTools.Open(file.Path);
+                Hint = result.Ok
+                    ? $"{file.FileName} открыт системным проигрывателем"
+                    : result.Message;
+                break;
+        }
+
+        new ActionLog(_dbPath).Write(ActionLog.Export,
+            $"просмотр записи {Path.GetFileName(file.Path)}");
+    }
+
+    /// <summary>Отдаёт запись системному проигрывателю по просьбе оператора.</summary>
+    [RelayCommand]
+    private void OpenExternally()
+    {
+        if (Current is not { } file)
+            return;
+
         var result = MediaTools.Open(file.Path);
         Hint = result.Message;
+    }
 
-        if (result.Ok)
-            new ActionLog(_dbPath).Write(ActionLog.Export,
-                $"просмотр записи {Path.GetFileName(file.Path)}");
+    [RelayCommand]
+    private void CloseViewer()
+    {
+        ViewerVisible = false;
+        ViewerImage?.Dispose();
+        ViewerImage = null;
+        ViewerText = "";
+        ViewerNote = "";
+    }
+
+    /// <summary>Читает начало файла, не поднимая в память весь.</summary>
+    private static string Read(string path, int limit)
+    {
+        using var stream = File.OpenRead(path);
+        var buffer = new byte[Math.Min(limit, stream.Length)];
+        var read = stream.Read(buffer, 0, buffer.Length);
+        var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
+
+        return stream.Length > read
+            ? text + Environment.NewLine + Environment.NewLine + "… показано начало файла"
+            : text;
     }
 
     /// <summary>

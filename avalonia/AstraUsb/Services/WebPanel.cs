@@ -49,7 +49,21 @@ public sealed class WebPanel : IDisposable
         {
             var builder = WebApplication.CreateSlimBuilder();
             builder.Logging.ClearProviders();
-            builder.WebHost.UseUrls($"http://0.0.0.0:{Port(settings)}");
+
+            var certificate = settings.WebSsl ? PanelCertificate.Load() : null;
+            if (settings.WebSsl && certificate is null)
+                CrashLog.Write("панель поднимается без шифрования: сертификат не выпущен", null);
+
+            var port = Port(settings);
+            if (certificate is not null)
+            {
+                builder.WebHost.ConfigureKestrel(options =>
+                    options.ListenAnyIP(port, listen => listen.UseHttps(certificate)));
+            }
+            else
+            {
+                builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+            }
 
             var app = builder.Build();
             Map(app, settings);

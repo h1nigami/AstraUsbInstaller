@@ -84,6 +84,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         if (Section == "ftp")
             ShowQueueState();
+
+        if (Section == "web" && WebEnabled && WebSsl)
+            WebFingerprint = PanelCertificate.Fingerprint();
     }
 
     [ObservableProperty] private int _lockTimeoutMinutes;
@@ -101,6 +104,8 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty] private bool _webEnabled;
     [ObservableProperty] private int _webPort = 8080;
+    [ObservableProperty] private bool _webSsl;
+    [ObservableProperty] private string _webFingerprint = "";
     [ObservableProperty] private string _webState = "";
 
     [ObservableProperty] private bool _sqlEnabled;
@@ -160,6 +165,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         WebEnabled = _settings.WebEnabled;
         WebPort = _settings.WebPort;
+        WebSsl = _settings.WebSsl;
         SqlEnabled = _settings.SqlEnabled;
         SqlKindIndex = Math.Max(0, Array.IndexOf(SqlKinds, _settings.SqlKind));
         SqlHost = _settings.SqlHost;
@@ -239,10 +245,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void SaveWeb()
     {
         var wanted = WebPort is > 0 and < 65536 ? WebPort : 8080;
-        var changed = _settings.WebEnabled != WebEnabled || _settings.WebPort != wanted;
+        var changed = _settings.WebEnabled != WebEnabled
+                      || _settings.WebPort != wanted
+                      || _settings.WebSsl != WebSsl;
 
         _settings.WebEnabled = WebEnabled;
         _settings.WebPort = wanted;
+        _settings.WebSsl = WebSsl;
         WebPort = wanted;
 
         if (!_settings.Save())
@@ -260,8 +269,11 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
 
         WebState = WebEnabled
-            ? $"после перезапуска панель откроется на порту {wanted}"
+            ? $"после перезапуска панель откроется по адресу "
+              + $"{(WebSsl ? "https" : "http")}://адрес-станции:{wanted}"
             : "панель выключена";
+
+        WebFingerprint = WebEnabled && WebSsl ? PanelCertificate.Fingerprint() : "";
 
         Hint = "параметры панели сохранены";
     }
