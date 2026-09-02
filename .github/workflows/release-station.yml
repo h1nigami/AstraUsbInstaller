@@ -107,28 +107,37 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Сборка установщика
-        shell: bash
+        # Шаг идёт на PowerShell: в bash ключи ISCC вида /D и /O
+        # превращаются в пути, и компилятор считает их вторым именем скрипта.
+        shell: pwsh
         env:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
           PUBLISHED: ${{ github.event.release.published_at }}
         run: |
-          set -e
-          DATE="${PUBLISHED:0:10}"
-          [ -n "$DATE" ] || DATE="$(date +%F)"
+          $tag = $env:TAG
+          $date = if ($env:PUBLISHED) { $env:PUBLISHED.Substring(0, 10) }
+                  else { Get-Date -Format 'yyyy-MM-dd' }
 
-          dotnet publish avalonia/AstraUsb/AstraUsb.csproj             -c Release -r win-x64 --self-contained true             -p:PublishSingleFile=false -o avalonia/windows/payload
+          dotnet publish avalonia/AstraUsb/AstraUsb.csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=false -o avalonia/windows/payload
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
-          echo "$TAG $DATE" > avalonia/windows/payload/VERSION
+          [IO.File]::WriteAllText("$PWD/avalonia/windows/payload/VERSION", "$tag $date`n")
 
-          # Номер версии установщика должен быть числовым, а тег приходит
-          # с буквой: «v2.0.1» превращается в «2.0.1».
-          NUM="${TAG#v}"
+          # Номер версии установщика числовой, а тег приходит с буквой.
+          $number = $tag.TrimStart('v')
+          $name = "BestCamStationSetup-$tag"
+          New-Item -ItemType Directory -Force dist | Out-Null
 
-          choco install innosetup --no-progress -y
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe"             "/DAppVersion=$NUM"             "/O$(pwd)/dist"             "/FBestCamStationSetup-$TAG"             avalonia/windows/setup.iss
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$number" "/O$PWD\dist" "/F$name" `
+            "avalonia\windows\setup.iss"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
 
-          cd dist && sha256sum "BestCamStationSetup-$TAG.exe"             > "BestCamStationSetup-$TAG.exe.sha256"
-          ls -la
+          $sum = (Get-FileHash "dist\$name.exe" -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD/dist/$name.exe.sha256", "$sum  $name.exe`n")
+          Get-ChildItem dist | Format-Table Name, Length
 
       - name: Прикрепить к релизу
         if: github.event_name == 'release'
