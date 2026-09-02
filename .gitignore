@@ -6,3 +6,6 @@ data/
 !data/LOGO-1.png
 *.db
 VERSION
+
+# служебные каталоги помощников
+.claude/
