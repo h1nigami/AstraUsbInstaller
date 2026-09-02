@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:AstraUsb.ViewModels"
+        xmlns:svc="clr-namespace:AstraUsb.Services"
         x:Class="AstraUsb.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="BestCam USB Backup Manager"
@@ -158,12 +159,178 @@
                    Text="Раздел появится следующим шагом." />
       </TabItem>
       <TabItem Header="УСТРОЙСТВА">
-        <TextBlock Margin="16" Foreground="{StaticResource FgMutedBrush}"
-                   Text="Раздел появится следующим шагом." />
+        <Grid RowDefinitions="*,Auto" Margin="10,8">
+          <!-- Панель управления прижата к низу и получает место раньше списка:
+               на экране 1024x600 иначе она уезжает за край. -->
+          <Border Grid.Row="0" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                  CornerRadius="2" Background="{StaticResource BgPanelBrush}">
+            <ListBox ItemsSource="{Binding Devices.Devices}"
+                     SelectedItem="{Binding Devices.Selected}"
+                     Background="Transparent" BorderThickness="0">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:DeviceRow">
+                  <Grid ColumnDefinitions="90,160,*,140,120" Height="30">
+                    <TextBlock Grid.Column="0" Text="{Binding Display}"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               FontWeight="Bold" VerticalAlignment="Center"
+                               Foreground="{StaticResource BrandBrush}" />
+                    <TextBlock Grid.Column="1" Text="{Binding Employee}"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMainBrush}" />
+                    <TextBlock Grid.Column="2" Text="{Binding Department}"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Grid.Column="3" Text="{Binding LastSeen}"
+                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                               FontSize="11" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBlock Grid.Column="4" Text="{Binding Label}"
+                               FontSize="11" VerticalAlignment="Center"
+                               Foreground="{StaticResource FgMutedBrush}" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </Border>
+
+          <StackPanel Grid.Row="1" Spacing="6" Margin="0,8,0,0">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <TextBlock Text="Имя камеры" VerticalAlignment="Center"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <TextBox Text="{Binding Devices.NameInput}" Width="200" />
+              <Button Content="Переименовать" Command="{Binding Devices.RenameCommand}" />
+              <TextBlock Text="Сотрудник" VerticalAlignment="Center" Margin="12,0,0,0"
+                         Foreground="{StaticResource FgMutedBrush}" />
+              <ComboBox ItemsSource="{Binding Devices.Employees}"
+                        SelectedItem="{Binding Devices.EmployeeInput}" Width="190">
+                <ComboBox.ItemTemplate>
+                  <DataTemplate x:DataType="svc:Employee">
+                    <TextBlock Text="{Binding FullName}" />
+                  </DataTemplate>
+                </ComboBox.ItemTemplate>
+              </ComboBox>
+              <Button Content="Закрепить" Command="{Binding Devices.AssignCommand}" />
+              <Button Content="Обновить" Command="{Binding Devices.ReloadCommand}" />
+            </StackPanel>
+            <TextBlock Text="{Binding Devices.Hint}" FontSize="11"
+                       Foreground="{StaticResource BrandBrush}" />
+          </StackPanel>
+        </Grid>
       </TabItem>
       <TabItem Header="НАСТРОЙКИ">
-        <TextBlock Margin="16" Foreground="{StaticResource FgMutedBrush}"
-                   Text="Раздел появится следующим шагом." />
+        <ScrollViewer>
+          <Grid ColumnDefinitions="*,*" Margin="10,8">
+
+            <StackPanel Grid.Column="0" Spacing="8" Margin="0,0,6,0">
+              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="ХРАНИЛИЩЕ" FontSize="11" LetterSpacing="1.6"
+                             Foreground="{StaticResource BrandBrush}" />
+                  <TextBlock Text="Папка для копий" FontSize="11"
+                             Foreground="{StaticResource FgMutedBrush}" />
+                  <TextBox Text="{Binding Settings.BackupRoot}" />
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Оставлять свободными, ГБ" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                    <TextBox Text="{Binding Settings.MinFreeGb}" Width="70" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Text="Когда место кончается" VerticalAlignment="Center"
+                               FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                    <ComboBox ItemsSource="{Binding Settings.StorageModes}"
+                              SelectedIndex="{Binding Settings.StorageModeIndex}" Width="190" />
+                  </StackPanel>
+                  <CheckBox Content="Удалять видео с камеры после загрузки"
+                            IsChecked="{Binding Settings.DeleteVideoAfterCopy}" />
+                  <Button Content="Сохранить" Command="{Binding Settings.SaveStorageCommand}"
+                          HorizontalAlignment="Left" />
+                </StackPanel>
+              </Border>
+
+              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="СОТРУДНИКИ И ОТДЕЛЫ" FontSize="11" LetterSpacing="1.6"
+                             Foreground="{StaticResource BrandBrush}" />
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBox Text="{Binding Settings.DepartmentName}" Width="180"
+                             Watermark="название отдела" />
+                    <Button Content="Добавить отдел"
+                            Command="{Binding Settings.AddDepartmentCommand}" />
+                  </StackPanel>
+                  <StackPanel Orientation="Horizontal" Spacing="6">
+                    <TextBox Text="{Binding Settings.EmployeeName}" Width="150"
+                             Watermark="фамилия и инициалы" />
+                    <TextBox Text="{Binding Settings.EmployeeNo}" Width="80"
+                             Watermark="номер" />
+                    <ComboBox ItemsSource="{Binding Settings.Departments}"
+                              SelectedItem="{Binding Settings.EmployeeDepartment}" Width="140">
+                      <ComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="svc:Department">
+                          <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                      </ComboBox.ItemTemplate>
+                    </ComboBox>
+                  </StackPanel>
+                  <Button Content="Добавить сотрудника"
+                          Command="{Binding Settings.AddEmployeeCommand}"
+                          HorizontalAlignment="Left" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Column="1" Spacing="8" Margin="6,0,0,0">
+              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="РАЗМЕТКА ГНЁЗД" FontSize="11" LetterSpacing="1.6"
+                             Foreground="{StaticResource BrandBrush}" />
+                  <TextBlock FontSize="11" TextWrapping="Wrap"
+                             Foreground="{StaticResource FgMutedBrush}"
+                             Text="Вставьте камеру в размечаемый отсек, оставив её единственной подключённой, и нажмите «Сопоставить» напротив нужного окна." />
+                  <ItemsControl ItemsSource="{Binding Settings.Slots}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="vm:SlotRow">
+                        <Grid ColumnDefinitions="70,*,110" Height="26">
+                          <TextBlock Grid.Column="0" Text="{Binding SlotLabel}" FontSize="11"
+                                     VerticalAlignment="Center"
+                                     Foreground="{StaticResource FgMainBrush}" />
+                          <TextBlock Grid.Column="1" Text="{Binding PortLabel}" FontSize="11"
+                                     FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                                     VerticalAlignment="Center"
+                                     Foreground="{StaticResource FgMutedBrush}" />
+                          <Button Grid.Column="2" Content="Сопоставить" FontSize="10"
+                                  Padding="8,2"
+                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).MapSlotCommand}"
+                                  CommandParameter="{Binding}" />
+                        </Grid>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                  <Button Content="Снять разметку"
+                          Command="{Binding Settings.ClearSlotsCommand}"
+                          HorizontalAlignment="Left" />
+                </StackPanel>
+              </Border>
+
+              <Border BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+                      CornerRadius="2" Padding="10" Background="{StaticResource BgPanelBrush}">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="О ПРОГРАММЕ" FontSize="11" LetterSpacing="1.6"
+                             Foreground="{StaticResource BrandBrush}" />
+                  <TextBlock Text="BestCam USB Backup Manager" FontSize="12"
+                             Foreground="{StaticResource FgMainBrush}" />
+                  <TextBlock Text="{Binding Version}" FontSize="11"
+                             Foreground="{StaticResource FgMutedBrush}" />
+                </StackPanel>
+              </Border>
+
+              <TextBlock Text="{Binding Settings.Hint}" FontSize="11" TextWrapping="Wrap"
+                         Foreground="{StaticResource BrandBrush}" />
+            </StackPanel>
+          </Grid>
+        </ScrollViewer>
       </TabItem>
     </TabControl>
 

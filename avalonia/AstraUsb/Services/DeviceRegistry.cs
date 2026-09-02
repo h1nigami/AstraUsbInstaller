@@ -244,5 +244,77 @@ public sealed class DeviceRegistry : IDisposable
         return result is DBNull ? null : result;
     }
 
+/// <summary>Все известные камеры для вкладки «Устройства».</summary>
+    public IReadOnlyList<DeviceRecord> ListDevices()
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = """
+            SELECT d.id, d.serial, d.label, COALESCE(d.name, ''),
+                   d.first_seen, d.last_seen,
+                   COALESCE(e.full_name, ''), e.department_id
+            FROM devices d
+            LEFT JOIN employees e ON e.id = d.employee_id
+            ORDER BY d.id
+            """;
+
+        var list = new List<DeviceRecord>();
+        try
+        {
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                list.Add(new DeviceRecord(
+                    reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                    reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                    reader.GetString(6),
+                    reader.IsDBNull(7) ? null : reader.GetInt64(7)));
+            }
+        }
+        catch (SqliteException)
+        {
+            // Справочник сотрудников ещё не создан — читаем без него.
+            return ListDevicesWithoutStaff();
+        }
+        return list;
+    }
+
+    private IReadOnlyList<DeviceRecord> ListDevicesWithoutStaff()
+    {
+        using var cmd = _db.CreateCommand();
+        cmd.CommandText = """
+            SELECT id, serial, label, COALESCE(name, ''), first_seen, last_seen
+            FROM devices ORDER BY id
+            """;
+
+        var list = new List<DeviceRecord>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new DeviceRecord(
+                reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                reader.GetString(3), reader.GetString(4), reader.GetString(5), "", null));
+        }
+        return list;
+    }
+
+    /// <summary>Задаёт камере человекочитаемое имя. Папка бэкапа не меняется.</summary>
+    public void Rename(long deviceId, string name)
+    {
+        Execute("UPDATE devices SET name = $name WHERE id = $id",
+            ("$name", name), ("$id", deviceId));
+    }
+
     public void Dispose() => _db.Dispose();
 }
+
+/// <summary>Строка вкладки «Устройства».</summary>
+public sealed record DeviceRecord(
+    long Id,
+    string Serial,
+    string Label,
+    string Name,
+    string FirstSeen,
+    string LastSeen,
+    string EmployeeName,
+    long? DepartmentId);
+

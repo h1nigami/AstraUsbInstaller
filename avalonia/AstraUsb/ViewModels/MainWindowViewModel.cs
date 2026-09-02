@@ -23,6 +23,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
+    /// <summary>Вкладка «Устройства».</summary>
+    public DevicesViewModel Devices { get; } = new();
+
+    /// <summary>Вкладка «Настройки».</summary>
+    public SettingsViewModel Settings { get; } = new();
+
     [ObservableProperty]
     private string _clockTime = "--:--:--";
 
