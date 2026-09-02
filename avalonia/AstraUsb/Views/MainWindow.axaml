@@ -279,57 +279,104 @@
       </TabItem>
 
       <TabItem Header="ЗАПРОС ДАННЫХ">
-        <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="10,8">
+        <Grid RowDefinitions="Auto,*,Auto" Margin="10,8">
 
-          <!-- Условия отбора. Два ряда: в один на экране станции они не
-               помещаются, а прятать их за кнопкой значит спрятать главное. -->
-          <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
-            <TextBlock Text="Загружено" FontSize="11" VerticalAlignment="Center"
-                       Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Search.From}" Width="98" Height="40" />
-            <TextBox Text="{Binding Search.To}" Width="98" Height="40" />
+          <!-- Панель условий по макету: поверхность со скруглением 30, поля в
+               сетке от 210 точек на колонку, подпись над полем капсом. -->
+          <Border Grid.Row="0" Background="{StaticResource BgSurfaceBrush}"
+                  CornerRadius="24" Padding="14,12" Margin="0,0,0,8">
+            <StackPanel Spacing="10">
+              <UniformGrid Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
+                <StackPanel Margin="0,0,10,0">
+                  <TextBlock Text="ОТДЕЛ" Classes="field" />
+                  <ComboBox Classes="form" ItemsSource="{Binding Search.Departments}"
+                            SelectedItem="{Binding Search.Department}"
+                            HorizontalAlignment="Stretch">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:DepartmentRow">
+                        <TextBlock Text="{Binding Path}" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
 
-            <TextBlock Text="Снято" FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"
-                       Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Search.ShotFrom}" Width="94" Height="40"
-                     Watermark="любое" />
-            <TextBox Text="{Binding Search.ShotTo}" Width="94" Height="40"
-                     Watermark="любое" />
+                <StackPanel Margin="0,0,10,0">
+                  <TextBlock Text="ТАБЕЛЬНЫЙ НОМЕР" Classes="field" />
+                  <TextBox Classes="form" Text="{Binding Search.PersonnelNo}"
+                           Watermark="например 10482" />
+                </StackPanel>
 
-            <ComboBox ItemsSource="{Binding Search.Kinds}"
-                      SelectedIndex="{Binding Search.KindIndex}" Width="100" Height="40" />
+                <StackPanel>
+                  <TextBlock Text="СОТРУДНИК" Classes="field" />
+                  <TextBox Classes="form" Text="{Binding Search.EmployeeName}"
+                           Watermark="фамилия" />
+                </StackPanel>
+              </UniformGrid>
 
-            <CheckBox Content="защищённые" FontSize="11" MinHeight="40"
-                      IsChecked="{Binding Search.ProtectedOnly}" />
-          </StackPanel>
+              <UniformGrid Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
+                <StackPanel Margin="0,0,10,0">
+                  <TextBlock Text="НОМЕР УСТРОЙСТВА" Classes="field" />
+                  <TextBox Classes="form" Text="{Binding Search.Camera}"
+                           Watermark="BCU-01-0001" />
+                </StackPanel>
 
-          <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Margin="0,0,0,6">
-            <ComboBox ItemsSource="{Binding Search.Departments}"
-                      SelectedItem="{Binding Search.Department}" Width="150" Height="40">
-              <ComboBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:DepartmentRow">
-                  <TextBlock Text="{Binding Path}" />
-                </DataTemplate>
-              </ComboBox.ItemTemplate>
-            </ComboBox>
-            <TextBox Text="{Binding Search.PersonnelNo}" Width="96" Height="40"
-                     Watermark="табельный" Classes="mono" />
-            <TextBox Text="{Binding Search.EmployeeName}" Width="120" Height="40"
-                     Watermark="сотрудник" />
-            <TextBox Text="{Binding Search.Camera}" Width="104" Height="40"
-                     Watermark="устройство" />
-            <TextBox Text="{Binding Search.FileName}" Width="104" Height="40"
-                     Watermark="имя файла" />
-            <Button Classes="primary" Content="Запрос" Height="40" FontSize="12"
-                    IsEnabled="{Binding !Search.Searching}"
-                    Command="{Binding Search.SearchCommand}" />
-            <Button Content="Сброс" Height="40" FontSize="12"
-                    Command="{Binding Search.ResetCommand}" />
-          </StackPanel>
+                <StackPanel Margin="0,0,10,0">
+                  <TextBlock Text="ИМЯ ФАЙЛА" Classes="field" />
+                  <TextBox Classes="form" Text="{Binding Search.FileName}"
+                           Watermark="VID_" />
+                </StackPanel>
 
-          <Border Grid.Row="2" Classes="card">
-            <Grid RowDefinitions="22,*">
-              <Grid Grid.Row="0" ColumnDefinitions="30,84,*,64,58,80,74,58" Margin="10,5,10,0">
+                <StackPanel>
+                  <TextBlock Text="ОТБОР" Classes="field" />
+                  <CheckBox Content="только защищённые" FontSize="12" MinHeight="52"
+                            IsChecked="{Binding Search.ProtectedOnly}" />
+                </StackPanel>
+              </UniformGrid>
+
+              <UniformGrid Columns="3">
+                <StackPanel Margin="0,0,10,0">
+                  <TextBlock Text="ЗАГРУЖЕНО В СТАНЦИЮ" Classes="field" />
+                  <Grid ColumnDefinitions="*,10,*">
+                    <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.From}" />
+                    <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.To}" />
+                  </Grid>
+                </StackPanel>
+
+                <StackPanel Margin="0,0,10,0">
+                  <TextBlock Text="ВРЕМЯ СЪЁМКИ" Classes="field" />
+                  <Grid ColumnDefinitions="*,10,*">
+                    <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.ShotFrom}"
+                             Watermark="любое" />
+                    <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.ShotTo}"
+                             Watermark="любое" />
+                  </Grid>
+                </StackPanel>
+
+                <StackPanel>
+                  <TextBlock Text="ТИП ФАЙЛА" Classes="field" />
+                  <ComboBox Classes="form" ItemsSource="{Binding Search.Kinds}"
+                            SelectedIndex="{Binding Search.KindIndex}"
+                            HorizontalAlignment="Stretch" />
+                </StackPanel>
+              </UniformGrid>
+
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="primary" Content="Запрос" Height="52" Width="140"
+                        IsEnabled="{Binding !Search.Searching}"
+                        Command="{Binding Search.SearchCommand}" />
+                <Button Content="Сброс" Height="52" Width="110"
+                        Command="{Binding Search.ResetCommand}" />
+                <Button Content="{Binding Search.FiltersLabel}" Height="52" FontSize="12"
+                        Command="{Binding Search.ToggleFiltersCommand}" />
+                <TextBlock Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
+                           Foreground="{StaticResource Accent700Brush}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Grid.Row="1" Classes="card">
+            <Grid RowDefinitions="26,*">
+              <Grid Grid.Row="0" ColumnDefinitions="34,96,*,66,62,96,84,70" Margin="12,7,12,0">
                 <TextBlock Grid.Column="1" Text="УСТРОЙСТВО" Classes="label" />
                 <TextBlock Grid.Column="2" Text="ФАЙЛ" Classes="label" />
                 <TextBlock Grid.Column="3" Text="ТИП" Classes="label" />
@@ -343,14 +390,14 @@
                        SelectedItem="{Binding Search.Current}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:FoundFile">
-                    <Grid ColumnDefinitions="30,84,*,64,58,80,74,58" Height="30">
-                      <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="28"
+                    <Grid ColumnDefinitions="34,96,*,66,62,96,84,70" Height="34">
+                      <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="30"
                                 VerticalAlignment="Center" />
                       <TextBlock Grid.Column="1" Text="{Binding Camera}" Classes="mono"
                                  FontSize="11" VerticalAlignment="Center"
                                  TextTrimming="CharacterEllipsis"
                                  Foreground="{StaticResource Accent700Brush}" />
-                      <TextBlock Grid.Column="2" Text="{Binding FileName}" FontSize="11"
+                      <TextBlock Grid.Column="2" Text="{Binding FileName}" FontSize="12"
                                  VerticalAlignment="Center"
                                  TextTrimming="CharacterEllipsis" />
                       <TextBlock Grid.Column="3" Text="{Binding Kind}" FontSize="11"
@@ -376,29 +423,22 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="3" Spacing="6" Margin="0,6,0,0">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="Отобрать все" Height="40" FontSize="12"
-                      Command="{Binding Search.SelectAllCommand}" />
-              <TextBox Text="{Binding Search.NoteInput}" Width="200" Height="40"
-                       Watermark="заметка к записям" />
-              <Button Content="Заметка" Height="40" FontSize="12"
-                      Command="{Binding Search.SaveNoteCommand}" />
-              <Button Content="Защита" Height="40" FontSize="12"
-                      Command="{Binding Search.ToggleImportantCommand}" />
-              <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="40"
-                      FontSize="12" Command="{Binding Search.DeleteCommand}" />
-            </StackPanel>
-
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBox Text="{Binding Search.ExportTarget}" Width="300" Height="40"
-                       Watermark="куда выгрузить: папка или флешка" />
-              <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="40"
-                      FontSize="12" IsEnabled="{Binding !Search.Exporting}"
-                      Command="{Binding Search.ExportCommand}" />
-              <TextBlock Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
-                         Foreground="{StaticResource Accent700Brush}" />
-            </StackPanel>
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
+            <Button Content="Отобрать все" Height="46" FontSize="12"
+                    Command="{Binding Search.SelectAllCommand}" />
+            <TextBox Text="{Binding Search.NoteInput}" Width="150" Height="46"
+                     Watermark="заметка" />
+            <Button Content="Заметка" Height="46" FontSize="12"
+                    Command="{Binding Search.SaveNoteCommand}" />
+            <Button Content="Защита" Height="46" FontSize="12"
+                    Command="{Binding Search.ToggleImportantCommand}" />
+            <TextBox Text="{Binding Search.ExportTarget}" Width="150" Height="46"
+                     Watermark="куда выгрузить" />
+            <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="46"
+                    FontSize="12" IsEnabled="{Binding !Search.Exporting}"
+                    Command="{Binding Search.ExportCommand}" />
+            <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="46"
+                    FontSize="12" Command="{Binding Search.DeleteCommand}" />
           </StackPanel>
         </Grid>
       </TabItem>
@@ -678,68 +718,74 @@
 
               <!-- Станция и хранилище -->
               <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
-                <StackPanel Spacing="10">
+                <StackPanel Spacing="14">
                   <TextBlock Text="Станция и хранилище" Classes="section" />
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Номер станции" Classes="field" />
-                    <NumericUpDown Value="{Binding Settings.StationNumber}" Width="112"
-                                   Minimum="0" Maximum="99" FormatString="0" />
-                    <TextBlock Classes="hint" VerticalAlignment="Center"
-                               Text="входит в номера камер" />
-                  </StackPanel>
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="НОМЕР СТАНЦИИ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.StationNumber}" />
+                      <TextBlock Classes="hint" Margin="0,4,0,0"
+                                 Text="входит в номера, которые станция выдаёт камерам" />
+                    </StackPanel>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Окон сбора" Classes="field" />
-                    <NumericUpDown Value="{Binding Settings.BayCount}" Width="112"
-                                   Minimum="6" Maximum="30" FormatString="0" />
-                    <Button Classes="compact" Content="Применить"
-                            Command="{Binding Settings.SaveBayCountCommand}" />
-                  </StackPanel>
+                    <StackPanel>
+                      <TextBlock Text="ОКОН СБОРА" Classes="field" />
+                      <Grid ColumnDefinitions="*,8,Auto">
+                        <TextBox Grid.Column="0" Classes="form"
+                                 Text="{Binding Settings.BayCount}" />
+                        <Button Grid.Column="2" Content="Применить" Height="52"
+                                Command="{Binding Settings.SaveBayCountCommand}" />
+                      </Grid>
+                      <TextBlock Classes="hint" Margin="0,4,0,0"
+                                 Text="от 6 до 30, вступает в силу после перезапуска" />
+                    </StackPanel>
+                  </UniformGrid>
 
                   <TextBlock IsVisible="{Binding Settings.RestartNeeded}" Classes="hint"
                              Foreground="{StaticResource WarnBrush}"
                              Text="Число окон изменено. Перезапустите программу, чтобы доска перестроилась." />
 
-                  <StackPanel Spacing="4">
-                    <TextBlock Text="ПАПКА АРХИВА" Classes="label" />
-                    <TextBox Text="{Binding Settings.BackupRoot}" />
+                  <StackPanel>
+                    <TextBlock Text="ПАПКА АРХИВА" Classes="field" />
+                    <TextBox Classes="form" Text="{Binding Settings.BackupRoot}" />
                     <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}" Classes="hint"
-                               Foreground="{StaticResource WarnBrush}"
+                               Margin="0,4,0,0" Foreground="{StaticResource WarnBrush}"
                                Text="Архив на системном разделе. Выберите отдельный диск: системный переполнится записями." />
                   </StackPanel>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Оставлять свободными, ГБ" Classes="field" />
-                    <NumericUpDown Value="{Binding Settings.MinFreeGb}" Width="112"
-                                   Minimum="1" Maximum="4096" FormatString="0" />
-                  </StackPanel>
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="ОСТАВЛЯТЬ СВОБОДНЫМИ, ГБ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.MinFreeGb}" />
+                    </StackPanel>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Когда место кончается" Classes="field" />
-                    <ComboBox ItemsSource="{Binding Settings.StorageModes}"
-                              SelectedIndex="{Binding Settings.StorageModeIndex}" Width="220" />
-                  </StackPanel>
+                    <StackPanel>
+                      <TextBlock Text="ХРАНИТЬ ЗАПИСИ, ДНЕЙ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.KeepDays}" />
+                      <TextBlock Classes="hint" Margin="0,4,0,0" Text="0 хранит бессрочно" />
+                    </StackPanel>
+                  </UniformGrid>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Хранить записи, дней" Classes="field" />
-                    <NumericUpDown Value="{Binding Settings.KeepDays}" Width="112"
-                                   Minimum="0" Maximum="3650" FormatString="0" />
-                    <TextBlock Classes="hint" VerticalAlignment="Center"
-                               Text="0 хранит бессрочно" />
+                  <StackPanel>
+                    <TextBlock Text="КОГДА МЕСТО КОНЧАЕТСЯ" Classes="field" />
+                    <ComboBox Classes="form" HorizontalAlignment="Stretch"
+                              ItemsSource="{Binding Settings.StorageModes}"
+                              SelectedIndex="{Binding Settings.StorageModeIndex}" />
                   </StackPanel>
 
                   <CheckBox Content="Удалять видео с регистратора после подтверждённой загрузки"
                             IsChecked="{Binding Settings.DeleteVideoAfterCopy}" />
 
-                  <Button Classes="primary" Content="Сохранить" HorizontalAlignment="Left"
+                  <Button Classes="primary" Content="Сохранить" Height="52" Width="180"
+                          HorizontalAlignment="Left"
                           Command="{Binding Settings.SaveStorageCommand}" />
                 </StackPanel>
               </ScrollViewer>
 
               <!-- Доступ -->
               <ScrollViewer Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
-                <StackPanel Spacing="10">
+                <StackPanel Spacing="14">
                   <TextBlock Text="Доступ" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Учётной записью администратора закрыты выход из программы и все разделы, кроме сбора данных." />
@@ -747,41 +793,49 @@
                              Foreground="{StaticResource WarnBrush}"
                              Text="Пароль ещё не меняли: станция открывается стандартным из задания." />
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Учётная запись" Classes="field" />
-                    <TextBox Text="{Binding Settings.AdminAccount}" Width="220" />
-                  </StackPanel>
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="field" />
+                      <TextBox Classes="form" Text="{Binding Settings.AdminAccount}" />
+                    </StackPanel>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Текущий пароль" Classes="field" />
-                    <TextBox Text="{Binding Settings.CurrentPassword}" Width="220"
-                             PasswordChar="●" />
-                  </StackPanel>
+                    <StackPanel>
+                      <TextBlock Text="ТЕКУЩИЙ ПАРОЛЬ" Classes="field" />
+                      <TextBox Classes="form" PasswordChar="●"
+                               Text="{Binding Settings.CurrentPassword}" />
+                    </StackPanel>
+                  </UniformGrid>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Новый пароль" Classes="field" />
-                    <TextBox Text="{Binding Settings.NewPassword}" Width="220"
-                             PasswordChar="●" />
-                  </StackPanel>
+                  <UniformGrid Columns="2">
+                    <StackPanel Margin="0,0,12,0">
+                      <TextBlock Text="НОВЫЙ ПАРОЛЬ" Classes="field" />
+                      <TextBox Classes="form" PasswordChar="●"
+                               Text="{Binding Settings.NewPassword}" />
+                    </StackPanel>
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Повторите новый" Classes="field" />
-                    <TextBox Text="{Binding Settings.RepeatPassword}" Width="220"
-                             PasswordChar="●" />
-                  </StackPanel>
+                    <StackPanel>
+                      <TextBlock Text="ПОВТОРИТЕ НОВЫЙ" Classes="field" />
+                      <TextBox Classes="form" PasswordChar="●"
+                               Text="{Binding Settings.RepeatPassword}" />
+                    </StackPanel>
+                  </UniformGrid>
 
-                  <Button Classes="primary" Content="Сменить пароль" HorizontalAlignment="Left"
+                  <Button Classes="primary" Content="Сменить пароль" Height="52" Width="220"
+                          HorizontalAlignment="Left"
                           Command="{Binding Settings.ChangePasswordCommand}" />
 
                   <Border Height="1" Background="{StaticResource LineBrush}" Margin="0,4" />
 
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Text="Закрывать разделы через" Classes="field" />
-                    <NumericUpDown Value="{Binding Settings.LockTimeoutMinutes}" Width="112"
-                                   Minimum="0" Maximum="240" Increment="5" FormatString="0" />
-                    <TextBlock Classes="hint" VerticalAlignment="Center" Text="мин простоя" />
-                    <Button Classes="compact" Content="Сохранить"
-                            Command="{Binding Settings.SaveLockTimeoutCommand}" />
+                  <StackPanel>
+                    <TextBlock Text="ЗАКРЫВАТЬ РАЗДЕЛЫ ЧЕРЕЗ, МИН ПРОСТОЯ" Classes="field" />
+                    <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
+                      <TextBox Grid.Column="0" Classes="form"
+                               Text="{Binding Settings.LockTimeoutMinutes}" />
+                      <Button Grid.Column="2" Content="Сохранить" Height="52"
+                              Command="{Binding Settings.SaveLockTimeoutCommand}" />
+                    </Grid>
+                    <TextBlock Classes="hint" Margin="0,4,0,0"
+                               Text="0 отключает закрытие по простою" />
                   </StackPanel>
                 </StackPanel>
               </ScrollViewer>

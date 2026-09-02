@@ -70,6 +70,17 @@ public sealed partial class SearchViewModel : ObservableObject
     [ObservableProperty] private DepartmentRow? _department;
 
     [ObservableProperty] private string _hint = "укажите условия и нажмите «Запрос»";
+
+    /// <summary>
+    /// Развёрнуты ли дополнительные условия. На экране станции все условия
+    /// сразу занимают больше половины высоты и не оставляют места найденному,
+    /// поэтому обычно видны период и род файла, а остальное по требованию.
+    /// </summary>
+    [ObservableProperty] private bool _filtersExpanded;
+
+    public string FiltersLabel => FiltersExpanded ? "Свернуть условия" : "Ещё условия";
+
+    partial void OnFiltersExpandedChanged(bool value) => OnPropertyChanged(nameof(FiltersLabel));
     [ObservableProperty] private bool _searching;
     [ObservableProperty] private bool _exporting;
 
@@ -192,6 +203,9 @@ public sealed partial class SearchViewModel : ObservableObject
                 Searching = false;
         }
     }
+
+    [RelayCommand]
+    private void ToggleFilters() => FiltersExpanded = !FiltersExpanded;
 
     [RelayCommand]
     private void Reset()

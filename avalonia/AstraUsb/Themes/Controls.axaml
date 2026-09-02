@@ -122,12 +122,29 @@
     <Setter Property="Foreground" Value="{StaticResource Accent700Brush}" />
   </Style>
 
-  <!-- Подпись поля в форме: одна ширина на все, иначе поля разъезжаются -->
+  <!--
+    Подпись поля. В макете она стоит над полем капсом, 12 точек, полужирная,
+    с разрядкой: подпись слева от поля там не встречается ни разу.
+  -->
   <Style Selector="TextBlock.field">
     <Setter Property="FontSize" Value="12" />
-    <Setter Property="Width" Value="150" />
-    <Setter Property="VerticalAlignment" Value="Center" />
-    <Setter Property="Foreground" Value="{StaticResource FgMutedBrush}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LetterSpacing" Value="0.5" />
+    <Setter Property="Margin" Value="0,0,0,6" />
+    <Setter Property="Foreground" Value="{StaticResource Neutral700Brush}" />
+  </Style>
+
+  <!-- Поле формы по макету: высота 52 под палец, белый фон, крупный текст -->
+  <Style Selector="TextBox.form">
+    <Setter Property="MinHeight" Value="52" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="Background" Value="White" />
+  </Style>
+
+  <Style Selector="ComboBox.form">
+    <Setter Property="MinHeight" Value="52" />
+    <Setter Property="FontSize" Value="15" />
+    <Setter Property="Background" Value="White" />
   </Style>
 
   <!-- Клавиша экранной клавиатуры -->

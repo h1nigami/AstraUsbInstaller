@@ -70,6 +70,7 @@
   <SolidColorBrush x:Key="Neutral300Brush" Color="{StaticResource Neutral300}" />
   <SolidColorBrush x:Key="Neutral400Brush" Color="{StaticResource Neutral400}" />
   <SolidColorBrush x:Key="Neutral500Brush" Color="{StaticResource Neutral500}" />
+  <SolidColorBrush x:Key="Neutral700Brush" Color="{StaticResource Neutral700}" />
   <SolidColorBrush x:Key="Neutral800Brush" Color="{StaticResource Neutral800}" />
   <SolidColorBrush x:Key="Neutral900Brush" Color="{StaticResource Neutral900}" />
 
