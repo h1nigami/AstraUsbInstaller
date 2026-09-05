@@ -30,7 +30,8 @@ public static class VideoPreview
                 out var seconds))
             return null;
 
-        return seconds > 0 ? TimeSpan.FromSeconds(seconds) : null;
+        return double.IsFinite(seconds) && seconds > 0 && seconds < TimeSpan.MaxValue.TotalSeconds
+            ? TimeSpan.FromSeconds(seconds) : null;
     }
 
     /// <summary>Подпись времени: часы появляются только когда они есть.</summary>
@@ -79,7 +80,15 @@ public static class VideoPreview
             UseShellExecute = false,
         };
 
-        Directory.CreateDirectory(AppPaths.DataDir);
+        try
+        {
+            Directory.CreateDirectory(AppPaths.DataDir);
+        }
+        catch (Exception error)
+        {
+            CrashLog.Write("Создание каталога кадров", error);
+            return null;
+        }
 
         // -ss перед -i: так ffmpeg прыгает к нужному месту, а не читает файл
         // с начала. На часовой записи это разница между мгновением и минутой.

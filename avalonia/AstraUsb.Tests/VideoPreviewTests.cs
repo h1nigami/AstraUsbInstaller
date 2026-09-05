@@ -37,6 +37,8 @@ public sealed class VideoPreviewTests
     [InlineData("это не число")]
     [InlineData("-3")]
     [InlineData("0")]
+    [InlineData("Infinity")]
+    [InlineData("1e100")]
     public void An_unknown_length_is_not_a_length(string output)
     {
         Assert.Null(VideoPreview.ParseDuration(output));

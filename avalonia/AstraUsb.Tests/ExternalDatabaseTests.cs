@@ -64,6 +64,23 @@ public sealed class ExternalDatabaseTests : IDisposable
         Assert.Equal(0, result.Sent);
     }
 
+    [Theory]
+    [InlineData("PostgreSQL")]
+    [InlineData("MSSQL")]
+    public async Task An_unsupported_provider_is_rejected_before_connection_or_sending(string kind)
+    {
+        var external = new ExternalDatabase(new Settings { SqlKind = kind });
+
+        var check = await external.CheckAsync();
+        var send = await external.SendAsync([], "BC-01");
+
+        Assert.False(check.Ok);
+        Assert.Contains(kind, check.Message);
+        Assert.Contains("MySQL", check.Message);
+        Assert.False(send.Ok);
+        Assert.Contains(kind, send.Message);
+    }
+
     [Fact]
     public async Task A_wrong_password_is_explained_in_plain_words()
     {

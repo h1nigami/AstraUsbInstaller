@@ -32,7 +32,7 @@ public static class FtpSender
             request.Method = WebRequestMethods.Ftp.ListDirectory;
 
             using var response = (FtpWebResponse)request.GetResponse();
-            return new FtpResult(true, $"подключение установлено: {response.StatusDescription?.Trim()}");
+            return new FtpResult(true, "подключение установлено");
         }
         catch (WebException e)
         {
@@ -40,7 +40,7 @@ public static class FtpSender
         }
         catch (Exception e)
         {
-            return new FtpResult(false, e.Message);
+            return new FtpResult(false, UserError.Report("Не удалось проверить подключение к FTP", e));
         }
     }
 
@@ -64,7 +64,7 @@ public static class FtpSender
             }
 
             using var response = (FtpWebResponse)request.GetResponse();
-            return new FtpResult(true, response.StatusDescription?.Trim() ?? "отправлено");
+            return new FtpResult(true, "файл отправлен");
         }
         catch (WebException e)
         {
@@ -72,7 +72,7 @@ public static class FtpSender
         }
         catch (Exception e)
         {
-            return new FtpResult(false, e.Message);
+            return new FtpResult(false, UserError.Report("Не удалось отправить файл на FTP", e));
         }
     }
 
@@ -104,6 +104,7 @@ public static class FtpSender
     /// <summary>Переводит ошибку клиента в то, что понятно оператору.</summary>
     private static string Explain(WebException error)
     {
+        var fallback = UserError.Report("Не удалось выполнить обмен с FTP", error);
         if (error.Response is FtpWebResponse response)
         {
             return response.StatusCode switch
@@ -111,9 +112,7 @@ public static class FtpSender
                 FtpStatusCode.NotLoggedIn => "учётная запись или пароль не подошли",
                 FtpStatusCode.ActionNotTakenFileUnavailable => "сервер не принял путь или файл",
                 FtpStatusCode.ActionNotTakenInsufficientSpace => "на сервере нет места",
-                _ => response.StatusDescription?.Trim() is { Length: > 0 } text
-                    ? text
-                    : error.Message,
+                _ => fallback,
             };
         }
 
@@ -123,7 +122,7 @@ public static class FtpSender
             WebExceptionStatus.ConnectFailure => "сервер не отвечает",
             WebExceptionStatus.Timeout => "сервер не ответил вовремя",
             WebExceptionStatus.TrustFailure => "сертификат сервера не принят",
-            _ => error.Message,
+            _ => fallback,
         };
     }
 }

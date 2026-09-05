@@ -127,7 +127,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _sqlState = "";
     [ObservableProperty] private bool _sqlTesting;
 
-    public string[] SqlKinds { get; } = ["MySQL", "PostgreSQL", "MSSQL"];
+    public string[] SqlKinds { get; } = ["MySQL"];
+    private string SelectedSqlKind => SqlKindIndex == 0 ? SqlKinds[0] : _settings.SqlKind;
     [ObservableProperty] private bool _ftpEnabled;
     [ObservableProperty] private string _ftpHost = "";
     [ObservableProperty] private int _ftpPort = 21;
@@ -178,7 +179,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         WebPort = _settings.WebPort;
         WebSsl = _settings.WebSsl;
         SqlEnabled = _settings.SqlEnabled;
-        SqlKindIndex = Math.Max(0, Array.IndexOf(SqlKinds, _settings.SqlKind));
+        SqlKindIndex = Array.IndexOf(SqlKinds, _settings.SqlKind);
+        SqlState = ExternalDatabase.ProviderError(_settings.SqlKind) ?? "";
         SqlHost = _settings.SqlHost;
         SqlPort = _settings.SqlPort;
         SqlDatabase = _settings.SqlDatabase;
@@ -198,7 +200,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void SaveStorage()
     {
-        _settings.BackupRoot = BackupRoot.Trim();
+        var root = BackupRoot.Trim();
+        if (!ArchiveGuard.Mark(root))
+        {
+            Hint = "не удалось выбрать папку архива. Проверьте путь, подключение диска и права на запись";
+            return;
+        }
+
+        _settings.BackupRoot = root;
         _settings.MinFreeGb = Math.Max(1, MinFreeGb);
         _settings.StationNumber = Math.Clamp(StationNumber, 0, 99);
         _settings.StationPlace = StationPlace.Trim();
@@ -209,10 +218,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         KeepDays = _settings.KeepDays;
         _settings.AlarmSound = AlarmSound;
         _settings.VoiceHints = VoiceHints;
-
-        // Метка тома ставится здесь: дальше по ней станция понимает, что диск
-        // смонтирован. Без неё выгрузка останавливается с ошибкой.
-        var marked = ArchiveGuard.Mark(_settings.BackupRoot);
 
         var stored = _settings.Save();
         if (stored)
@@ -225,11 +230,9 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         Hint = !stored
             ? "не удалось записать настройки, проверьте права на папку data"
-            : !marked
-                ? $"настройки сохранены, но том «{_settings.BackupRoot}» недоступен для записи"
-                : KeepDays == 0
-                    ? "настройки сохранены, записи хранятся бессрочно"
-                    : $"настройки сохранены, записи хранятся {KeepDays} дн";
+            : KeepDays == 0
+                ? "настройки сохранены, записи хранятся бессрочно"
+                : $"настройки сохранены, записи хранятся {KeepDays} дн";
     }
 
     // --- Разметка гнёзд -----------------------------------------------------
@@ -237,13 +240,19 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     public void ReloadSlots()
     {
-        Slots.Clear();
-        var assigned = _portMap.All();
-
-        for (var slot = 0; slot < Math.Clamp(_settings.BayCount, 6, 30); slot++)
+        try
         {
-            var port = assigned.FirstOrDefault(pair => pair.Value == slot).Key ?? "";
-            Slots.Add(new SlotRow { Slot = slot, PortPath = port });
+            var assigned = _portMap.All();
+            Slots.Clear();
+            for (var slot = 0; slot < Math.Clamp(_settings.BayCount, 6, 30); slot++)
+            {
+                var port = assigned.FirstOrDefault(pair => pair.Value == slot).Key ?? "";
+                Slots.Add(new SlotRow { Slot = slot, PortPath = port });
+            }
+        }
+        catch (Exception e)
+        {
+            Hint = UserError.Report("Не удалось прочитать разметку гнёзд", e);
         }
     }
 
@@ -327,8 +336,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void SaveSql()
     {
+        if (ExternalDatabase.ProviderError(SelectedSqlKind) is { } error)
+        {
+            SqlState = error;
+            return;
+        }
+
         _settings.SqlEnabled = SqlEnabled;
-        _settings.SqlKind = SqlKinds[Math.Clamp(SqlKindIndex, 0, SqlKinds.Length - 1)];
+        _settings.SqlKind = SelectedSqlKind;
         _settings.SqlHost = SqlHost.Trim();
         _settings.SqlPort = SqlPort is > 0 and < 65536
             ? SqlPort
@@ -362,6 +377,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SqlTesting)
             return;
 
+        if (ExternalDatabase.ProviderError(SelectedSqlKind) is { } error)
+        {
+            SqlState = error;
+            return;
+        }
+
         SqlTesting = true;
         SqlState = "проверяем";
 
@@ -376,6 +397,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
             var probe = new Settings
             {
+                SqlKind = SelectedSqlKind,
                 SqlHost = SqlHost.Trim(),
                 SqlPort = SqlPort,
                 SqlDatabase = SqlDatabase.Trim(),
@@ -390,7 +412,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            SqlState = e.Message;
+            SqlState = UserError.Report("Не удалось проверить подключение к базе данных", e);
         }
         finally
         {
@@ -426,7 +448,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            SqlState = e.Message;
+            SqlState = UserError.Report("Не удалось отправить записи в базу данных", e);
         }
         finally
         {
@@ -441,6 +463,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var kind = SqlKinds[Math.Clamp(value, 0, SqlKinds.Length - 1)];
         SqlPort = SqlProbe.DefaultPort(kind);
+        SqlState = ExternalDatabase.ProviderError(SelectedSqlKind) ?? "";
     }
 
     /// <summary>Сохраняет параметры отправки на сервер.</summary>
@@ -501,7 +524,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            FtpState = e.Message;
+            FtpState = UserError.Report("Не удалось проверить подключение к FTP", e);
         }
         finally
         {
@@ -523,7 +546,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            FtpState = e.Message;
+            FtpState = UserError.Report("Не удалось повторить отправку файлов", e);
         }
     }
 
@@ -538,9 +561,9 @@ public sealed partial class SettingsViewModel : ObservableObject
                 ? $"в очереди {queue.Count()}, отложено после неудач {stuck}"
                 : $"в очереди {queue.Count()}";
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            FtpState = "";
+            FtpState = UserError.Report("Не удалось прочитать очередь отправки", e);
         }
     }
 
@@ -576,10 +599,17 @@ public sealed partial class SettingsViewModel : ObservableObject
             return;
         }
 
+        var account = _settings.AdminAccount;
+        var password = _settings.PasswordHash;
         _settings.AdminAccount = AdminAccount.Trim();
         _settings.PasswordHash = PasswordGate.Hash(NewPassword);
         var saved = _settings.Save();
-        UsingDefaultPassword = !saved;
+        if (!saved)
+        {
+            _settings.AdminAccount = account;
+            _settings.PasswordHash = password;
+        }
+        UsingDefaultPassword = string.IsNullOrEmpty(_settings.PasswordHash);
         if (saved)
             _actions.Write(ActionLog.Settings,
                 $"учётная запись администратора изменена: {_settings.AdminAccount}");
@@ -679,8 +709,15 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void ClearSlots()
     {
-        _portMap.Clear();
-        Hint = "разметка снята, окна снова занимаются по порядку подключения";
-        ReloadSlots();
+        try
+        {
+            _portMap.Clear();
+            Hint = "разметка снята, окна снова занимаются по порядку подключения";
+            ReloadSlots();
+        }
+        catch (Exception e)
+        {
+            Hint = UserError.Report("Не удалось снять разметку гнёзд", e);
+        }
     }
 }

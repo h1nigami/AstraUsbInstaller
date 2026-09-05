@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+
 namespace AstraUsb.Services;
 
 /// <summary>Чем закончилось удаление отобранных записей.</summary>
@@ -5,7 +7,10 @@ namespace AstraUsb.Services;
 /// <param name="Skipped">Сколько пропущено из-за защиты.</param>
 /// <param name="Failed">Сколько не удалось удалить.</param>
 /// <param name="Bytes">Сколько места освободилось.</param>
-public sealed record DeleteResult(int Deleted, int Skipped, int Failed, long Bytes);
+public sealed record DeleteResult(int Deleted, int Skipped, int Failed, long Bytes)
+{
+    public IReadOnlyList<string> DeletedPaths { get; init; } = [];
+}
 
 /// <summary>
 /// Поиск по архиву и удаление найденного.
@@ -75,29 +80,40 @@ public sealed class ArchiveSearch
     /// </summary>
     public DeleteResult Delete(IEnumerable<ArchiveRow> rows)
     {
-        var log = new CollectionLog(_dbPath);
+        _ = new CollectionLog(_dbPath);
         var deleted = 0;
         var skipped = 0;
         var failed = 0;
         var bytes = 0L;
+        var deletedPaths = new List<string>();
+        using var db = new SqliteConnection($"Data Source={_dbPath}");
+        db.Open();
 
         foreach (var row in rows)
         {
-            if (row.File.Important)
-            {
-                skipped++;
-                continue;
-            }
-
             try
             {
+                using var transaction = db.BeginTransaction();
+                using var command = db.CreateCommand();
+                command.Transaction = transaction;
+                command.CommandText = "SELECT important FROM collected_files WHERE dest_path = $path";
+                command.Parameters.AddWithValue("$path", row.File.DestPath);
+                if (command.ExecuteScalar() is long important && important != 0)
+                {
+                    skipped++;
+                    continue;
+                }
+
                 var file = new FileInfo(row.File.DestPath);
                 var size = file.Exists ? file.Length : 0;
                 if (file.Exists)
                     file.Delete();
 
-                log.Forget(row.File.DestPath);
+                command.CommandText = "DELETE FROM collected_files WHERE dest_path = $path";
+                command.ExecuteNonQuery();
+                transaction.Commit();
                 deleted++;
+                deletedPaths.Add(row.File.DestPath);
                 bytes += size;
             }
             catch (Exception)
@@ -107,7 +123,7 @@ public sealed class ArchiveSearch
             }
         }
 
-        return new DeleteResult(deleted, skipped, failed, bytes);
+        return new DeleteResult(deleted, skipped, failed, bytes) { DeletedPaths = deletedPaths };
     }
 
     private bool Matches(ArchiveRow row, ArchiveFilter filter,

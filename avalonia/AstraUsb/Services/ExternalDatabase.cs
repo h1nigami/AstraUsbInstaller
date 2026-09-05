@@ -23,6 +23,10 @@ public sealed class ExternalDatabase
 
     public ExternalDatabase(Settings settings) => _settings = settings;
 
+    public static string? ProviderError(string kind) => kind == "MySQL"
+        ? null
+        : $"тип базы «{kind}» не поддерживается, доступен только MySQL";
+
     /// <summary>Строка подключения из настроек станции.</summary>
     private string Connection()
     {
@@ -47,6 +51,9 @@ public sealed class ExternalDatabase
     /// </summary>
     public async Task<SyncResult> CheckAsync(CancellationToken token = default)
     {
+        if (ProviderError(_settings.SqlKind) is { } error)
+            return new SyncResult(false, 0, error);
+
         if (_settings.SqlHost.Trim().Length == 0)
             return new SyncResult(false, 0, "не указан адрес сервера");
 
@@ -65,13 +72,14 @@ public sealed class ExternalDatabase
         {
             return new SyncResult(false, 0, Explain(e));
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException e)
         {
+            CrashLog.Write("проверка внешней базы данных", e);
             return new SyncResult(false, 0, "сервер не ответил вовремя");
         }
         catch (Exception e)
         {
-            return new SyncResult(false, 0, e.Message);
+            return new SyncResult(false, 0, UserError.Report("Не удалось проверить внешнюю базу данных", e));
         }
     }
 
@@ -82,6 +90,9 @@ public sealed class ExternalDatabase
     public async Task<SyncResult> SendAsync(IReadOnlyList<CollectedFile> files,
         string station, CancellationToken token = default)
     {
+        if (ProviderError(_settings.SqlKind) is { } error)
+            return new SyncResult(false, 0, error);
+
         if (files.Count == 0)
             return new SyncResult(true, 0, "отправлять нечего");
 
@@ -127,13 +138,14 @@ public sealed class ExternalDatabase
         {
             return new SyncResult(false, 0, Explain(e));
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException e)
         {
+            CrashLog.Write("отправка во внешнюю базу данных", e);
             return new SyncResult(false, 0, "сервер не ответил вовремя");
         }
         catch (Exception e)
         {
-            return new SyncResult(false, 0, e.Message);
+            return new SyncResult(false, 0, UserError.Report("Не удалось отправить записи во внешнюю базу данных", e));
         }
     }
 
@@ -161,14 +173,17 @@ public sealed class ExternalDatabase
     }
 
     /// <summary>Переводит ошибку сервера в то, что понятно оператору.</summary>
-    private static string Explain(MySqlException error) => error.ErrorCode switch
+    private static string Explain(MySqlException error)
     {
-        MySqlErrorCode.AccessDenied =>
-            "учётная запись или пароль не подошли",
-        MySqlErrorCode.UnableToConnectToHost => "сервер не отвечает",
-        MySqlErrorCode.UnknownDatabase => "такой базы на сервере нет",
-        MySqlErrorCode.TableAccessDenied or MySqlErrorCode.ColumnAccessDenied =>
-            "учётной записи не хватает прав на таблицу учёта",
-        _ => error.Message,
-    };
+        var fallback = UserError.Report("Не удалось выполнить обмен с внешней базой данных", error);
+        return error.ErrorCode switch
+        {
+            MySqlErrorCode.AccessDenied => "учётная запись или пароль не подошли",
+            MySqlErrorCode.UnableToConnectToHost => "сервер не отвечает",
+            MySqlErrorCode.UnknownDatabase => "такой базы на сервере нет",
+            MySqlErrorCode.TableAccessDenied or MySqlErrorCode.ColumnAccessDenied =>
+                "учётной записи не хватает прав на таблицу учёта",
+            _ => fallback,
+        };
+    }
 }

@@ -60,7 +60,9 @@ public sealed partial class StaffViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public void Reload()
+    public void Reload() => Reload(null);
+
+    private void Reload(string? confirmation)
     {
         var keepEmployee = Selected?.Id;
         var keepDepartment = SelectedDepartment?.Id;
@@ -94,13 +96,13 @@ public sealed partial class StaffViewModel : ObservableObject
             Selected = Employees.FirstOrDefault(e => e.Id == keepEmployee);
             SelectedDepartment = Departments.FirstOrDefault(d => d.Id == keepDepartment);
             OnPropertyChanged(nameof(NoDepartments));
-            Hint = Employees.Count == 0
+            Hint = confirmation ?? (Employees.Count == 0
                 ? "сотрудников пока нет; заполните номер и имя, затем нажмите «Сохранить»"
-                : "";
+                : "");
         }
         catch (Exception e)
         {
-            Hint = $"не удалось прочитать справочник: {e.Message}";
+            Hint = UserError.Report("Не удалось прочитать справочник", e);
         }
     }
 
@@ -124,6 +126,12 @@ public sealed partial class StaffViewModel : ObservableObject
         {
             var staff = new StaffDirectory(_dbPath);
 
+            if (staff.FindByPersonnelNo(number) is { } existing && existing.Id != Selected?.Id)
+            {
+                Hint = $"номер {number} уже занят: {existing.FullName}";
+                return;
+            }
+
             if (Selected is { } current)
             {
                 staff.UpdateEmployee(current with
@@ -135,11 +143,6 @@ public sealed partial class StaffViewModel : ObservableObject
                 });
                 Hint = $"карточка {number} сохранена";
             }
-            else if (staff.FindByPersonnelNo(number) is { } existing)
-            {
-                Hint = $"номер {number} уже занят: {existing.FullName}";
-                return;
-            }
             else
             {
                 staff.AddEmployee(name.Length == 0 ? number : name, number,
@@ -147,11 +150,11 @@ public sealed partial class StaffViewModel : ObservableObject
                 Hint = $"сотрудник {number} добавлен";
             }
 
-            Reload();
+            Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = $"не удалось сохранить: {e.Message}";
+            Hint = UserError.Report("Не удалось сохранить сотрудника", e);
         }
     }
 
@@ -184,11 +187,11 @@ public sealed partial class StaffViewModel : ObservableObject
         {
             new StaffDirectory(_dbPath).Deactivate(current.Id);
             Hint = $"{current.FullName} отмечен как уволенный, прошлые записи остались за ним";
-            Reload();
+            Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = $"не удалось изменить состояние: {e.Message}";
+            Hint = UserError.Report("Не удалось изменить состояние сотрудника", e);
         }
     }
 
@@ -213,11 +216,11 @@ public sealed partial class StaffViewModel : ObservableObject
                 ? $"«{name}» добавлен внутрь «{parent.Path}»"
                 : $"отдел «{name}» добавлен";
             DepartmentNameInput = "";
-            Reload();
+            Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = $"не удалось добавить отдел: {e.Message}";
+            Hint = UserError.Report("Не удалось добавить отдел", e);
         }
     }
 
@@ -243,11 +246,11 @@ public sealed partial class StaffViewModel : ObservableObject
             }
 
             Hint = $"отдел «{department.Path}» удалён";
-            Reload();
+            Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = $"не удалось удалить отдел: {e.Message}";
+            Hint = UserError.Report("Не удалось удалить отдел", e);
         }
     }
 }

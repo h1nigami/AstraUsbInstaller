@@ -130,6 +130,7 @@ public sealed partial class SearchViewModel : ObservableObject
     // Ползунок тянут, и запросов кадра выходит больше, чем ffmpeg успевает
     // выполнить. Показывается кадр только последнего запроса.
     private int _frameRequest;
+    private int _openRequest;
 
     partial void OnViewerImageChanged(Bitmap? value) => OnPropertyChanged(nameof(ViewerHasImage));
     partial void OnViewerTextChanged(string value) => OnPropertyChanged(nameof(ViewerHasText));
@@ -254,6 +255,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
     partial void OnCurrentChanged(FoundFile? value)
     {
+        CloseViewer();
         NoteInput = value?.Note ?? "";
 
         // Форматы зависят от рода записи: видео не переводят в звук.
@@ -291,6 +293,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
 
         CloseViewer();
+        var request = _openRequest;
 
         var path = file.Path;
         var kind = file.Row.Kind;
@@ -304,8 +307,11 @@ public sealed partial class SearchViewModel : ObservableObject
         var opened = await Task.Run(() => Open(path, kind));
 
         // Пока читали, оператор мог закрыть просмотр или выбрать другое.
-        if (!ViewerVisible && kind is MediaKind.Photo or MediaKind.Log or MediaKind.Video)
+        if (request != _openRequest)
+        {
+            opened.Image?.Dispose();
             return;
+        }
 
         if (opened.Message.Length > 0)
         {
@@ -338,8 +344,15 @@ public sealed partial class SearchViewModel : ObservableObject
             ShowFrame(TimeSpan.Zero);
         }
 
-        await Task.Run(() => new ActionLog(_dbPath).Write(ActionLog.Export,
-            $"просмотр записи {Path.GetFileName(path)}"));
+        try
+        {
+            await Task.Run(() => new ActionLog(_dbPath).Write(ActionLog.Export,
+                $"просмотр записи {Path.GetFileName(path)}"));
+        }
+        catch (Exception error)
+        {
+            Hint = UserError.Report("Не удалось записать просмотр в журнал", error);
+        }
     }
 
     /// <summary>Читает запись. Работает в стороне: диск и ffprobe не быстры.</summary>
@@ -377,7 +390,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            return new Opened(null, "", null, $"запись не открылась: {e.Message}");
+            return new Opened(null, "", null, UserError.Report("Не удалось открыть запись", e));
         }
     }
 
@@ -395,6 +408,7 @@ public sealed partial class SearchViewModel : ObservableObject
     [RelayCommand]
     private void CloseViewer()
     {
+        _openRequest++;
         ViewerVisible = false;
         ViewerImage?.Dispose();
         ViewerImage = null;
@@ -435,7 +449,7 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
-        if (Format.Length == 0)
+        if (string.IsNullOrWhiteSpace(Format))
         {
             Hint = "выберите формат";
             return;
@@ -460,7 +474,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"преобразование не удалось: {e.Message}";
+            Hint = UserError.Report("Не удалось преобразовать запись", e);
         }
         finally
         {
@@ -482,20 +496,27 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
+        if ((!string.IsNullOrWhiteSpace(ShotFrom) && !TryDate(ShotFrom, out _))
+            || (!string.IsNullOrWhiteSpace(ShotTo) && !TryDate(ShotTo, out _)))
+        {
+            Hint = "дата съёмки пишется как 02.09.2026";
+            return;
+        }
+
         DateTime? shotFrom = TryDate(ShotFrom, out var sf) ? sf.Date : null;
-        DateTime? shotTo = TryDate(ShotTo, out var st) ? st.Date.AddDays(1).AddSeconds(-1) : null;
+        DateTime? shotTo = TryDate(ShotTo, out var st) ? EndOfDay(st) : null;
 
         var filter = new ArchiveFilter
         {
             CollectedFrom = from.Date,
-            CollectedTo = to.Date.AddDays(1).AddSeconds(-1),
+            CollectedTo = EndOfDay(to),
             ShotFrom = shotFrom,
             ShotTo = shotTo,
             DepartmentId = Department is { Id: > 0 } dep ? dep.Id : null,
             DeviceId = CameraId(),
-            PersonnelNo = PersonnelNo.Trim(),
-            EmployeeName = EmployeeName.Trim(),
-            FileName = FileName.Trim(),
+            PersonnelNo = PersonnelNo?.Trim() ?? "",
+            EmployeeName = EmployeeName?.Trim() ?? "",
+            FileName = FileName?.Trim() ?? "",
             Kind = (MediaKind)Math.Clamp(KindIndex, 0, 4),
             ProtectedOnly = ProtectedOnly,
         };
@@ -527,7 +548,9 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"запрос не удался: {e.Message}";
+            var message = UserError.Report("Не удалось выполнить запрос", e);
+            if (generation == _generation)
+                Hint = message;
         }
         finally
         {
@@ -542,6 +565,8 @@ public sealed partial class SearchViewModel : ObservableObject
     [RelayCommand]
     private void Reset()
     {
+        _generation++;
+        Searching = false;
         From = DateTime.Now.AddDays(-7).ToString("dd.MM.yyyy");
         To = DateTime.Now.ToString("dd.MM.yyyy");
         ShotFrom = "";
@@ -608,7 +633,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"не удалось изменить защиту: {e.Message}";
+            Hint = UserError.Report("Не удалось изменить защиту", e);
         }
     }
 
@@ -643,7 +668,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"не удалось сохранить заметку: {e.Message}";
+            Hint = UserError.Report("Не удалось сохранить заметку", e);
         }
     }
 
@@ -670,7 +695,10 @@ public sealed partial class SearchViewModel : ObservableObject
             // и интерфейс не должен замирать всё это время.
             var result = await Task.Run(() => new ArchiveSearch(_dbPath).Delete(chosen));
 
-            foreach (var row in rows.Where(r => !r.Important).ToArray())
+            var deleted = result.DeletedPaths.ToHashSet();
+            if (Current is { } current && deleted.Contains(current.Path))
+                Current = null;
+            foreach (var row in rows.Where(r => deleted.Contains(r.Path)).ToArray())
                 Results.Remove(row);
 
             var parts = new List<string> { $"удалено записей: {result.Deleted}" };
@@ -687,7 +715,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"удаление не удалось: {e.Message}";
+            Hint = UserError.Report("Не удалось удалить записи", e);
         }
     }
 
@@ -705,7 +733,7 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
-        var target = ExportTarget.Trim();
+        var target = ExportTarget?.Trim() ?? "";
         if (target.Length == 0)
         {
             Hint = "укажите, куда выгружать";
@@ -743,7 +771,7 @@ public sealed partial class SearchViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"выгрузка не удалась: {e.Message}";
+            Hint = UserError.Report("Не удалось выгрузить записи", e);
         }
         finally
         {
@@ -791,7 +819,7 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>Камера по номеру или имени, если оператор её указал.</summary>
     private long? CameraId()
     {
-        var wanted = Camera.Trim();
+        var wanted = Camera?.Trim() ?? "";
         if (wanted.Length == 0)
             return null;
 
@@ -804,17 +832,20 @@ public sealed partial class SearchViewModel : ObservableObject
                 || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)
                 || d.Id.ToString() == wanted);
 
-            return match?.Id;
+            return match?.Id ?? -1;
         }
         catch (Exception)
         {
-            return null;
+            return -1;
         }
     }
 
     private static bool TryDate(string text, out DateTime value) =>
-        DateTime.TryParseExact(text.Trim(), ["dd.MM.yyyy", "dd.MM.yy", "yyyy-MM-dd"],
+        DateTime.TryParseExact(text?.Trim(), ["dd.MM.yyyy", "dd.MM.yy", "yyyy-MM-dd"],
             CultureInfo.InvariantCulture, DateTimeStyles.None, out value);
+
+    private static DateTime EndOfDay(DateTime date) =>
+        date.Date == DateTime.MaxValue.Date ? DateTime.MaxValue : date.Date.AddDays(1).AddTicks(-1);
 
     private static string Size(long bytes)
     {

@@ -69,7 +69,7 @@ public static class FileExporter
         var extension = Path.GetExtension(name);
 
         var candidate = name;
-        for (var n = 2; taken.Contains(candidate) || File.Exists(Path.Combine(folder, candidate)); n++)
+        for (var n = 2; taken.Contains(candidate) || Path.Exists(Path.Combine(folder, candidate)); n++)
             candidate = $"{stem}_{n}{extension}";
 
         taken.Add(candidate);

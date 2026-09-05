@@ -8,7 +8,11 @@ namespace AstraUsb.Views;
 
 public partial class MainWindow : Window
 {
-    public MainWindow()
+    public MainWindow() : this(new MainWindowViewModel())
+    {
+    }
+
+    public MainWindow(MainWindowViewModel vm)
     {
         AvaloniaXamlLoader.Load(this);
 
@@ -24,15 +28,32 @@ public partial class MainWindow : Window
 
         // Ошибка в одном обработчике не должна закрывать киоск: станция
         // работает без присмотра, и упавшее окно означает остановленный сбор.
-        Avalonia.Threading.Dispatcher.UIThread.UnhandledException += (_, e) =>
+        void ReportError(object? sender, Avalonia.Threading.DispatcherUnhandledExceptionEventArgs e)
         {
-            Services.CrashLog.Write("ошибка в интерфейсе", e.Exception);
+            vm.ShowError(e.Exception);
             e.Handled = true;
-        };
+        }
+        Avalonia.Threading.Dispatcher.UIThread.UnhandledException += ReportError;
 
-        var vm = new MainWindowViewModel();
-        vm.ExitRequested += Close;
+        var exitAllowed = false;
+        vm.ExitRequested += () =>
+        {
+            exitAllowed = true;
+            Close();
+        };
+        Closing += (_, e) =>
+        {
+            if (exitAllowed)
+                return;
+
+            e.Cancel = true;
+            vm.ExitCommand.Execute(null);
+        };
         DataContext = vm;
+
+        AddHandler(KeyDownEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
+        AddHandler(PointerPressedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
 
         var tabs = this.FindControl<TabControl>("Tabs")!;
         var passwordBox = this.FindControl<TextBox>("PasswordBox")!;
@@ -99,6 +120,10 @@ public partial class MainWindow : Window
             passwordBox.Focus();
         };
 
-        Closed += (_, _) => vm.Dispose();
+        Closed += (_, _) =>
+        {
+            Avalonia.Threading.Dispatcher.UIThread.UnhandledException -= ReportError;
+            vm.Dispose();
+        };
     }
 }
