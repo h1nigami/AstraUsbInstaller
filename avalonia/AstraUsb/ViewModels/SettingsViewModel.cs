@@ -127,7 +127,8 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _sqlState = "";
     [ObservableProperty] private bool _sqlTesting;
 
-    public string[] SqlKinds { get; } = ["MySQL", "PostgreSQL", "MSSQL"];
+    public string[] SqlKinds { get; } = ["MySQL"];
+    private string SelectedSqlKind => SqlKindIndex == 0 ? SqlKinds[0] : _settings.SqlKind;
     [ObservableProperty] private bool _ftpEnabled;
     [ObservableProperty] private string _ftpHost = "";
     [ObservableProperty] private int _ftpPort = 21;
@@ -178,7 +179,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         WebPort = _settings.WebPort;
         WebSsl = _settings.WebSsl;
         SqlEnabled = _settings.SqlEnabled;
-        SqlKindIndex = Math.Max(0, Array.IndexOf(SqlKinds, _settings.SqlKind));
+        SqlKindIndex = Array.IndexOf(SqlKinds, _settings.SqlKind);
+        SqlState = ExternalDatabase.ProviderError(_settings.SqlKind) ?? "";
         SqlHost = _settings.SqlHost;
         SqlPort = _settings.SqlPort;
         SqlDatabase = _settings.SqlDatabase;
@@ -327,8 +329,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void SaveSql()
     {
+        if (ExternalDatabase.ProviderError(SelectedSqlKind) is { } error)
+        {
+            SqlState = error;
+            return;
+        }
+
         _settings.SqlEnabled = SqlEnabled;
-        _settings.SqlKind = SqlKinds[Math.Clamp(SqlKindIndex, 0, SqlKinds.Length - 1)];
+        _settings.SqlKind = SelectedSqlKind;
         _settings.SqlHost = SqlHost.Trim();
         _settings.SqlPort = SqlPort is > 0 and < 65536
             ? SqlPort
@@ -362,6 +370,12 @@ public sealed partial class SettingsViewModel : ObservableObject
         if (SqlTesting)
             return;
 
+        if (ExternalDatabase.ProviderError(SelectedSqlKind) is { } error)
+        {
+            SqlState = error;
+            return;
+        }
+
         SqlTesting = true;
         SqlState = "проверяем";
 
@@ -376,6 +390,7 @@ public sealed partial class SettingsViewModel : ObservableObject
 
             var probe = new Settings
             {
+                SqlKind = SelectedSqlKind,
                 SqlHost = SqlHost.Trim(),
                 SqlPort = SqlPort,
                 SqlDatabase = SqlDatabase.Trim(),
@@ -441,6 +456,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     {
         var kind = SqlKinds[Math.Clamp(value, 0, SqlKinds.Length - 1)];
         SqlPort = SqlProbe.DefaultPort(kind);
+        SqlState = ExternalDatabase.ProviderError(SelectedSqlKind) ?? "";
     }
 
     /// <summary>Сохраняет параметры отправки на сервер.</summary>

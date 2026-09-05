@@ -26,6 +26,88 @@ public sealed class StorageCleanupTests : IDisposable
 
     private CollectionLog Log() => new(_db);
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Cleanup_does_not_follow_directory_links(bool logged, bool expired)
+    {
+        var outside = Directory.CreateDirectory(Path.Combine(_dir, "outside")).FullName;
+        var video = Path.Combine(outside, "video.mp4");
+        File.WriteAllText(video, "внешняя запись");
+        var empty = Directory.CreateDirectory(Path.Combine(outside, "empty")).FullName;
+        var link = Path.Combine(_root, "linked");
+        if (OperatingSystem.IsWindows())
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c mklink /J \"{link}\" \"{outside}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            })!;
+            process.WaitForExit();
+            Assert.Equal(0, process.ExitCode);
+        }
+        else
+            Directory.CreateSymbolicLink(link, outside);
+
+        try
+        {
+            if (logged)
+                Log().Record([new CollectedFile(1, Path.Combine(link, "video.mp4"), 100,
+                    Now.AddDays(-100), Now.AddDays(-100))]);
+            var removable = Collected("ordinary.mp4", 100, Now.AddDays(-100));
+
+            if (expired)
+                StorageManager.DeleteExpired(Log(), Now, _root);
+            else
+                StorageManager.FreeUpSpace(_root, 1000, StorageMode.Overwrite, Log());
+
+            Assert.True(File.Exists(video));
+            Assert.True(Directory.Exists(empty));
+            Assert.False(File.Exists(removable));
+            if (logged)
+                Assert.Equal(1, Log().Count());
+        }
+        finally
+        {
+            if (Directory.Exists(link))
+                Directory.Delete(link);
+        }
+    }
+
+    [Fact]
+    public void Freeing_space_keeps_archive_service_markers()
+    {
+        Assert.True(ArchiveGuard.Mark(_root));
+
+        var freed = StorageManager.FreeUpSpace(_root, 1000, StorageMode.Overwrite, Log());
+
+        Assert.True(ArchiveGuard.Available(_root));
+        Assert.Equal(0, freed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Cleanup_does_not_delete_logged_files_outside_the_selected_archive(bool expired)
+    {
+        var outside = Path.Combine(_dir, "other-archive.mp4");
+        File.WriteAllText(outside, "видео из другого архива");
+        Log().Record([new CollectedFile(1, outside, 100, Now.AddDays(-100), Now.AddDays(-100))]);
+
+        if (expired)
+            StorageManager.DeleteExpired(Log(), Now, _root);
+        else
+            StorageManager.FreeUpSpace(_root, 1000, StorageMode.Overwrite, Log());
+
+        Assert.True(File.Exists(outside));
+        Assert.Equal(1, Log().Count());
+    }
+
     /// <summary>Кладёт файл в хранилище и записывает его в журнал.</summary>
     private string Collected(string name, int sizeBytes, DateTime collectedAt)
     {

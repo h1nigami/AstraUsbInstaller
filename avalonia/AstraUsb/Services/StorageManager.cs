@@ -29,6 +29,12 @@ public sealed record StorageStatus(long TotalBytes, long FreeBytes, bool LowOnSp
 /// </summary>
 public static class StorageManager
 {
+    private static readonly EnumerationOptions Walk = new()
+    {
+        RecurseSubdirectories = true,
+        AttributesToSkip = FileAttributes.ReparsePoint,
+    };
+
     public static StorageStatus Check(string root, long minFreeBytes)
     {
         try
@@ -80,7 +86,7 @@ public static class StorageManager
             if (entry.Important)
                 continue;
 
-            freed += Remove(entry.DestPath, log);
+            freed += Remove(root, entry.DestPath, log) ?? 0;
         }
 
         // Файлы, которых журнал не знает: копии старше журнала или принесённые
@@ -99,7 +105,7 @@ public static class StorageManager
             if (accounted.Contains(Full(file.FullName)))
                 continue;
 
-            freed += Remove(file.FullName, log: null);
+            freed += Remove(root, file.FullName, log: null) ?? 0;
         }
 
         RemoveEmptyFolders(root);
@@ -125,8 +131,11 @@ public static class StorageManager
             if (entry.Important)
                 continue;
 
-            bytes += Remove(entry.DestPath, log);
-            files++;
+            if (Remove(root, entry.DestPath, log) is { } removed)
+            {
+                bytes += removed;
+                files++;
+            }
         }
 
         if (files > 0)
@@ -139,15 +148,30 @@ public static class StorageManager
     /// Удаляет файл и забывает запись о нём. Пропавший файл тоже забывается:
     /// запись о том, чего нет, только вводит оператора в заблуждение.
     /// </summary>
-    private static long Remove(string path, CollectionLog? log)
+    private static long? Remove(string root, string path, CollectionLog? log)
     {
         var size = 0L;
 
         try
         {
+            var relative = Path.GetRelativePath(root, path);
+            if (Path.IsPathRooted(relative) || relative == ".."
+                || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                || Markers.IsService(Path.GetFileName(path)))
+                return null;
+
             var file = new FileInfo(path);
+            for (var dir = file.Directory; dir is not null; dir = dir.Parent)
+            {
+                if (dir.Exists && (dir.Attributes & FileAttributes.ReparsePoint) != 0)
+                    return null;
+                if (Path.GetRelativePath(root, dir.FullName) == ".")
+                    break;
+            }
             if (file.Exists)
             {
+                if ((file.Attributes & FileAttributes.ReparsePoint) != 0)
+                    return null;
                 size = file.Length;
                 file.Delete();
             }
@@ -155,7 +179,7 @@ public static class StorageManager
         catch (Exception)
         {
             // Файл занят или недоступен: запись оставляем, попробуем позже.
-            return 0;
+            return null;
         }
 
         log?.Forget(path);
@@ -180,8 +204,10 @@ public static class StorageManager
         FileInfo[] files;
         try
         {
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                return [];
             files = new DirectoryInfo(root)
-                .EnumerateFiles("*", SearchOption.AllDirectories)
+                .EnumerateFiles("*", Walk)
                 .ToArray();
         }
         catch (Exception)
@@ -197,8 +223,10 @@ public static class StorageManager
     {
         try
         {
+            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
+                return;
             foreach (var dir in new DirectoryInfo(root)
-                         .EnumerateDirectories("*", SearchOption.AllDirectories)
+                         .EnumerateDirectories("*", Walk)
                          .OrderByDescending(d => d.FullName.Length))
             {
                 if (!dir.EnumerateFileSystemInfos().Any())

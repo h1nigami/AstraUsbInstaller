@@ -439,7 +439,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private static string Typed(string text, string? key) => key switch
     {
         null or "" => text,
-        "C" => "",
+        "clear" => "",
         "<" => text.Length > 0 ? text[..^1] : "",
         _ => text.Length < 32 ? text + key : text,
     };
@@ -739,7 +739,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             // «загрузку данных» обратно в «подключена».
             var busy = mount is not null
                        && (_running.ContainsKey(mount) || _finished.ContainsKey(mount));
-            if (!busy)
+            if (mount is not null && _chargeOnly.Contains(mount))
+            {
+                port.Progress = 0;
+                port.FilesLine = "";
+                port.State = PortState.ChargeOnly;
+            }
+            else if (!busy)
             {
                 port.Detail = detail;
                 port.FilesLine = "";
@@ -971,6 +977,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         var progress = new Progress<BackupProgress>(report =>
         {
+            if (cts.IsCancellationRequested || _chargeOnly.Contains(mountPoint))
+                return;
+
             port.Progress = report.Progress;
             port.Detail = report.Detail;
             port.FilesLine = report.Detail;
@@ -1001,13 +1010,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
             finally
             {
-                _running.Remove(mountPoint);
-                _cancels.Remove(mountPoint);
-                cts.Dispose();
+                Dispatcher.UIThread.Post(() =>
+                {
+                    _running.Remove(mountPoint);
+                    _cancels.Remove(mountPoint);
+                    cts.Dispose();
 
-                // Приоритетный отсек закончил: очередь снова общая.
-                if (_priority == mountPoint)
-                    _priority = null;
+                    if (_priority == mountPoint)
+                        _priority = null;
+                });
             }
         });
     }
@@ -1102,11 +1113,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private void Trouble(string what)
     {
+        Status = what;
         if (_lastTrouble == what)
             return;
 
         _lastTrouble = what;
-        Status = what;
 
         // Запись в журнал и звук идут в стороне: и то и другое трогает диск,
         // а происшествие показывается сразу.
@@ -1255,8 +1266,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         // Том архива, а не тот, где лежит программа: оператор смотрит на эту
         // полосу, чтобы понять, куда ещё влезут записи.
-        if (storage.Total <= 0)
+        if (!storage.Available || storage.Total <= 0)
+        {
+            StorageLabel = "хранилище недоступно";
+            StorageWidth = 0;
+            Trouble("том архива не смонтирован");
             return;
+        }
 
         var used = storage.Total - storage.Free;
         var ratio = (double)used / storage.Total;
@@ -1264,8 +1280,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // Тревога по заданию: место кончается или архив недоступен.
         if (storage.Free < _stationSettings.MinFreeBytes)
             Trouble("места в архиве почти нет");
-        else if (!storage.Available)
-            Trouble("том архива не смонтирован");
         else if (!NetworkUp && _stationSettings.FtpEnabled)
             Trouble("сети нет, отправка на сервер ждёт");
         else

@@ -23,6 +23,10 @@ public sealed class ExternalDatabase
 
     public ExternalDatabase(Settings settings) => _settings = settings;
 
+    public static string? ProviderError(string kind) => kind == "MySQL"
+        ? null
+        : $"тип базы «{kind}» не поддерживается, доступен только MySQL";
+
     /// <summary>Строка подключения из настроек станции.</summary>
     private string Connection()
     {
@@ -47,6 +51,9 @@ public sealed class ExternalDatabase
     /// </summary>
     public async Task<SyncResult> CheckAsync(CancellationToken token = default)
     {
+        if (ProviderError(_settings.SqlKind) is { } error)
+            return new SyncResult(false, 0, error);
+
         if (_settings.SqlHost.Trim().Length == 0)
             return new SyncResult(false, 0, "не указан адрес сервера");
 
@@ -82,6 +89,9 @@ public sealed class ExternalDatabase
     public async Task<SyncResult> SendAsync(IReadOnlyList<CollectedFile> files,
         string station, CancellationToken token = default)
     {
+        if (ProviderError(_settings.SqlKind) is { } error)
+            return new SyncResult(false, 0, error);
+
         if (files.Count == 0)
             return new SyncResult(true, 0, "отправлять нечего");
 

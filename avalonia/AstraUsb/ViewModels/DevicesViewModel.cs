@@ -13,6 +13,7 @@ public sealed partial class DeviceRow : ObservableObject
     [ObservableProperty] private string _number = "";
     [ObservableProperty] private string _label = "";
     [ObservableProperty] private string _employee = "";
+    public long? EmployeeId { get; init; }
     [ObservableProperty] private string _department = "";
     [ObservableProperty] private string _firstSeen = "";
     [ObservableProperty] private string _lastSeen = "";
@@ -62,7 +63,7 @@ public sealed partial class DevicesViewModel : ObservableObject
     partial void OnSelectedChanged(DeviceRow? value)
     {
         NameInput = value?.Name ?? "";
-        EmployeeInput = Employees.FirstOrDefault(e => e.FullName == value?.Employee);
+        EmployeeInput = Employees.FirstOrDefault(e => e.Id == value?.EmployeeId);
     }
 
     [RelayCommand]
@@ -97,6 +98,7 @@ public sealed partial class DevicesViewModel : ObservableObject
                     Number = device.FirmwareId,
                     Label = device.Label,
                     Employee = device.EmployeeName,
+                    EmployeeId = device.EmployeeId,
                     Department = staff.DepartmentPath(device.DepartmentId),
                     FirstSeen = Short(device.FirstSeen),
                     LastSeen = Short(device.LastSeen),

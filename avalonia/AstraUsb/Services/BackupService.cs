@@ -80,8 +80,8 @@ public sealed class BackupService
                     total.Bytes > 0 ? (double)bytes / total.Bytes : 0,
                     $"{files} из {total.Files}"))), token);
 
-            RecordCollected(deviceId, mountPoint, destination, result, started);
-            QueueForServer(mountPoint, destination, result);
+            RecordCollected(deviceId, result, started);
+            QueueForServer(result);
 
             if (_settings.DeleteVideoAfterCopy && result.Failed == 0)
                 SourceCleaner.DeleteBackedUpVideos(mountPoint, result.BackedUp);
@@ -112,7 +112,7 @@ public sealed class BackupService
     /// Ставит собранное в очередь отправки на сервер. Отправка идёт из очереди
     /// отдельно: сеть может пропасть, а записи должны остаться на станции.
     /// </summary>
-    private void QueueForServer(string mountPoint, string destination, CopyResult result)
+    private void QueueForServer(CopyResult result)
     {
         if (!_settings.FtpEnabled)
             return;
@@ -120,8 +120,7 @@ public sealed class BackupService
         try
         {
             var queue = new FtpQueue(_dbPath);
-            queue.AddRange(result.BackedUp.Select(source =>
-                Path.Combine(destination, Path.GetRelativePath(mountPoint, source))));
+            queue.AddRange(result.Destinations.Values);
         }
         catch (Exception)
         {
@@ -192,16 +191,14 @@ public sealed class BackupService
     /// Заносит в журнал то, что действительно лежит в хранилище. Время загрузки
     /// ставит станция: часам камеры доверия нет.
     /// </summary>
-    private void RecordCollected(long deviceId, string mountPoint, string destination,
-        CopyResult result, DateTime collectedAt)
+    private void RecordCollected(long deviceId, CopyResult result, DateTime collectedAt)
     {
         try
         {
             var log = new CollectionLog(_dbPath);
-            log.Record(result.BackedUp.Select(source =>
+            log.Record(result.Destinations.Select(saved =>
             {
-                var relative = Path.GetRelativePath(mountPoint, source);
-                var dest = Path.Combine(destination, relative);
+                var (source, dest) = saved;
                 // Время съёмки камера пишет прямо в имя файла, и это начало
                 // записи. Дата файла отмечает её закрытие и легче сбивается,
                 // поэтому она идёт запасным вариантом.

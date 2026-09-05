@@ -8,7 +8,11 @@ namespace AstraUsb.Views;
 
 public partial class MainWindow : Window
 {
-    public MainWindow()
+    public MainWindow() : this(new MainWindowViewModel())
+    {
+    }
+
+    public MainWindow(MainWindowViewModel vm)
     {
         AvaloniaXamlLoader.Load(this);
 
@@ -30,9 +34,25 @@ public partial class MainWindow : Window
             e.Handled = true;
         };
 
-        var vm = new MainWindowViewModel();
-        vm.ExitRequested += Close;
+        var exitAllowed = false;
+        vm.ExitRequested += () =>
+        {
+            exitAllowed = true;
+            Close();
+        };
+        Closing += (_, e) =>
+        {
+            if (exitAllowed)
+                return;
+
+            e.Cancel = true;
+            vm.ExitCommand.Execute(null);
+        };
         DataContext = vm;
+
+        AddHandler(KeyDownEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
+        AddHandler(PointerPressedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
 
         var tabs = this.FindControl<TabControl>("Tabs")!;
         var passwordBox = this.FindControl<TextBox>("PasswordBox")!;

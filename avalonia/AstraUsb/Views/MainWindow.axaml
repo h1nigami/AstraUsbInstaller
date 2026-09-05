@@ -1421,7 +1421,7 @@
                     Command="{Binding PasswordKeyCommand}" CommandParameter="&lt;" />
             <Button Content="Очистить" Width="104" Height="42" Focusable="False" FontSize="13"
                     HorizontalContentAlignment="Center"
-                    Command="{Binding PasswordKeyCommand}" CommandParameter="C" />
+                    Command="{Binding PasswordKeyCommand}" CommandParameter="clear" />
             <Button Classes="primary" Content="Войти" Width="120" Height="42" IsDefault="True"
                     FontSize="13" HorizontalContentAlignment="Center"
                     Command="{Binding ConfirmPasswordCommand}" />

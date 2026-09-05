@@ -482,13 +482,20 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
+        if ((!string.IsNullOrWhiteSpace(ShotFrom) && !TryDate(ShotFrom, out _))
+            || (!string.IsNullOrWhiteSpace(ShotTo) && !TryDate(ShotTo, out _)))
+        {
+            Hint = "дата съёмки пишется как 02.09.2026";
+            return;
+        }
+
         DateTime? shotFrom = TryDate(ShotFrom, out var sf) ? sf.Date : null;
-        DateTime? shotTo = TryDate(ShotTo, out var st) ? st.Date.AddDays(1).AddSeconds(-1) : null;
+        DateTime? shotTo = TryDate(ShotTo, out var st) ? EndOfDay(st) : null;
 
         var filter = new ArchiveFilter
         {
             CollectedFrom = from.Date,
-            CollectedTo = to.Date.AddDays(1).AddSeconds(-1),
+            CollectedTo = EndOfDay(to),
             ShotFrom = shotFrom,
             ShotTo = shotTo,
             DepartmentId = Department is { Id: > 0 } dep ? dep.Id : null,
@@ -670,7 +677,10 @@ public sealed partial class SearchViewModel : ObservableObject
             // и интерфейс не должен замирать всё это время.
             var result = await Task.Run(() => new ArchiveSearch(_dbPath).Delete(chosen));
 
-            foreach (var row in rows.Where(r => !r.Important).ToArray())
+            var deleted = result.DeletedPaths.ToHashSet();
+            if (Current is { } current && deleted.Contains(current.Path))
+                Current = null;
+            foreach (var row in rows.Where(r => deleted.Contains(r.Path)).ToArray())
                 Results.Remove(row);
 
             var parts = new List<string> { $"удалено записей: {result.Deleted}" };
@@ -804,17 +814,20 @@ public sealed partial class SearchViewModel : ObservableObject
                 || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)
                 || d.Id.ToString() == wanted);
 
-            return match?.Id;
+            return match?.Id ?? -1;
         }
         catch (Exception)
         {
-            return null;
+            return -1;
         }
     }
 
     private static bool TryDate(string text, out DateTime value) =>
         DateTime.TryParseExact(text.Trim(), ["dd.MM.yyyy", "dd.MM.yy", "yyyy-MM-dd"],
             CultureInfo.InvariantCulture, DateTimeStyles.None, out value);
+
+    private static DateTime EndOfDay(DateTime date) =>
+        date.Date == DateTime.MaxValue.Date ? DateTime.MaxValue : date.Date.AddDays(1).AddTicks(-1);
 
     private static string Size(long bytes)
     {

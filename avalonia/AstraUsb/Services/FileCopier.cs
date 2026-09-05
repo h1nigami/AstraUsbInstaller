@@ -3,16 +3,18 @@ namespace AstraUsb.Services;
 /// <summary>Итог сеанса копирования.</summary>
 /// <param name="CopiedFiles">Сколько файлов скопировано в этот раз.</param>
 /// <param name="CopiedBytes">Сколько байт перенесено.</param>
-/// <param name="BackedUp">
-/// Пути на источнике, которые точно лежат в назначении: скопированы сейчас или
-/// уже были там в том же виде. Удалять с источника можно только их.
+/// <param name="Destinations">
+/// Пути сохранённых файлов на источнике и соответствующие им пути в архиве.
 /// </param>
 /// <param name="Failed">Сколько файлов скопировать не удалось.</param>
 public sealed record CopyResult(
     int CopiedFiles,
     long CopiedBytes,
-    IReadOnlySet<string> BackedUp,
-    int Failed);
+    IReadOnlyDictionary<string, string> Destinations,
+    int Failed)
+{
+    public IReadOnlySet<string> BackedUp => Destinations.Keys.ToHashSet(StringComparer.Ordinal);
+}
 
 /// <summary>
 /// Инкрементальное копирование. Перенесено из Python-версии
@@ -34,7 +36,7 @@ public static class FileCopier
         var copiedFiles = 0;
         var copiedBytes = 0L;
         var failed = 0;
-        var backedUp = new HashSet<string>(StringComparer.Ordinal);
+        var backedUp = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var dir in EnumerateDirectories(sourceRoot))
         {
@@ -77,7 +79,7 @@ public static class FileCopier
                     {
                         if (SameFile(sourceFile, target))
                         {
-                            backedUp.Add(sourceFile);
+                            backedUp.Add(sourceFile, target);
                             continue;
                         }
 
@@ -94,7 +96,7 @@ public static class FileCopier
 
                     copiedFiles++;
                     copiedBytes += size;
-                    backedUp.Add(sourceFile);
+                    backedUp.Add(sourceFile, target);
                     onProgress?.Invoke(copiedFiles, copiedBytes);
                 }
                 catch (Exception)
