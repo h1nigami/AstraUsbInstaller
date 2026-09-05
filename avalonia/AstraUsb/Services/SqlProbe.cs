@@ -39,23 +39,25 @@ public static class SqlProbe
             await client.ConnectAsync(address, port, cancel.Token);
             return $"сервер отвечает: {address}:{port}";
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException e)
         {
+            CrashLog.Write("проверка подключения к базе данных", e);
             return "сервер не ответил вовремя";
         }
         catch (SocketException e)
         {
+            var fallback = UserError.Report("Не удалось проверить подключение к базе данных", e);
             return e.SocketErrorCode switch
             {
                 SocketError.HostNotFound => "адрес сервера не разрешается",
                 SocketError.ConnectionRefused => "порт закрыт: служба базы не слушает его",
                 SocketError.NetworkUnreachable or SocketError.HostUnreachable => "сеть не достаёт до сервера",
-                _ => e.Message,
+                _ => fallback,
             };
         }
         catch (Exception e)
         {
-            return e.Message;
+            return UserError.Report("Не удалось проверить подключение к базе данных", e);
         }
     }
 }

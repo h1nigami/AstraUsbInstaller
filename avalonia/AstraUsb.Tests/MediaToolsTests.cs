@@ -8,9 +8,13 @@ namespace AstraUsb.Tests;
 /// рисковать ею ради копии в другом формате нельзя, поэтому проверяется, что
 /// она остаётся на месте, а недоделанные файлы за собой не остаются.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class MediaToolsTests : IDisposable
 {
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-media-").FullName;
+    private readonly string _previous = AppPaths.Root;
+
+    public MediaToolsTests() => AppPaths.Root = _dir;
 
     private string File_(string name, string content = "не настоящее видео")
     {
@@ -60,6 +64,25 @@ public sealed class MediaToolsTests : IDisposable
     }
 
     [Fact]
+    public void A_cleared_format_is_reported_without_an_exception()
+    {
+        var result = MediaTools.Convert(File_("clip.mp4"), null!);
+
+        Assert.False(result.Ok);
+        Assert.Contains("формат", result.Message);
+    }
+
+    [Fact]
+    public void Invalid_media_reports_a_russian_hint_instead_of_converter_stderr()
+    {
+        var result = MediaTools.Convert(File_("invalid.mp4"), "mov");
+
+        Assert.False(result.Ok);
+        Assert.Matches("[а-яА-Я]", result.Message);
+        Assert.DoesNotContain(_dir, result.Message);
+    }
+
+    [Fact]
     public void The_source_record_survives_a_failed_conversion()
     {
         // Внутри лежит текст, а не видео, поэтому ffmpeg откажется, если он
@@ -101,6 +124,7 @@ public sealed class MediaToolsTests : IDisposable
 
     public void Dispose()
     {
+        AppPaths.Root = _previous;
         try
         {
             Directory.Delete(_dir, recursive: true);

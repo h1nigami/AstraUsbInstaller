@@ -322,13 +322,15 @@
       </TabItem>
 
       <TabItem Header="ЗАПРОС ДАННЫХ">
-        <Grid RowDefinitions="Auto,*,Auto" Margin="10,8">
+        <Grid RowDefinitions="*,*,Auto" Margin="10,8">
 
           <!-- Панель условий по макету: поверхность со скруглением 30, поля в
                сетке от 210 точек на колонку, подпись над полем капсом. -->
           <Border Grid.Row="0" Background="{StaticResource BgSurfaceBrush}"
                   CornerRadius="24" Padding="14,12" Margin="0,0,0,8">
-            <StackPanel Spacing="10">
+            <Grid RowDefinitions="*,Auto">
+              <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Spacing="10">
               <UniformGrid Classes="fade" Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ОТДЕЛ" Classes="field" />
@@ -403,7 +405,10 @@
                 </StackPanel>
               </UniformGrid>
 
-              <StackPanel Orientation="Horizontal" Spacing="8">
+                </StackPanel>
+              </ScrollViewer>
+              <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="0,10,0,0">
+                <StackPanel Orientation="Horizontal" Spacing="8">
                 <Button Classes="primary" Content="Запрос" Height="52" Width="140"
                         IsEnabled="{Binding !Search.Searching}"
                         Command="{Binding Search.SearchCommand}" />
@@ -411,11 +416,13 @@
                         Command="{Binding Search.ResetCommand}" />
                 <Button Content="{Binding Search.FiltersLabel}" Height="52" FontSize="12"
                         Command="{Binding Search.ToggleFiltersCommand}" />
-                <TextBlock Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
+                </StackPanel>
+                <TextBlock Grid.Column="1" Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
+                           TextWrapping="Wrap"
                            Margin="8,0,0,0"
                            Foreground="{StaticResource Accent700Brush}" />
-              </StackPanel>
-            </StackPanel>
+              </Grid>
+            </Grid>
           </Border>
 
           <Border Grid.Row="1" Classes="card">
@@ -1431,6 +1438,20 @@
           </StackPanel>
         </StackPanel>
       </Border>
+    </Border>
+    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding ErrorVisible}"
+            VerticalAlignment="Top" Margin="12" Padding="18" CornerRadius="16"
+            Background="{StaticResource BgPanelBrush}"
+            BorderBrush="{StaticResource WarnBrush}" BorderThickness="2"
+            BoxShadow="{StaticResource ShadowLg}" AutomationProperties.Name="Ошибка действия">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Spacing="6" Margin="0,0,14,0">
+          <TextBlock Text="Действие не выполнено" Classes="h2" />
+          <TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" FontSize="14" />
+        </StackPanel>
+        <Button Grid.Column="1" Content="Понятно" Classes="primary" MinHeight="44"
+                VerticalAlignment="Center" Command="{Binding DismissErrorCommand}" />
+      </Grid>
     </Border>
   </Grid>
 </Window>

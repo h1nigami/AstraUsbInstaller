@@ -67,7 +67,9 @@ public sealed partial class DevicesViewModel : ObservableObject
     }
 
     [RelayCommand]
-    public async Task Reload()
+    public Task Reload() => Reload(null);
+
+    private async Task Reload(string? confirmation)
     {
         // Выбор снимается до очистки: иначе список, который на неё смотрит,
         // ищет выбранный элемент по прежнему месту и падает.
@@ -106,17 +108,17 @@ public sealed partial class DevicesViewModel : ObservableObject
             }
 
             Selected = Devices.FirstOrDefault(d => d.Id == kept);
-            Hint = Devices.Count == 0 ? "камеры ещё не подключались" : "";
+            Hint = confirmation ?? (Devices.Count == 0 ? "камеры ещё не подключались" : "");
         }
         catch (Exception e)
         {
-            Hint = $"не удалось прочитать список: {e.Message}";
+            Hint = UserError.Report("Не удалось прочитать список камер", e);
         }
     }
 
     /// <summary>Присваивает камере имя. Папка её копий при этом не переименовывается.</summary>
     [RelayCommand]
-    private void Rename()
+    private async Task Rename()
     {
         if (Selected is not { } row)
         {
@@ -131,17 +133,17 @@ public sealed partial class DevicesViewModel : ObservableObject
             Hint = string.IsNullOrWhiteSpace(NameInput)
                 ? $"имя снято, камера снова показывается номером {row.Id}"
                 : $"камера {row.Id} теперь «{NameInput.Trim()}»";
-            _ = Reload();
+            await Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = $"не удалось переименовать: {e.Message}";
+            Hint = UserError.Report("Не удалось переименовать камеру", e);
         }
     }
 
     /// <summary>Закрепляет камеру за сотрудником.</summary>
     [RelayCommand]
-    private void Assign()
+    private async Task Assign()
     {
         if (Selected is not { } row)
         {
@@ -156,11 +158,11 @@ public sealed partial class DevicesViewModel : ObservableObject
             Hint = EmployeeInput is null
                 ? $"камера {row.Id} больше ни за кем не закреплена"
                 : $"камера {row.Id} закреплена за {EmployeeInput.FullName}";
-            _ = Reload();
+            await Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = $"не удалось закрепить: {e.Message}";
+            Hint = UserError.Report("Не удалось закрепить камеру за сотрудником", e);
         }
     }
 

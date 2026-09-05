@@ -126,6 +126,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _status = "мониторинг: запуск";
 
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ErrorVisible))]
+    private string _errorMessage = "";
+
+    public bool ErrorVisible => ErrorMessage.Length > 0;
+
+    public void ShowError(Exception error) =>
+        ErrorMessage = UserError.Report("Не удалось выполнить действие", error);
+
+    [RelayCommand]
+    private void DismissError() => ErrorMessage = "";
+
     /// <summary>
     /// Сводка по отсекам в шапке: сколько копируется, сколько готово, сколько
     /// в ошибке и сколько окон свободно. Оператор смотрит на неё, не обходя

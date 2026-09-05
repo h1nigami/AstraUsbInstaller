@@ -53,12 +53,20 @@ public sealed partial class LogViewModel : ObservableObject
             return;
         }
 
+        if (from > to)
+        {
+            Hint = "дата начала не должна быть позже даты окончания";
+            return;
+        }
+
         try
         {
             // Журнал станции живёт годами, и выборка из базы занимает время.
             // В потоке интерфейса это заметно на переходе между разделами.
+            var end = to.Date == DateTime.MaxValue.Date
+                ? DateTime.MaxValue : to.Date.AddDays(1).AddTicks(-1);
             var found = await Task.Run(() => new ActionLog(_dbPath)
-                .Between(from.Date, to.Date.AddDays(1).AddSeconds(-1), Limit));
+                .Between(from.Date, end, Limit));
 
             foreach (var entry in found)
             {
@@ -79,7 +87,7 @@ public sealed partial class LogViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = $"не удалось прочитать журнал: {e.Message}";
+            Hint = UserError.Report("Не удалось прочитать журнал", e);
         }
     }
 

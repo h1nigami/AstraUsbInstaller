@@ -34,6 +34,18 @@ public sealed class FileExporterTests : IDisposable
     private string ExportFolder => Path.Combine(_target, "Выгрузка_20260902_163000");
 
     [Fact]
+    public void A_directory_with_the_same_name_does_not_block_export()
+    {
+        var source = File_("clip.mp4");
+        Directory.CreateDirectory(Path.Combine(ExportFolder, "clip.mp4"));
+
+        var result = FileExporter.Export([source], _target, Stamp);
+
+        Assert.Equal(1, result.Copied);
+        Assert.True(File.Exists(Path.Combine(ExportFolder, "clip_2.mp4")));
+    }
+
+    [Fact]
     public void Files_land_in_a_folder_named_by_the_moment_of_export()
     {
         var one = File_("Device1/запись.mp4");

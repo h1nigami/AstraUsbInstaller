@@ -45,7 +45,6 @@ public sealed class BackupService
 
         var started = DateTime.Now;
         var stamp = started.ToString("yyyyMMdd_HHmmss");
-        var destination = FolderFor(deviceId);
 
         try
         {
@@ -61,6 +60,7 @@ public sealed class BackupService
                 return;
             }
 
+            var destination = FolderFor(deviceId);
             var total = await Task.Run(() => Measure(mountPoint), token);
             if (total.Files == 0)
             {
@@ -104,7 +104,8 @@ public sealed class BackupService
         }
         catch (Exception e)
         {
-            progress.Report(new BackupProgress(BackupStage.Failed, 0, e.Message));
+            progress.Report(new BackupProgress(BackupStage.Failed, 0,
+                UserError.Report("Не удалось завершить выгрузку камеры", e)));
         }
     }
 

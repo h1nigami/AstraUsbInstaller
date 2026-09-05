@@ -58,7 +58,7 @@ public static class MediaTools
         }
         catch (Exception e)
         {
-            return new MediaResult(false, $"открыть не удалось: {e.Message}");
+            return new MediaResult(false, UserError.Report("Не удалось открыть запись", e));
         }
     }
 
@@ -96,7 +96,7 @@ public static class MediaTools
         if (!File.Exists(path))
             return new MediaResult(false, "файла больше нет в архиве");
 
-        var wanted = format.Trim().TrimStart('.').ToLowerInvariant();
+        var wanted = (format ?? "").Trim().TrimStart('.').ToLowerInvariant();
         if (wanted.Length == 0)
             return new MediaResult(false, "не выбран формат");
 
@@ -138,21 +138,22 @@ public static class MediaTools
             if (proc.ExitCode != 0)
             {
                 Cleanup(target);
-                var last = error.Split('\n').LastOrDefault(l => l.Trim().Length > 0)?.Trim();
-                return new MediaResult(false, last is { Length: > 0 } ? last : "ffmpeg отказался");
+                return new MediaResult(false, UserError.Report("Не удалось преобразовать запись",
+                    new InvalidOperationException(error)));
             }
 
             return new MediaResult(true, Path.GetFileName(target));
         }
-        catch (System.ComponentModel.Win32Exception)
+        catch (System.ComponentModel.Win32Exception error)
         {
+            CrashLog.Write("Запуск преобразования записи", error);
             return new MediaResult(false,
                 "в системе нет ffmpeg: поставьте его, иначе преобразование недоступно");
         }
         catch (Exception e)
         {
             Cleanup(target);
-            return new MediaResult(false, e.Message);
+            return new MediaResult(false, UserError.Report("Не удалось преобразовать запись", e));
         }
     }
 

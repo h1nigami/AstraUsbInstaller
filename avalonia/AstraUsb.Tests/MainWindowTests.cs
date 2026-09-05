@@ -7,6 +7,8 @@ using Avalonia.Controls;
 using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Input;
+using Avalonia.Threading;
+using Avalonia.VisualTree;
 using Xunit;
 
 [assembly: AvaloniaTestApplication(typeof(AstraUsb.Tests.TestAppBuilder))]
@@ -115,6 +117,89 @@ public sealed class MainWindowTests : IDisposable
             model.ConfirmPasswordCommand.Execute(null);
             model.Dispose();
         }
+    }
+
+    [AvaloniaFact]
+    public async Task An_unexpected_button_error_is_visible_and_can_be_dismissed()
+    {
+        var window = new MainWindow(new MainWindowViewModel(() => []));
+        var model = (MainWindowViewModel)window.DataContext!;
+        window.Show();
+        try
+        {
+            var layoutButton = window.GetVisualDescendants().OfType<Button>()
+                .Single(b => Equals(b.Content, "Список"));
+            layoutButton.Click += (_, _) => throw new IOException("SYSTEM_DETAILS_BUTTON_TEST");
+            Dispatcher.UIThread.Post(() => layoutButton.RaiseEvent(
+                new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent)));
+            Dispatcher.UIThread.RunJobs();
+            await Task.Yield();
+            window.UpdateLayout();
+
+            var visibleText = string.Join(" ", window.GetVisualDescendants().OfType<TextBlock>()
+                .Where(t => t.IsEffectivelyVisible).Select(t => t.Text));
+            Assert.Contains("Не удалось выполнить действие", visibleText);
+            Assert.DoesNotContain("SYSTEM_DETAILS_BUTTON_TEST", visibleText);
+            Assert.Contains("SYSTEM_DETAILS_BUTTON_TEST", File.ReadAllText(CrashLog.FilePath));
+            var dismiss = window.GetVisualDescendants().OfType<Button>()
+                .Single(b => Equals(b.Content, "Понятно") && b.IsEffectivelyVisible);
+            Click(window, dismiss);
+            Assert.False(dismiss.IsEffectivelyVisible);
+            Assert.True(window.IsVisible);
+        }
+        finally
+        {
+            model.ExitCommand.Execute(null);
+            model.PasswordInput = PasswordGate.Default();
+            model.ConfirmPasswordCommand.Execute(null);
+            model.Dispose();
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task Expanded_search_filters_leave_results_and_actions_on_screen()
+    {
+        var model = new MainWindowViewModel(() => []);
+        var window = new MainWindow(model) { WindowState = WindowState.Normal, Width = 800, Height = 600 };
+        window.Show();
+        try
+        {
+            window.FindControl<TabControl>("Tabs")!.SelectedIndex = 1;
+            model.PasswordInput = PasswordGate.Default();
+            model.ConfirmPasswordCommand.Execute(null);
+            await Task.Yield();
+            window.UpdateLayout();
+            var filters = window.GetVisualDescendants().OfType<Button>()
+                .Single(b => Equals(b.Content, model.Search.FiltersLabel));
+            Click(window, filters);
+            Assert.True(model.Search.FiltersExpanded);
+            window.UpdateLayout();
+            var results = window.GetVisualDescendants().OfType<ListBox>()
+                .Single(b => ReferenceEquals(b.ItemsSource, model.Search.Results));
+            Assert.True(results.Bounds.Height >= 60, $"Высота результатов: {results.Bounds.Height}");
+            foreach (var label in new[] { "Смотреть", model.Search.ExportLabel, model.Search.DeleteLabel })
+            {
+                var button = window.GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, label));
+                var bottom = button.TranslatePoint(new Point(0, button.Bounds.Height), window)!.Value.Y;
+                Assert.True(bottom <= window.ClientSize.Height - 30, $"Кнопка {label} заканчивается на {bottom}");
+            }
+        }
+        finally
+        {
+            model.ExitCommand.Execute(null);
+            model.PasswordInput = PasswordGate.Default();
+            model.ConfirmPasswordCommand.Execute(null);
+            model.Dispose();
+        }
+    }
+
+    private static void Click(Window window, Control control)
+    {
+        control.BringIntoView();
+        window.UpdateLayout();
+        var point = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
+        window.MouseDown(point, MouseButton.Left);
+        window.MouseUp(point, MouseButton.Left);
     }
 
     public void Dispose()
