@@ -37,13 +37,19 @@ Four top-level modules:
 - Destination stability across mountpoints: a GUI-selected destination now stores not just the chosen path but also the filesystem UUID/serial plus the relative path inside that filesystem. If native mode later mounts the same disk under `/mnt/usb_backup/<dev>`, `get_dest_base()` resolves the live path there, so the destination disk is still recognised as destination (not as source) and backups keep landing on the real disk without requiring the desktop's old mountpoint.
 - Destination availability: a GUI-selected `backup_dest` is stamped with a `.astra_dest` marker (`ensure_dest_marker`) at selection time, and `copy_task` refuses to write (state `error`) while the marker is absent (`dest_available()`) — a missing marker means the destination disk is not mounted at that path, and `makedirs` would otherwise silently back up into a shadow directory on the root/overlay FS. The drive hosting the destination (`_is_dest_path`) is never treated as a backup source and is kept mounted (`copy_task_linux` skips it, `_mount_device` tolerates an existing mount); reconnecting it re-stamps the marker.
 - Each backup runs in its own `ThreadPoolExecutor` worker and opens its own SQLite connection via `_connect()` (sharing one connection across the pool is not safe for concurrent writes). `_init_db()` is called once at startup to create the schema / run migrations, then closed.
-- `_resolve_device_id()` сохраняет номер в `.astra_id`; носитель без маркера всегда получает новый номер, даже при совпадении заводского USB-серийника. Одновременно подключённые носители с одинаковым маркером разделяются под блокировкой до начала копирования. `_connected_devices` хранит актуальный список подключений, `_connected_device_ids` сохраняет владельцев ID до подтверждённого отключения. Маркер исключён из сканирования и копирования.
+- `_resolve_device_id()` использует положительное целое число из `.astra_id` как единственный ID устройства. Носитель без маркера получает следующий локальный `devices.id` от SQLite `AUTOINCREMENT`; заводской USB-серийник хранится только как служебная информация и не объединяет носители. Повреждённый маркер или Astra ID, уже занятый другим подключённым носителем, останавливает этот носитель до сканирования, копирования и автоудаления без перезаписи маркера. `_connected_devices` хранит актуальный список подключений, `_connected_device_ids` сохраняет владельцев ID до подтверждённого отключения. Маркер исключён из сканирования и копирования.
 - `_parse_lsblk_tree()` — pure helper over parsed `lsblk -J` output (unit-tested); partitions of a USB disk are listed exactly once, a whole-disk filesystem yields the disk itself.
 - SQLite DB at `data/devices.db`: tables `devices` (serial, label, person) and `backups` (per-session stats). `started_at`/`finished_at` are stored via `datetime.isoformat()` (`T` separator).
 - `format_filter_dt()` — builds search range bounds with the same `T` separator as stored `started_at` so lexicographic SQL comparisons are correct (a space would sort before `T` and wrongly exclude same-day backups).
 - Progress emission: when `progress_queue` is provided, puts tuples `(device_id, display_id, state, current, total, msg, devname)` for GUI consumption; special sentinel device_ids `"_removed_"` and `"_status_"` signal device removal and status updates.
 - `read_version()` — parses the `VERSION` file (`<tag> <YYYY-MM-DD>`, written by the release workflow / `install_native.sh`, never by hand) into `(tag, date)`, or `None` if it's missing or malformed. Read by the GUI (Настройки tab) and by `updater.py`.
 - `touch_copying_marker()` / `is_copying()` — `data/.copying` is the interface between the GUI and `updater.py`: the GUI stamps its mtime whenever a device is scanning or copying, and `updater.py` treats the point as busy while the marker is younger than 60s. A stale or missing marker means idle, so a crashed GUI doesn't block updates forever.
+
+## Astra ID и папки архива
+
+- Python и Avalonia называют архивную папку `Device{astra_id}` и показывают тот же `Astra ID N` на главном экране. Пользовательское имя остаётся дополнительной подписью и не меняет папку.
+- Avalonia читает `.bestcam_id` только для одноразового переноса, если `.astra_id` отсутствует, а старый маркер однозначно указывает на одну существующую запись локальной базы. В `.astra_id` записывается `devices.id` этой записи. Неизвестный или неоднозначный старый маркер получает новый локальный ID.
+- На Linux обе службы рекурсивно передают прямые папки с положительным числовым именем `DeviceN` владельцу и группе корня архива. При запуске исправляются существующие папки, после копирования текущая папка устройства. Соседние и вложенные каталоги не затрагиваются.
 
 **`gui.py`** — Tkinter fullscreen GUI
 - `App` class owns the notebook (4 tabs: Загрузка, Поиск, Устройства, Настройки)
@@ -65,7 +71,7 @@ Four top-level modules:
 
 | Variable | Default | Effect |
 |---|---|---|
-| `USB_BACKUP_DEST` | `./USB_Backups` | Backup root; device folders are `Device{id}/` inside. `data/config.json`'s `backup_dest` overrides this (see `get_dest_base`). |
+| `USB_BACKUP_DEST` | `./USB_Backups` | Backup root; device folders are `Device{astra_id}/` inside. `data/config.json`'s `backup_dest` overrides this (see `get_dest_base`). |
 | `USB_DB_PATH` | `./data/devices.db` | SQLite DB path |
 | `USB_MAX_WORKERS` | `10` | ThreadPoolExecutor size |
 | `USB_MOUNT_GRACE` | `4` | Seconds to wait for an existing system mount before self-mounting (upgrade/manual-mount fallback). Native installs normally suppress desktop auto-mount via `UDISKS_AUTO=0`, so this is mostly a safety net now. |
