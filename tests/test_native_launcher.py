@@ -12,7 +12,11 @@ import unittest
 class NativeLauncherTest(unittest.TestCase):
     def test_launcher_preserves_gui_exit_status(self):
         root = Path(__file__).resolve().parents[1]
-        for name in ("start_native.sh", "avalonia/start_native.sh"):
+        scripts = ["start_native.sh"]
+        # Архив Python-релиза не содержит модуль Avalonia.
+        if (root / "avalonia").is_dir():
+            scripts.append("avalonia/start_native.sh")
+        for name in scripts:
             for status in (0, 42):
                 with self.subTest(script=name, status=status), tempfile.TemporaryDirectory() as tmp:
                     directory = Path(tmp)
