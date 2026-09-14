@@ -1,11 +1,6 @@
-"""Tests for gui.py's non-GUI config helpers (exit-password persistence).
+"""Проверки настроек GUI без создания окна.
 
-gui.py imports tkinter at module scope, which some minimal dev/CI boxes
-don't have installed. That import is attempted here in isolation and the
-whole class is skipped (not failed) if tkinter is unavailable, so this file
-is safe to include in `python3 -m unittest discover` everywhere while still
-providing real coverage on machines that do have python3-tk (as the Docker
-image and desktop app do).
+При отсутствии Tkinter набор пропускается; CI проверяет импорт явно.
 """
 
 import os
