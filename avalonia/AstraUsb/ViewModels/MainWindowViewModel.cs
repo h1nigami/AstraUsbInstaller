@@ -714,6 +714,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // Носители раскладываются по закреплённым гнёздам: камера из второго
         // разъёма занимает второе окно независимо от очерёдности подключения.
         var placed = _portMap.Arrange(devices, Ports.Count);
+        var astraIds = new HashSet<long>();
 
         for (var i = 0; i < Ports.Count; i++)
         {
@@ -738,6 +739,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 personnel = card.PersonnelNo;
                 employee = card.Employee;
                 department = card.Department;
+                var alreadyConnected = _identified.Any(pair => pair.Key != mount
+                    && pair.Value.DeviceId == card.DeviceId
+                    && (_running.ContainsKey(pair.Key) || _finished.ContainsKey(pair.Key))
+                    && devices.Any(d => MountPointFor(d) == pair.Key));
+                var failure = card.DeviceId <= 0 ? detail
+                    : alreadyConnected || !astraIds.Add(card.DeviceId) ? $"Дубликат Astra ID {card.DeviceId}"
+                    : null;
+                if (failure is not null)
+                {
+                    port.CameraId = cameraId;
+                    port.State = PortState.Failed;
+                    port.Detail = failure;
+                    port.FilesLine = port.Detail;
+                    port.Progress = 0;
+                    continue;
+                }
                 StartBackup(port, card.DeviceId, mount);
             }
 
@@ -927,7 +944,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
                 deviceName, deviceName);
 
-            var number = registry.FirmwareIdOf(id) ?? "";
             var name = registry.GetDeviceName(id);
 
             var staff = new StaffDirectory(AppPaths.Database);
@@ -935,13 +951,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var info = new CardInfo(
                 id,
-                string.IsNullOrEmpty(name) ? number : name,
-                Origin(number),
+                DeviceRegistry.FriendlyLabel(id, name),
+                $"Папка {DeviceRegistry.DeviceDirPrefix}{id}",
                 personnel,
                 person?.FullName ?? "",
                 staff.DepartmentPath(person?.DepartmentId));
 
             return info;
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return new CardInfo(0, deviceName, error is InvalidDataException
+                ? $"Некорректный {DeviceRegistry.DeviceIdFile}"
+                : $"Не удалось прочитать или сохранить {DeviceRegistry.DeviceIdFile}", "", "", "");
         }
         catch (Exception)
         {
@@ -949,14 +971,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return null;
         }
     }
-
-    /// <summary>Откуда у камеры номер: от этой станции, от чужой или из самой камеры.</summary>
-    private string Origin(string number) =>
-        CardIdentity.StationOf(number) is { } station
-            ? station == _stationSettings.StationNumber
-                ? "номер выдан этой станцией"
-                : $"номер станции {station:00}"
-            : "номер задан в камере";
 
     /// <summary>
     /// Запускает выгрузку камеры, если она ещё не идёт. Плитка показывает ход:

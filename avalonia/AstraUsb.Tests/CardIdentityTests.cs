@@ -4,8 +4,7 @@ using Xunit;
 namespace AstraUsb.Tests;
 
 /// <summary>
-/// Номер на карте и есть единственный источник истины. Проверяем маску, выдачу
-/// номеров и то, что чужой номер не перезаписывается.
+/// Чтение старых маркеров и переход на числовой Astra ID.
 /// </summary>
 public sealed class CardIdentityTests : IDisposable
 {
@@ -53,10 +52,8 @@ public sealed class CardIdentityTests : IDisposable
 
         registry.ResolveByCard(card, stationNumber: 1, "cam", "sdb1");
 
-        var written = CardIdentity.Read(card);
-        Assert.True(CardIdentity.IsOurs(written),
-            "без записи на карту камера при следующем подключении станет новой");
-        Assert.Equal("BCU-01-0001", written);
+        Assert.Equal(1, DeviceRegistry.ReadDeviceIdFromUsb(card));
+        Assert.Null(CardIdentity.Read(card));
     }
 
     [Fact]
@@ -79,7 +76,7 @@ public sealed class CardIdentityTests : IDisposable
         registry.ResolveByCard(Card("a"), 1, "cam", "sdb1");
         registry.ResolveByCard(Card("b"), 1, "cam", "sdc1");
 
-        Assert.Equal("BCU-01-0002", CardIdentity.Read(Path.Combine(_dir, "b")));
+        Assert.Equal(2, DeviceRegistry.ReadDeviceIdFromUsb(Path.Combine(_dir, "b")));
     }
 
     [Fact]

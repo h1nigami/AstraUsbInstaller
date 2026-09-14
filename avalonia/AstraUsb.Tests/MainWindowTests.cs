@@ -202,6 +202,31 @@ public sealed class MainWindowTests : IDisposable
         window.MouseUp(point, MouseButton.Left);
     }
 
+    [AvaloniaTheory]
+    [InlineData("grid")]
+    [InlineData("list")]
+    [InlineData("rack")]
+    public void Every_layout_shows_the_astra_id(string layout)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var window = new MainWindow(model);
+        window.Show();
+        try
+        {
+            model.SetLayoutCommand.Execute(layout);
+            model.Ports[0].CameraId = "Astra ID 7 · 64001";
+            window.UpdateLayout();
+            Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(),
+                text => text.IsEffectivelyVisible && text.Text == "Astra ID 7 · 64001");
+        }
+        finally
+        {
+            model.ExitCommand.Execute(null);
+            model.PasswordInput = PasswordGate.Default();
+            model.ConfirmPasswordCommand.Execute(null);
+        }
+    }
+
     public void Dispose()
     {
         AppPaths.Root = _root;

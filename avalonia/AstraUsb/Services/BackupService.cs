@@ -32,6 +32,7 @@ public sealed class BackupService
     {
         _dbPath = dbPath;
         _settings = settings;
+        ArchiveGuard.RepairOwnership(settings.BackupRoot);
     }
 
     /// <summary>Папка камеры в хранилище. Имя не меняется при переименовании камеры.</summary>
@@ -80,6 +81,7 @@ public sealed class BackupService
                     total.Bytes > 0 ? (double)bytes / total.Bytes : 0,
                     $"{files} из {total.Files}"))), token);
 
+            ArchiveGuard.RepairOwnership(_settings.BackupRoot, destination);
             RecordCollected(deviceId, result, started);
             QueueForServer(result);
 

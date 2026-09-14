@@ -249,7 +249,7 @@ public sealed class ArchiveSearchTests : IDisposable
 
         var row = Assert.Single(Search().Find(new ArchiveFilter()));
 
-        Assert.Equal("BCU-01-0001", row.CameraName);
+        Assert.Equal("1", row.CameraName);
     }
 
     public void Dispose()
