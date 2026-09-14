@@ -22,8 +22,8 @@ public static class ArchiveGuard
 
     private static ProcessStartInfo? OwnershipCommand(string root, string deviceDir)
     {
-        var archive = new DirectoryInfo(Path.GetFullPath(root));
-        var folder = new DirectoryInfo(Path.GetFullPath(deviceDir));
+        var archive = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)));
+        var folder = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(deviceDir)));
         if (!archive.Exists || !folder.Exists || !IsDeviceFolderName(folder.Name)
             || archive.Attributes.HasFlag(FileAttributes.ReparsePoint)
             || folder.Attributes.HasFlag(FileAttributes.ReparsePoint)

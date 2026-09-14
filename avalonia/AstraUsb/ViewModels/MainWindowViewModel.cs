@@ -45,6 +45,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// держим до извлечения носителя.
     /// </summary>
     private readonly Dictionary<string, CardInfo> _identified = new(StringComparer.Ordinal);
+    private readonly Dictionary<long, string> _astraOwners = new();
 
     /// <summary>
     /// Карты, которые станция смонтировала сама. Рабочему столу это запрещено
@@ -602,8 +603,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Точка монтирования, которой сейчас занят этот отсек.</summary>
     private string? MountOf(PortViewModel port) =>
-        _identified.FirstOrDefault(pair => pair.Value.DeviceId != 0
-                                           && pair.Value.CameraId == port.CameraId).Key;
+        port.MountPoint is { } mount && _identified.TryGetValue(mount, out var card)
+            && card.DeviceId > 0 ? mount : null;
 
     private void Cancel(string mount)
     {
@@ -710,11 +711,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private void Apply(IReadOnlyList<UsbDevice> found, StorageState storage)
     {
         var devices = HoldBriefly(found);
+        var present = devices.Select(MountPointFor).Where(m => !string.IsNullOrEmpty(m))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var id in _astraOwners.Keys.Where(id => !present.Contains(_astraOwners[id])).ToArray())
+            _astraOwners.Remove(id);
 
         // Носители раскладываются по закреплённым гнёздам: камера из второго
         // разъёма занимает второе окно независимо от очерёдности подключения.
         var placed = _portMap.Arrange(devices, Ports.Count);
-        var astraIds = new HashSet<long>();
 
         for (var i = 0; i < Ports.Count; i++)
         {
@@ -726,6 +730,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var port = Ports[i];
             var mount = MountPointFor(device);
+            port.MountPoint = mount;
             var cameraId = device.Name;
             var detail = mount is null ? "готовим носитель" : "опознаём камеру";
             var personnel = "";
@@ -739,12 +744,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 personnel = card.PersonnelNo;
                 employee = card.Employee;
                 department = card.Department;
-                var alreadyConnected = _identified.Any(pair => pair.Key != mount
-                    && pair.Value.DeviceId == card.DeviceId
-                    && (_running.ContainsKey(pair.Key) || _finished.ContainsKey(pair.Key))
-                    && devices.Any(d => MountPointFor(d) == pair.Key));
                 var failure = card.DeviceId <= 0 ? detail
-                    : alreadyConnected || !astraIds.Add(card.DeviceId) ? $"Дубликат Astra ID {card.DeviceId}"
+                    : _astraOwners.TryGetValue(card.DeviceId, out var owner) && owner != mount
+                        ? $"Дубликат Astra ID {card.DeviceId}"
                     : null;
                 if (failure is not null)
                 {
@@ -755,6 +757,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                     port.Progress = 0;
                     continue;
                 }
+                _astraOwners[card.DeviceId] = mount;
                 StartBackup(port, card.DeviceId, mount);
             }
 
@@ -784,11 +787,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // Камеру вынули, забываем итог, чтобы при следующем подключении
         // выгрузка началась заново.
-        var present = devices
-            .Select(d => MountPointFor(d))
-            .Where(m => !string.IsNullOrEmpty(m))
-            .ToHashSet(StringComparer.Ordinal)!;
-
         foreach (var gone in _finished.Keys.Where(m => !present.Contains(m)).ToArray())
             _finished.Remove(gone);
 

@@ -142,6 +142,21 @@ public sealed class ArchiveGuardTests : IDisposable
         return (ProcessStartInfo?)method.Invoke(null, [root, folder]);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Ownership_accepts_a_root_with_a_trailing_separator(bool folderSeparator)
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_dir, "archive")).FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(root, "Device1")).FullName;
+        var separator = Path.DirectorySeparatorChar.ToString();
+
+        var command = OwnershipCommand(root + separator, folder + (folderSeparator ? separator : ""));
+
+        Assert.NotNull(command);
+        Assert.Equal(new[] { "-R", $"--reference={root}", "--", folder }, command.ArgumentList);
+    }
+
     public void Dispose()
     {
         try

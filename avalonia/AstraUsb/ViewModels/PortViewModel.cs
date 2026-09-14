@@ -31,6 +31,8 @@ public sealed partial class PortViewModel : ObservableObject
     /// <summary>Ширина полосы хода выгрузки в окне.</summary>
     public const double BarWidth = 168;
 
+    public string? MountPoint { get; set; }
+
     [ObservableProperty] private int _slot;
     [ObservableProperty] private string _cameraId = "";
     [ObservableProperty] private string _personnelNo = "";
@@ -213,6 +215,7 @@ public sealed partial class PortViewModel : ObservableObject
     /// <summary>Возвращает окно в состояние свободного отсека.</summary>
     public void Clear()
     {
+        MountPoint = null;
         CameraId = "";
         PersonnelNo = "";
         Employee = "";
