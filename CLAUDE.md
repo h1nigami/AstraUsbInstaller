@@ -11,10 +11,6 @@ python main.py
 # Force headless
 python usb_monitor.py
 
-# Docker
-docker compose up -d --build
-docker compose logs -f
-
 # Syntax check
 python3 -m py_compile gui.py usb_monitor.py main.py updater.py
 
@@ -37,7 +33,7 @@ Four top-level modules:
 **`usb_monitor.py`** — core engine (no GUI dependency)
 - `monitor_usb(interval, stop_event, progress_queue)` — main loop; detects USB attach/detach via polling `lsblk` (Linux) or `GetDriveTypeW` (Windows). Removal is debounced: a device must be missing for ≥1.5× the poll interval before it is confirmed gone.
 - `copy_task()` → `_copy_files()` — incremental backup: skips files matching size+mtime, renames changed files with `_YYYYMMDD_HHMMSS` suffix. `_copy_files` returns the set of source paths that are safely present at the destination (copied or already identical) plus a failed-copy count; only backed-up paths are passed to `_delete_source_videos()`, so a video whose copy failed is never deleted from the source. Failures surface as an `error` progress state (red in the GUI) instead of a false "Done".
-- Mount reuse (double-mount safety): native installs now also drop a `udev` rule (`99-astra-usb-monitor-udisks.rules`) that sets `UDISKS_AUTO=0` for USB filesystems, so the desktop normally does **not** auto-mount a fresh stick behind our back. `copy_task_linux` still keeps the older reuse path as a safety net for upgraded systems / manual mounts / Docker: it waits up to `USB_MOUNT_GRACE` seconds for a mount the system already owns (`_wait_for_system_mount` → `_find_existing_mount`, which reads `/proc/mounts`) and reuses it; only when none appears does it self-mount via `_mount_device`. This prevents two concurrent **read-write** mounts of the same FAT/exFAT stick — the failure the app was writing (`.astra_id`, auto-delete) into, which lets two uncoordinated FAT caches corrupt the filesystem (the stick then shows 0 B and refuses to remount). `should_unmount` is set only when we own the mount (`_is_own_mount`, under `MOUNT_BASE`), so the desktop's own mount is never torn down.
+- Mount reuse (double-mount safety): native installs now also drop a `udev` rule (`99-astra-usb-monitor-udisks.rules`) that sets `UDISKS_AUTO=0` for USB filesystems, so the desktop normally does **not** auto-mount a fresh stick behind our back. `copy_task_linux` still keeps the older reuse path as a safety net for upgraded systems / manual mounts: it waits up to `USB_MOUNT_GRACE` seconds for a mount the system already owns (`_wait_for_system_mount` → `_find_existing_mount`, which reads `/proc/mounts`) and reuses it; only when none appears does it self-mount via `_mount_device`. This prevents two concurrent **read-write** mounts of the same FAT/exFAT stick — the failure the app was writing (`.astra_id`, auto-delete) into, which lets two uncoordinated FAT caches corrupt the filesystem (the stick then shows 0 B and refuses to remount). `should_unmount` is set only when we own the mount (`_is_own_mount`, under `MOUNT_BASE`), so the desktop's own mount is never torn down.
 - Destination stability across mountpoints: a GUI-selected destination now stores not just the chosen path but also the filesystem UUID/serial plus the relative path inside that filesystem. If native mode later mounts the same disk under `/mnt/usb_backup/<dev>`, `get_dest_base()` resolves the live path there, so the destination disk is still recognised as destination (not as source) and backups keep landing on the real disk without requiring the desktop's old mountpoint.
 - Destination availability: a GUI-selected `backup_dest` is stamped with a `.astra_dest` marker (`ensure_dest_marker`) at selection time, and `copy_task` refuses to write (state `error`) while the marker is absent (`dest_available()`) — a missing marker means the destination disk is not mounted at that path, and `makedirs` would otherwise silently back up into a shadow directory on the root/overlay FS. The drive hosting the destination (`_is_dest_path`) is never treated as a backup source and is kept mounted (`copy_task_linux` skips it, `_mount_device` tolerates an existing mount); reconnecting it re-stamps the marker.
 - Each backup runs in its own `ThreadPoolExecutor` worker and opens its own SQLite connection via `_connect()` (sharing one connection across the pool is not safe for concurrent writes). `_init_db()` is called once at startup to create the schema / run migrations, then closed.
@@ -72,40 +68,21 @@ Four top-level modules:
 | `USB_BACKUP_DEST` | `./USB_Backups` | Backup root; device folders are `Device{id}/` inside. `data/config.json`'s `backup_dest` overrides this (see `get_dest_base`). |
 | `USB_DB_PATH` | `./data/devices.db` | SQLite DB path |
 | `USB_MAX_WORKERS` | `10` | ThreadPoolExecutor size |
-| `USB_MOUNT_GRACE` | `4` | Seconds to wait for an existing system mount before self-mounting (upgrade/manual-mount/Docker fallback). Native installs normally suppress desktop auto-mount via `UDISKS_AUTO=0`, so this is mostly a safety net now. |
+| `USB_MOUNT_GRACE` | `4` | Seconds to wait for an existing system mount before self-mounting (upgrade/manual-mount fallback). Native installs normally suppress desktop auto-mount via `UDISKS_AUTO=0`, so this is mostly a safety net now. |
 | `USB_DEBUG` | `0` | Enable debug output |
 | `APP_EXIT_PASSWORD` | `exit` | Initial exit/unlock password (only used on first run, then persisted to `config.json`) |
 
-## Docker
+## Установка и проверки
 
-Runs privileged with `/dev`, `/sys`, `/proc`, `/run/udev` mounted. GUI via X11
-socket passthrough (`/tmp/.X11-unix`). `/media` is bind-mounted with `rslave`
-propagation so disks mounted on the host (including after container start) are
-visible inside the container and can be picked as the backup destination.
-The image is lean: `requirements.txt`
-only pulls `rich`; system packages are `util-linux`/`udev`/`mount`/`ntfs-3g`/
-etc. for mounting USB filesystems, plus `python3-tk` and `x11-utils` for the GUI.
+Python устанавливается через `install_native.sh`, C# через установщики
+в `avalonia/`. Docker больше не используется для установки станции.
+Контейнеры допустимы только как изолированная среда тестов.
 
-`start.sh` is the container entrypoint and handles the kiosk lifecycle:
-- If `DISPLAY` is empty → headless `usb_monitor.py`.
-- Otherwise it runs the USB monitor in the background and waits for X11 to
-  become reachable. Because the container starts before the desktop session,
-  it discovers the real session X11 cookie via `/proc/<pid>/{environ,cmdline,root}`
-  (works thanks to `pid:host` + privileged) and **honestly verifies** the
-  connection with `xdpyinfo` rather than trusting the error text.
-- When X11 is up it stops the background monitor and launches the GUI. If the
-  GUI exits with code 0 (the password-protected "Выход") it does **not**
-  relaunch — it drops to headless monitoring so the kiosk exit is meaningful.
-  A non-zero exit (e.g. the X session died) is treated as a crash and the GUI
-  relaunch loop continues.
-
-`.gitattributes` enforces LF endings; `start.sh` is also stripped of CR at build
-time. CI: three GitHub Actions workflows — `pr-docker-build.yml` and
-`main-docker-build.yml` build the Docker image via `docker/build-push-action`
-with `type=gha` cache; `release.yml` runs on a published GitHub release, writes
-`VERSION` (`<tag> <published-date>`), packages `astra-usb-monitor-<tag>.tar.gz`
-plus a `.sha256`, and uploads both as release assets — this is the archive
-`updater.py` downloads.
+`tests.yml` проверяет Python и синтаксис shell-скриптов на pull request
+и при изменении master. `release.yml` собирает Python-архив и SHA256;
+`release-station.yml` собирает отдельные релизы C# по правилам ниже.
+В нативном установщике сохраняется остановка старого контейнера
+`astra-usb-monitor` для безопасного перехода прежних установок.
 
 ## Version and auto-update
 

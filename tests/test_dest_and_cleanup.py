@@ -1,5 +1,4 @@
-"""Tests for backup-destination resolution, old-video cleanup, and the
-Docker (non-TTY) progress line throttling in usb_monitor.py."""
+"""Проверки диска назначения, очистки и частоты вывода прогресса в журнал."""
 
 import io
 import os
@@ -228,22 +227,22 @@ class CleanupOldVideosTest(unittest.TestCase):
             self.assertFalse(os.path.exists(video))
 
 
-class DockerProgressTest(unittest.TestCase):
+class LogProgressTest(unittest.TestCase):
     def setUp(self):
-        um._docker_progress_cache.clear()
+        um._log_progress_cache.clear()
 
     def test_first_update_for_a_device_always_prints(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
-            um._docker_progress("Device1", 1, 10, 10, 100, "f.mp4", time.time())
+            um._log_progress("Device1", 1, 10, 10, 100, "f.mp4", time.time())
         self.assertIn("Device1", buf.getvalue())
 
     def test_rapid_small_progress_deltas_are_throttled(self):
         start = time.time()
         buf = io.StringIO()
         with redirect_stdout(buf):
-            um._docker_progress("Device1", 1, 10, 10, 100, "f.mp4", start)   # 10% -> prints
-            um._docker_progress("Device1", 2, 10, 12, 100, "f2.mp4", start)  # 12%, <5pt delta -> suppressed
+            um._log_progress("Device1", 1, 10, 10, 100, "f.mp4", start)   # 10% -> prints
+            um._log_progress("Device1", 2, 10, 12, 100, "f2.mp4", start)  # 12%, <5pt delta -> suppressed
         lines = [l for l in buf.getvalue().splitlines() if l.strip()]
         self.assertEqual(len(lines), 1)
 
@@ -251,8 +250,8 @@ class DockerProgressTest(unittest.TestCase):
         start = time.time()
         buf = io.StringIO()
         with redirect_stdout(buf):
-            um._docker_progress("Device2", 5, 10, 50, 100, "f.mp4", start)      # 50%
-            um._docker_progress("Device2", 10, 10, 100, 100, "done.mp4", start)  # 100%
+            um._log_progress("Device2", 5, 10, 50, 100, "f.mp4", start)      # 50%
+            um._log_progress("Device2", 10, 10, 100, 100, "done.mp4", start)  # 100%
         lines = [l for l in buf.getvalue().splitlines() if l.strip()]
         self.assertEqual(len(lines), 2, "a >=5pt jump (here: to completion) must not be throttled")
 
@@ -260,8 +259,8 @@ class DockerProgressTest(unittest.TestCase):
         start = time.time()
         buf = io.StringIO()
         with redirect_stdout(buf):
-            um._docker_progress("Device3", 10, 10, 100, 100, "done.mp4", start)
-            um._docker_progress("Device3", 10, 10, 100, 100, "done.mp4", start)
+            um._log_progress("Device3", 10, 10, 100, 100, "done.mp4", start)
+            um._log_progress("Device3", 10, 10, 100, 100, "done.mp4", start)
         lines = [l for l in buf.getvalue().splitlines() if l.strip()]
         self.assertEqual(len(lines), 1)
 

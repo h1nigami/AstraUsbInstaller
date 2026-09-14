@@ -20,11 +20,8 @@ except ImportError:
 DEST_BASE = os.environ.get("USB_BACKUP_DEST", os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
 DB_PATH = os.environ.get("USB_DB_PATH", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "devices.db"))
 MOUNT_BASE = "/mnt/usb_backup"
-# How long to wait for the desktop auto-mounter to claim a freshly attached
-# device before we mount it ourselves. Reusing the system's own mount avoids a
-# second concurrent read-write mount of a FAT/exFAT stick, which corrupts it
-# (see _find_existing_mount). Headless/Docker has no auto-mounter, so this is a
-# one-time bounded delay per device before self-mounting.
+# Ждём системное монтирование, чтобы не создать второе подключение FAT/exFAT
+# на запись. Без автомонтирования задержка ограничена этим интервалом.
 MOUNT_GRACE_SECONDS = float(os.environ.get("USB_MOUNT_GRACE", "4"))
 MAX_WORKERS = int(os.environ.get("USB_MAX_WORKERS", "10"))
 DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
@@ -387,12 +384,12 @@ def _format_time(seconds):
     return f"{m}:{s:02d}"
 
 
-_docker_progress_cache = {}
+_log_progress_cache = {}
 
-def _docker_progress(label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time):
+def _log_progress(label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time):
     key = label
     now = time.time()
-    last = _docker_progress_cache.get(key, {"time": 0, "pct": -1})
+    last = _log_progress_cache.get(key, {"time": 0, "pct": -1})
     pct = (copied_bytes / total_bytes * 100) if total_bytes else 0
     elapsed = now - start_time
     eta = (elapsed / (pct / 100) - elapsed) if pct > 0.5 else 0
@@ -403,7 +400,7 @@ def _docker_progress(label, copied_files, total_files, copied_bytes, total_bytes
         if pct > 0 and pct < 100:
             return
 
-    _docker_progress_cache[key] = {"time": now, "pct": pct, "done": pct >= 100}
+    _log_progress_cache[key] = {"time": now, "pct": pct, "done": pct >= 100}
     eta_str = _format_time(eta) if pct > 0.5 else "--:--"
     fname = file_name[:45] if file_name else ""
     line = (
@@ -851,15 +848,7 @@ def _find_existing_mount(devname):
 
 
 def _wait_for_system_mount(devname, timeout):
-    """Poll _find_existing_mount for up to ``timeout`` seconds, returning the
-    mountpoint as soon as the system mounts the device, else ``None``.
-
-    Gives the desktop auto-mounter a short grace period to claim a just-attached
-    device so we reuse its mount instead of racing to create a conflicting
-    second one. Returns early the moment a mount appears (desktop case is
-    typically well under a second); on headless/Docker it times out and the
-    caller self-mounts.
-    """
+    """Дождаться системного монтирования или вернуть None по таймауту."""
     deadline = time.time() + max(0.0, timeout)
     while True:
         mp = _find_existing_mount(devname)
@@ -959,7 +948,7 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
                 if USE_RICH and progress_obj:
                     progress_obj.update(task_id, advance=file_size)
                 elif not IS_TTY:
-                    _docker_progress(progress_label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
+                    _log_progress(progress_label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
                 if emit_fn is not None:
                     now = time.time()
                     if now - last_emit_t >= 1.0:
@@ -1110,7 +1099,7 @@ def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=N
         # period to appear. Creating our own *second* read-write mount while the
         # desktop also holds one lets two uncoordinated FAT caches corrupt the
         # stick (0 B, refuses to remount). Only when no system mount shows up
-        # (headless / Docker) do we mount it ourselves and own the unmount.
+        # (headless mode) do we mount it ourselves and own the unmount.
         existing = _wait_for_system_mount(devname, MOUNT_GRACE_SECONDS)
         if existing:
             mountpoint = existing
