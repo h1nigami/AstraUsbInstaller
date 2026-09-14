@@ -35,10 +35,14 @@ class SharedCameraIdentityTest(unittest.TestCase):
             conn.close()
 
     def test_ten_new_cameras_register_concurrently_and_keep_ids(self):
-        self.check_ten_cameras(marker=None)
+        self.check_ten_new_cameras()
 
-    def test_ten_duplicate_markers_are_split_and_keep_ids(self):
-        self.check_ten_cameras(marker=123456)
+    def test_duplicate_connected_marker_is_rejected_without_rewrite(self):
+        first, second = self.mount(1, 123456), self.mount(2, 123456)
+        self.resolve(first, "sdb1")
+        with self.assertRaisesRegex(OSError, "Дубликат Astra ID 123456"):
+            self.resolve(second, "sdc1")
+        self.assertEqual(um._read_device_id_from_usb(second), 123456)
 
     def test_fast_reconnect_under_new_device_name_keeps_id(self):
         mount = self.mount(1)
@@ -62,7 +66,8 @@ class SharedCameraIdentityTest(unittest.TestCase):
         self.resolve(first, "sdb1")
         um._update_connected_devices(set())
         um._update_connected_devices({"sdb1", "sdc1"})
-        self.assertNotEqual(self.resolve(second, "sdc1"), 123456)
+        with self.assertRaisesRegex(OSError, "Дубликат Astra ID 123456"):
+            self.resolve(second, "sdc1")
 
     def test_slow_marker_io_does_not_block_poll_or_other_camera(self):
         for operation in ("_read_device_id_from_usb", "_write_device_id_to_usb"):
@@ -127,7 +132,8 @@ class SharedCameraIdentityTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.resolve(first, "sdb1")
         clone = self.mount(3, replacement_ids[0])
-        self.assertNotEqual(self.resolve(clone, "sdc1"), replacement_ids[0])
+        with self.assertRaisesRegex(OSError, f"Дубликат Astra ID {replacement_ids[0]}"):
+            self.resolve(clone, "sdc1")
 
     def test_late_initial_read_does_not_replace_reconnected_device_claim(self):
         first, replacement = self.mount(1, 7), self.mount(2, 9)
@@ -144,10 +150,11 @@ class SharedCameraIdentityTest(unittest.TestCase):
             with self.assertRaises(OSError):
                 self.resolve(first, "sdb1")
         clone = self.mount(3, 9)
-        self.assertNotEqual(self.resolve(clone, "sdc1"), 9)
+        with self.assertRaisesRegex(OSError, "Дубликат Astra ID 9"):
+            self.resolve(clone, "sdc1")
 
-    def check_ten_cameras(self, marker):
-        mounts = [self.mount(n, marker) for n in range(10)]
+    def check_ten_new_cameras(self):
+        mounts = [self.mount(n) for n in range(10)]
         barrier = threading.Barrier(10)
 
         def register(n):
@@ -157,15 +164,13 @@ class SharedCameraIdentityTest(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=10) as pool:
             ids = list(pool.map(register, range(10)))
         self.assertEqual(len(set(ids)), 10)
-        if marker is not None:
-            self.assertEqual(ids.count(marker), 1)
         for n, device_id in enumerate(ids):
             self.assertEqual(um._read_device_id_from_usb(mounts[n]), device_id)
         um._update_connected_devices({f"new{n}" for n in range(10)})
         for n, device_id in enumerate(ids):
             self.assertEqual(self.resolve(mounts[n], f"new{n}"), device_id)
 
-    def test_copy_tasks_with_duplicate_markers_use_separate_folders_and_cards(self):
+    def test_copy_task_rejects_duplicate_marker_without_copying(self):
         first, second = self.mount(1, 123456), self.mount(2, 123456)
         for path, content in ((first, b"first"), (second, b"second")):
             with open(os.path.join(path, "video.mp4"), "wb") as stream:
@@ -177,14 +182,15 @@ class SharedCameraIdentityTest(unittest.TestCase):
              mock.patch.object(um, "_get_device_serial_linux", return_value="SAME"), \
              mock.patch.object(um, "get_dest_base", return_value=dest), \
              mock.patch.object(um, "dest_available", return_value=True), \
+             mock.patch.object(um.subprocess, "run"), \
              mock.patch.object(um, "_delete_source_videos"):
             first_id = um.copy_task(first, first, "sdb1", None, None, progress_queue=progress)[0]
             second_id = um.copy_task(second, second, "sdc1", None, None, progress_queue=progress)[0]
-        self.assertNotEqual(first_id, second_id)
-        for device_id, content in ((first_id, b"first"), (second_id, b"second")):
-            with open(os.path.join(dest, f"Device{device_id}", "video.mp4"), "rb") as stream:
-                self.assertEqual(stream.read(), content)
-        self.assertEqual({event[0] for event in list(progress.queue)}, {first_id, second_id})
+        self.assertEqual(first_id, 123456)
+        self.assertIsNone(second_id)
+        self.assertEqual(um._read_device_id_from_usb(second), 123456)
+        with open(os.path.join(dest, "Device123456", "video.mp4"), "rb") as stream:
+            self.assertEqual(stream.read(), b"first")
 
     def test_marker_write_failure_reports_error_without_copy_or_delete(self):
         mount = self.mount(1)

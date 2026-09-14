@@ -17,7 +17,7 @@ import usb_monitor as um
 
 
 class CameraSimulationTest(unittest.TestCase):
-    def test_ten_identical_ids_copy_separately_and_survive_reconnect(self):
+    def test_ten_identical_ids_copy_only_first_and_preserve_duplicates(self):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as patches:
             root = Path(directory)
             sources = [root / f"camera-{n}" for n in range(10)]
@@ -30,21 +30,13 @@ class CameraSimulationTest(unittest.TestCase):
                 expected[n] = hashlib.sha256(data).hexdigest()
             destination = root / "archive"
             destination.mkdir()
-            selection_lock = threading.Lock()
             selected = {f"sd{n}": str(path) for n, path in enumerate(sources)}
 
             def partitions():
-                with selection_lock:
-                    return dict(selected)
+                return dict(selected)
 
-            barrier = threading.Barrier(10)
-            real_copy = um._copy_files
             real_task = um.copy_task_linux
             completed = queue.Queue()
-
-            def simultaneous_copy(*args, **kwargs):
-                barrier.wait(timeout=10)
-                return real_copy(*args, **kwargs)
 
             def complete_task(*args, **kwargs):
                 result = real_task(*args, **kwargs)
@@ -62,12 +54,12 @@ class CameraSimulationTest(unittest.TestCase):
                 "_get_linux_partitions": partitions,
                 "_get_drive_label_linux": lambda _: "RECORDER",
                 "_get_device_serial_linux": lambda _: "IDENTICAL_FACTORY_ID",
-                "_copy_files": simultaneous_copy,
                 "copy_task_linux": complete_task,
             }.items():
                 patches.enter_context(mock.patch.object(um, name, value))
             patches.enter_context(mock.patch.object(um.platform, "system", return_value="Linux"))
             patches.enter_context(mock.patch.object(um.os.path, "ismount", return_value=True))
+            patches.enter_context(mock.patch.object(um.subprocess, "run"))
 
             progress = queue.Queue()
             stop = threading.Event()
@@ -97,71 +89,52 @@ class CameraSimulationTest(unittest.TestCase):
             except ImportError:
                 pass
 
-            def await_events(state, count):
-                events = []
-                matched = set()
+            def await_terminal_events(count):
+                terminal = []
                 deadline = time.monotonic() + 15
-                while len(matched) < count:
+                while len(terminal) < count:
                     remaining = deadline - time.monotonic()
-                    self.assertGreater(remaining, 0, f"Не получены события {state}: {matched}")
+                    self.assertGreater(remaining, 0, f"Не получены итоговые события: {terminal}")
                     event = progress.get(timeout=remaining)
-                    self.assertNotEqual(event[2], "error", event)
-                    events.append(event)
                     if gui is not None:
                         gui.progress_queue.put(event)
                         gui._poll_queue()
-                    if event[2] == state or event[0] == state:
-                        matched.add(event[1] if state == "_removed_" else event[6])
-                return events
+                    if event[2] in {"done", "error"}:
+                        terminal.append(event)
+                return terminal
 
             try:
-                first_events = await_events("done", 10)
-                for _ in range(10):
-                    completed.get(timeout=10)
-                first_ids = [um._read_device_id_from_usb(str(path)) for path in sources]
-                self.assertEqual(len(set(first_ids)), 10)
-                self.assertEqual(first_ids.count(123456), 1)
-                self.assertEqual(len({event[0] for event in first_events}), 10)
-                for n, device_id in enumerate(first_ids):
-                    backup = destination / f"Device{device_id}" / "video.mp4"
-                    self.assertEqual(hashlib.sha256(backup.read_bytes()).hexdigest(), expected[n])
-                    self.assertFalse((sources[n] / "video.mp4").exists())
-                    totals = {e[4] for e in first_events if e[0] == device_id and e[2] == "copying"}
-                    self.assertEqual(totals, {1024 * 1024 + n * 1024})
-                if gui is not None:
-                    self.assertEqual(len(gui.port_assignment), 10)
-                    self.assertTrue(all(data["state_raw"] == "done" for data in gui.workers_data.values()))
+                terminal = await_terminal_events(10)
+                results = [completed.get(timeout=10) for _ in range(10)]
+                done = [event for event in terminal if event[2] == "done"]
+                errors = [event for event in terminal if event[2] == "error"]
+                self.assertEqual(len(done), 1)
+                self.assertEqual(len(errors), 9)
+                self.assertTrue(all("Дубликат Astra ID 123456" in event[5] for event in errors))
+                self.assertEqual(sum(result[0] == 123456 for result in results), 1)
+                self.assertEqual(sum(result[0] is None for result in results), 9)
+                self.assertEqual(
+                    [um._read_device_id_from_usb(str(path)) for path in sources],
+                    [123456] * 10,
+                )
 
-                with selection_lock:
-                    selected.clear()
-                await_events("_removed_", 10)
-                if gui is not None:
-                    self.assertEqual(gui.workers_data, {})
-                    self.assertEqual(gui.port_assignment, {})
-
+                winner = int(done[0][6][2:])
+                backup = destination / "Device123456" / "video.mp4"
+                self.assertEqual(hashlib.sha256(backup.read_bytes()).hexdigest(), expected[winner])
                 for n, source in enumerate(sources):
-                    (source / "next.mp4").write_bytes(f"second-session-camera-{n}".encode())
-                with selection_lock:
-                    selected.update({f"new{9 - n}": str(path) for n, path in enumerate(sources)})
-                await_events("done", 10)
-                for _ in range(10):
-                    completed.get(timeout=10)
-                self.assertEqual([um._read_device_id_from_usb(str(path)) for path in sources], first_ids)
-                self.assertEqual(len(list(destination.iterdir())), 10)
-                for n, device_id in enumerate(first_ids):
-                    backup = destination / f"Device{device_id}"
-                    self.assertEqual(hashlib.sha256((backup / "video.mp4").read_bytes()).hexdigest(), expected[n])
-                    self.assertEqual((backup / "next.mp4").read_text(), f"second-session-camera-{n}")
-                    self.assertFalse((sources[n] / "next.mp4").exists())
-                with closing(sqlite3.connect(um.DB_PATH)) as conn:
-                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0], 10)
-                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0], 20)
+                    self.assertEqual((source / "video.mp4").exists(), n != winner)
                 if gui is not None:
                     self.assertEqual(len(gui.port_assignment), 10)
+                    states = [data["state_raw"] for data in gui.workers_data.values()]
+                    self.assertEqual(states.count("done"), 1)
+                    self.assertEqual(states.count("error"), 9)
+                with closing(sqlite3.connect(um.DB_PATH)) as conn:
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0], 1)
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0], 1)
                 print("SIMULATION_RESULT=" + json.dumps({
-                    "devices": 10, "initial_marker": 123456, "assigned_ids": first_ids,
-                    "backup_folders": 10, "backup_sessions": 20, "verified_files": 20,
-                    "ids_preserved_after_reconnect": True, "gui_logic_checked": gui is not None,
+                    "connected": 10, "astra_id": 123456, "copied": 1,
+                    "duplicates_rejected": 9, "markers_preserved": True,
+                    "gui_logic_checked": gui is not None,
                 }))
             finally:
                 stop.set()

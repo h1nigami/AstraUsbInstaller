@@ -43,12 +43,6 @@ class DeviceIdMarkerFileTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as mp:
             self.assertIsNone(um._read_device_id_from_usb(mp))
 
-    def test_read_non_numeric_content_returns_none(self):
-        with tempfile.TemporaryDirectory() as mp:
-            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w") as f:
-                f.write("not-a-number")
-            self.assertIsNone(um._read_device_id_from_usb(mp))
-
     def test_none_mountpoint_is_safe_noop(self):
         self.assertIsNone(um._read_device_id_from_usb(None))
         um._write_device_id_to_usb(None, 5)  # must not raise
@@ -76,22 +70,28 @@ class ResolveDeviceIdTest(unittest.TestCase):
                 "SELECT serial, label FROM devices WHERE id=?", (dev_id,)).fetchone()
             self.assertEqual(row, ("SER1", "LABEL1"))
 
-    def test_existing_marker_wins_and_updates_last_seen_label(self):
+    def test_corrupt_existing_marker_is_rejected(self):
+        with tempfile.TemporaryDirectory() as mp:
+            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w", encoding="utf-8") as stream:
+                stream.write("broken")
+            with self.assertRaisesRegex(OSError, "Некорректный Astra ID"):
+                um._resolve_device_id(self.conn, mp, "SER", "CAM", "sdb1")
+
+    def test_existing_marker_is_the_only_identity(self):
         with tempfile.TemporaryDirectory() as mp:
             um._write_device_id_to_usb(mp, 999)
-            dev_id = um._resolve_device_id(self.conn, mp, "SERX", "NEWLABEL", "sdb1")
-            self.assertEqual(dev_id, 999)
-            row = self.conn.execute(
-                "SELECT label FROM devices WHERE id=?", (999,)).fetchone()
-            self.assertEqual(row[0], "NEWLABEL")
+            self.assertEqual(
+                um._resolve_device_id(self.conn, mp, "CONFLICTING_SERIAL", "CAM", "sdb1"),
+                999,
+            )
 
-    def test_shared_serial_without_marker_creates_distinct_id(self):
+    def test_same_serial_without_marker_gets_next_local_ids(self):
         with tempfile.TemporaryDirectory() as mp1:
             first_id = um._resolve_device_id(self.conn, mp1, "SERIALSAME", "L1", "sda1")
         with tempfile.TemporaryDirectory() as mp2:
             second_id = um._resolve_device_id(self.conn, mp2, "SERIALSAME", "L1", "sda2")
-            self.assertNotEqual(second_id, first_id)
             self.assertEqual(um._read_device_id_from_usb(mp2), second_id)
+        self.assertEqual((first_id, second_id), (1, 2))
 
     def test_no_marker_no_serial_creates_distinct_devices_without_crashing(self):
         # Regression: devices.serial is UNIQUE NOT NULL, so two drives that
@@ -133,12 +133,12 @@ class ResolveDeviceIdTest(unittest.TestCase):
 
 
 class FriendlyLabelTest(unittest.TestCase):
-    def test_custom_name_wins(self):
-        self.assertEqual(um._friendly_device_label(3, "Проходная"), "Проходная")
+    def test_custom_name_is_shown_after_astra_id(self):
+        self.assertEqual(um._friendly_device_label(3, "Проходная"), "Astra ID 3 · Проходная")
 
-    def test_falls_back_to_bare_number(self):
-        self.assertEqual(um._friendly_device_label(3, ""), "3")
-        self.assertEqual(um._friendly_device_label(3, None), "3")
+    def test_without_name_shows_astra_id(self):
+        self.assertEqual(um._friendly_device_label(3, ""), "Astra ID 3")
+        self.assertEqual(um._friendly_device_label(3, None), "Astra ID 3")
 
 
 class SharedSerialTest(unittest.TestCase):

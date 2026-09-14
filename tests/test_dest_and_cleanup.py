@@ -227,6 +227,43 @@ class CleanupOldVideosTest(unittest.TestCase):
             self.assertFalse(os.path.exists(video))
 
 
+class RepairArchiveOwnershipTest(unittest.TestCase):
+    def test_repairs_only_direct_device_directories_with_numeric_suffix(self):
+        root = os.path.realpath("/archive")
+
+        def entry(name, is_dir=True):
+            item = mock.Mock()
+            item.path = os.path.join(root, name)
+            item.name = name
+            item.is_dir.return_value = is_dir
+            return item
+
+        entries = [
+            entry("Device1"),
+            entry("Device200"),
+            entry("Devicebad"),
+            entry("Device3", is_dir=False),
+            entry("Other4"),
+        ]
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um.os, "scandir", return_value=entries), \
+             mock.patch.object(um.subprocess, "run") as run:
+            um._repair_archive_ownership(root)
+
+        self.assertEqual(run.call_args_list, [
+            mock.call(
+                ["chown", "-R", f"--reference={root}", "--", os.path.join(root, "Device1")],
+                check=False,
+                capture_output=True,
+            ),
+            mock.call(
+                ["chown", "-R", f"--reference={root}", "--", os.path.join(root, "Device200")],
+                check=False,
+                capture_output=True,
+            ),
+        ])
+
+
 class LogProgressTest(unittest.TestCase):
     def setUp(self):
         um._log_progress_cache.clear()
