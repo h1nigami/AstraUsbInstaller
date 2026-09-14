@@ -206,6 +206,24 @@ class SharedCameraIdentityTest(unittest.TestCase):
         delete.assert_not_called()
         self.assertEqual(progress.get_nowait()[2], "error")
 
+    def test_invalid_utf8_marker_reports_error_without_copying(self):
+        mount = self.mount(1)
+        with open(os.path.join(mount, um.DEVICE_ID_FILE), "wb") as stream:
+            stream.write(b"\xff")
+        with open(os.path.join(mount, "video.mp4"), "wb") as stream:
+            stream.write(b"video")
+        dest = self.mount("archive")
+        progress = queue.Queue()
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um, "_get_drive_label_linux", return_value="CAM"), \
+             mock.patch.object(um, "_get_device_serial_linux", return_value="SER"), \
+             mock.patch.object(um, "get_dest_base", return_value=dest):
+            result = um.copy_task(mount, mount, "sdb1", None, None, progress_queue=progress)
+        self.assertEqual(result, (None, 0, 0))
+        self.assertEqual(progress.get_nowait()[2], "error")
+        self.assertEqual(os.listdir(dest), [])
+        self.assertTrue(os.path.isfile(os.path.join(mount, "video.mp4")))
+
 
 if __name__ == "__main__":
     unittest.main()

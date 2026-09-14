@@ -43,6 +43,20 @@ class DeviceIdMarkerFileTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as mp:
             self.assertIsNone(um._read_device_id_from_usb(mp))
 
+    def test_invalid_utf8_is_reported_as_oserror(self):
+        with tempfile.TemporaryDirectory() as mp:
+            with open(os.path.join(mp, um.DEVICE_ID_FILE), "wb") as stream:
+                stream.write(b"\xff")
+            with self.assertRaisesRegex(OSError, "Некорректный Astra ID"):
+                um._read_device_id_from_usb(mp)
+
+    def test_non_decimal_unicode_digit_is_reported_as_oserror(self):
+        with tempfile.TemporaryDirectory() as mp:
+            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w", encoding="utf-8") as stream:
+                stream.write("²")
+            with self.assertRaisesRegex(OSError, "Некорректный Astra ID"):
+                um._read_device_id_from_usb(mp)
+
     def test_none_mountpoint_is_safe_noop(self):
         self.assertIsNone(um._read_device_id_from_usb(None))
         um._write_device_id_to_usb(None, 5)  # must not raise

@@ -491,11 +491,17 @@ def _read_device_id_from_usb(mountpoint):
             value = stream.read().strip()
     except FileNotFoundError:
         return None
+    except UnicodeError as error:
+        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
     except OSError as error:
         raise OSError(f"Не удалось прочитать Astra ID: {error}") from error
-    if not value.isdigit() or int(value) <= 0:
+    try:
+        device_id = int(value)
+    except ValueError as error:
+        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
+    if not value.isascii() or not value.isdigit() or device_id <= 0:
         raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}")
-    return int(value)
+    return device_id
 
 
 def _write_device_id_to_usb(mountpoint, device_id):
@@ -607,16 +613,23 @@ def _friendly_device_label(device_id, name):
 def _repair_archive_ownership(root, device_dir=None):
     if platform.system() == "Windows" or not root:
         return
+    root = os.path.realpath(root)
+    if device_dir and (os.path.islink(device_dir) or not os.path.isdir(device_dir)):
+        return
     candidates = [device_dir] if device_dir else [
         entry.path for entry in os.scandir(root)
         if entry.is_dir(follow_symlinks=False)
         and entry.name.startswith("Device")
+        and entry.name[6:].isascii()
         and entry.name[6:].isdigit()
+        and int(entry.name[6:]) > 0
     ]
-    root = os.path.realpath(root)
     for path in candidates:
         path = os.path.realpath(path)
-        if os.path.dirname(path) != root or not os.path.basename(path)[6:].isdigit():
+        name = os.path.basename(path)
+        suffix = name[6:] if name.startswith("Device") else ""
+        if (os.path.dirname(path) != root or not suffix.isascii()
+                or not suffix.isdigit() or int(suffix) <= 0):
             continue
         subprocess.run(
             ["chown", "-R", f"--reference={root}", "--", path],
