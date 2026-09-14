@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace AstraUsb.Services;
 
@@ -14,6 +15,27 @@ public sealed record ReleaseAsset(string Archive, string Checksum);
 public sealed record Release(string Tag, DateTime Published,
     IReadOnlyDictionary<string, string> Assets)
 {
+    public static bool IsStationTag(string tag) =>
+        Regex.IsMatch(tag, @"\Av2\.[0-9]+(?:\.[0-9]+)*(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z");
+
+    public static Release? Select(string json, string platform)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            var candidates = root.ValueKind == JsonValueKind.Array
+                ? root.EnumerateArray().Select(item => Parse(item.GetRawText()))
+                : new[] { Parse(json) };
+            return candidates.Where(release => release?.Pick(platform) is not null)
+                .OrderByDescending(release => release!.Published).FirstOrDefault();
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     /// <summary>Разбирает ответ GitHub. Возвращает null, если это не он.</summary>
     public static Release? Parse(string json)
     {
@@ -26,15 +48,16 @@ public sealed record Release(string Tag, DateTime Published,
                 return null;
 
             var name = tag.GetString() ?? "";
-            if (name.Length == 0)
+            if (!IsStationTag(name)
+                || root.TryGetProperty("draft", out var draft) && draft.GetBoolean())
                 return null;
 
             var published = root.TryGetProperty("published_at", out var stamp)
                             && DateTime.TryParse(stamp.GetString(), out var parsed)
                 ? parsed
-                : DateTime.Now;
+                : DateTime.MinValue;
 
-            var assets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var assets = new Dictionary<string, string>(StringComparer.Ordinal);
 
             if (root.TryGetProperty("assets", out var list)
                 && list.ValueKind == JsonValueKind.Array)
@@ -67,14 +90,13 @@ public sealed record Release(string Tag, DateTime Published,
     /// </summary>
     public ReleaseAsset? Pick(string platform)
     {
-        var archive = Assets.Keys.FirstOrDefault(
-            name => name.EndsWith($"-{platform}.tar.gz", StringComparison.OrdinalIgnoreCase));
-
-        if (archive is null)
+        if (!IsStationTag(Tag) || platform is not ("linux-x64" or "linux-arm64"))
             return null;
 
-        return Assets.TryGetValue(archive + ".sha256", out var checksum)
-            ? new ReleaseAsset(Assets[archive], checksum)
+        var archive = $"bestcam-station-{Tag}-{platform}.tar.gz";
+        return Assets.TryGetValue(archive, out var url)
+               && Assets.TryGetValue(archive + ".sha256", out var checksum)
+            ? new ReleaseAsset(url, checksum)
             : null;
     }
 }

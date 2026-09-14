@@ -12,7 +12,7 @@ jobs:
     # Предварительные релизы этот архив не получают: их публикуют для
     # кроссплатформенной версии, а станции на Python берут releases/latest и
     # не должны увидеть в нём чужой архив.
-    if: github.event.release.prerelease == false
+    if: github.event.release.prerelease == false && startsWith(github.event.release.tag_name, 'v1.')
     runs-on: ubuntu-latest
     env:
       TAG: ${{ github.event.release.tag_name }}

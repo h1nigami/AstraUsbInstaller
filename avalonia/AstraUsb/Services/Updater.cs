@@ -62,7 +62,7 @@ public static class Updater
     /// поэтому неудачный релиз лечится публикацией другого, а не выездом.
     /// </summary>
     public static bool NeedsUpdate(string installed, string latest) =>
-        latest.Length > 0 && !string.Equals(installed, latest, StringComparison.Ordinal);
+        Release.IsStationTag(latest) && !string.Equals(installed, latest, StringComparison.Ordinal);
 
     /// <summary>Запоминает тег, на котором обновление сорвалось.</summary>
     public static void RememberFailed(string tag)
@@ -145,10 +145,10 @@ public static class Updater
         if (answer is null)
             return 0;
 
-        var release = Release.Parse(answer);
+        var release = Release.Select(answer, Platform());
         if (release is null)
         {
-            Say("ответ GitHub не разобрался");
+            Say("в ответе нет готового релиза C# для этой платформы");
             return 0;
         }
 
@@ -233,26 +233,31 @@ public static class Updater
             return 1;
         }
 
-        Snapshot();
-        Say($"ставим {release.Tag}");
-
-        if (!Shell("/bin/sh", installer, root) || !Healthy())
+        if (BusyMarker.Busy())
         {
-            // Порядок важен: сначала запоминаем сбойный тег, потом
-            // откатываемся. Иначе падение отката стёрло бы память о нём, и
-            // станция пыталась бы поставить тот же релиз снова и снова.
-            RememberFailed(release.Tag);
-            Rollback();
-            return 1;
+            Say("во время загрузки начался сбор записей, обновимся в следующий раз");
+            return 0;
         }
 
-        if (InstalledTag() != release.Tag)
+        Snapshot();
+        Say($"ставим {release.Tag}");
+        try
         {
-            // Установка прошла, а версия осталась другой: значит в архиве
-            // лежало не то, что обещал релиз. Иначе это «обновление»
-            // повторялось бы каждые шесть часов.
-            Say("версия после установки не совпала с тегом релиза");
+            if (!Shell("/bin/systemctl", "reset-failed", null, Service))
+                throw new IOException("не удалось сбросить счётчик перезапусков службы");
+            if (!Shell("/bin/sh", installer, root))
+                throw new IOException("установщик завершился с ошибкой");
+            if (InstalledTag() != release.Tag)
+                throw new IOException("версия после установки не совпала с тегом релиза");
+            if (!Healthy())
+                throw new IOException("новая служба работает со сбоями");
+        }
+        catch (Exception e)
+        {
+            Say(e.Message);
+            // Сначала сохраняем сбойный тег: даже неудачный откат не должен потерять его.
             RememberFailed(release.Tag);
+            Rollback();
             return 1;
         }
 
@@ -268,7 +273,8 @@ public static class Updater
     private static string Source() =>
         Environment.GetEnvironmentVariable("ASTRA_UPDATE_API") is { Length: > 0 } mirror
             ? mirror
-            : $"https://api.github.com/repos/{Repo}/releases/latest";
+            // ponytail: просматриваем 100 последних релизов; при большем числе нужен отдельный feed.
+            : $"https://api.github.com/repos/{Repo}/releases?per_page=100";
 
     /// <summary>Ответ GitHub или null при любой сетевой беде.</summary>
     private static string? Ask(string url)
@@ -286,15 +292,16 @@ public static class Updater
         }
     }
 
-    private static bool Download(string url, string target)
+    private static bool Download(string url, string target, TimeSpan? timeout = null)
     {
         try
         {
             using var client = Client();
-            using var source = client.GetStreamAsync(url).WaitAsync(Wait)
+            using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromMinutes(10));
+            using var source = client.GetStreamAsync(url, deadline.Token).WaitAsync(Wait, deadline.Token)
                 .GetAwaiter().GetResult();
             using var file = File.Create(target);
-            source.CopyTo(file);
+            source.CopyToAsync(file, deadline.Token).GetAwaiter().GetResult();
             return true;
         }
         catch (Exception e)
@@ -338,7 +345,7 @@ public static class Updater
     {
         try
         {
-            if (!File.Exists(binary))
+            if (OperatingSystem.IsWindows() || !File.Exists(binary))
                 return false;
 
             File.SetUnixFileMode(binary,
@@ -346,22 +353,10 @@ public static class Updater
                 | UnixFileMode.GroupRead | UnixFileMode.GroupExecute
                 | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
 
-            var info = new ProcessStartInfo(binary)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
+            var info = new ProcessStartInfo(binary);
             info.ArgumentList.Add("--version");
 
-            using var proc = Process.Start(info);
-            if (proc is null)
-                return false;
-
-            proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
-
-            return proc.WaitForExit(60_000) && proc.ExitCode == 0;
+            return Execute(info, TimeSpan.FromMinutes(1)).Code == 0;
         }
         catch (Exception e)
         {
@@ -398,7 +393,8 @@ public static class Updater
             }
 
             Copy(PrevDir, AppDir, skipData: true);
-            Shell("/bin/systemctl", "restart", null, Service);
+            if (!Shell("/bin/systemctl", "restart", null, Service))
+                throw new IOException("файлы восстановлены, но служба не перезапустилась");
             Say("вернулись на прежнюю версию");
         }
         catch (Exception e)
@@ -419,6 +415,12 @@ public static class Updater
             return false;
         }
 
+        var restarts = Output("/bin/systemctl", "show", Service, "-p", "NRestarts", "--value").Trim();
+        if (!int.TryParse(restarts, out var count) || count != 0)
+        {
+            Say($"служба перезапускалась после установки: {restarts}");
+            return false;
+        }
         return true;
     }
 
@@ -464,12 +466,7 @@ public static class Updater
     {
         try
         {
-            var info = new ProcessStartInfo(command)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
+            var info = new ProcessStartInfo(command);
 
             info.ArgumentList.Add(first);
             if (second is not null)
@@ -478,24 +475,11 @@ public static class Updater
             if (workingDir is not null)
                 info.WorkingDirectory = workingDir;
 
-            using var proc = Process.Start(info);
-            if (proc is null)
-                return false;
+            var result = Execute(info, TimeSpan.FromMinutes(15));
+            if (result.Code != 0)
+                Say($"{command} вернул {result.Code}: {Last(result.Error + result.Output)}");
 
-            var output = proc.StandardOutput.ReadToEnd();
-            var error = proc.StandardError.ReadToEnd();
-
-            if (!proc.WaitForExit(900_000))
-            {
-                try { proc.Kill(entireProcessTree: true); } catch (Exception) { }
-                Say("установка затянулась и прервана");
-                return false;
-            }
-
-            if (proc.ExitCode != 0)
-                Say($"{command} вернул {proc.ExitCode}: {Last(error + output)}");
-
-            return proc.ExitCode == 0;
+            return result.Code == 0;
         }
         catch (Exception e)
         {
@@ -504,31 +488,47 @@ public static class Updater
         }
     }
 
-    private static string Output(string command, string first, string second)
+    private static string Output(string command, params string[] arguments)
     {
         try
         {
-            var info = new ProcessStartInfo(command)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            info.ArgumentList.Add(first);
-            info.ArgumentList.Add(second);
+            var info = new ProcessStartInfo(command);
+            foreach (var argument in arguments)
+                info.ArgumentList.Add(argument);
 
-            using var proc = Process.Start(info);
-            if (proc is null)
-                return "";
-
-            var text = proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
-            proc.WaitForExit(30_000);
-            return text;
+            var result = Execute(info, TimeSpan.FromSeconds(30));
+            return result.Code == 0 ? result.Output : "";
         }
         catch (Exception)
         {
             return "";
+        }
+    }
+
+    private static (int Code, string Output, string Error) Execute(ProcessStartInfo info, TimeSpan timeout)
+    {
+        info.UseShellExecute = false;
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
+        using var deadline = new CancellationTokenSource(timeout);
+        using var proc = Process.Start(info) ?? throw new IOException("процесс не запустился");
+        try
+        {
+            var output = proc.StandardOutput.ReadToEndAsync(deadline.Token);
+            var error = proc.StandardError.ReadToEndAsync(deadline.Token);
+            Task.WhenAll(output, error, proc.WaitForExitAsync(deadline.Token))
+                .WaitAsync(deadline.Token).GetAwaiter().GetResult();
+            return (proc.ExitCode, output.GetAwaiter().GetResult(), error.GetAwaiter().GetResult());
+        }
+        catch
+        {
+            try
+            {
+                proc.Kill(entireProcessTree: true);
+                proc.WaitForExit(5_000);
+            }
+            catch (InvalidOperationException) { }
+            throw;
         }
     }
 
