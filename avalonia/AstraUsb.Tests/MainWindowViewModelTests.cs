@@ -234,6 +234,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     [InlineData("charge")]
     [InlineData("resume")]
     [InlineData("priority")]
+    [InlineData("remote-priority")]
     public void Modal_commands_target_the_selected_mount_even_when_camera_labels_match(string command)
     {
         using var model = new MainWindowViewModel(() => []);
@@ -263,31 +264,100 @@ public sealed class MainWindowViewModelTests : IDisposable
             Assert.True(secondCancel.IsCancellationRequested);
             Assert.False(firstCancel.IsCancellationRequested);
         }
-        else
+        else if (command == "resume")
         {
-            if (command == "resume")
-                model.ResumeBayCommand.Execute(null);
-            else
-            {
-                model.PrioritizeBayCommand.Execute(null);
-                Assert.Equal(second, Field<string>(model, "_priority"));
-            }
+            model.ResumeBayCommand.Execute(null);
             Assert.Contains(first, charging);
             Assert.DoesNotContain(second, charging);
+        }
+        else
+        {
+            Prioritize(model, command == "remote-priority");
+            Assert.Null(Field<string?>(model, "_priority"));
+            Assert.False(firstCancel.IsCancellationRequested);
+            Assert.Contains(first, charging);
+            Assert.Contains(second, charging);
         }
         cancels.Clear();
     }
 
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prioritizing_a_duplicate_does_not_block_the_next_poll_or_queued_cameras(bool remote)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
+        var duplicate = Directory.CreateDirectory(Path.Combine(_dir, "duplicate")).FullName;
+        var next = Directory.CreateDirectory(Path.Combine(_dir, "next")).FullName;
+        CacheCard(model, first);
+        CacheCard(model, duplicate);
+        typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+        ApplyDevices(model, new("first", first), new("duplicate", duplicate));
+        model.OpenBayCommand.Execute(model.Ports[1]);
+        model.BayConfirm = "priority";
+
+        Prioritize(model, remote);
+        CacheCard(model, next, 8);
+        ApplyDevices(model, new("first", first), new("duplicate", duplicate), new("next", next));
+
+        var cancels = Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels");
+        try
+        {
+            Assert.True(cancels.ContainsKey(first));
+            Assert.True(cancels.ContainsKey(next));
+            Assert.False(cancels.ContainsKey(duplicate));
+            Assert.Equal(PortState.Failed, model.Ports[1].State);
+        }
+        finally
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (cancels.Count > 0 && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Empty(cancels);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_failed_owner_can_still_be_prioritized_for_retry()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Directory.CreateDirectory(Path.Combine(_dir, "failed")).FullName;
+        CacheCard(model, mount);
+        var finished = Field<Dictionary<string, BackupStage>>(model, "_finished");
+        finished[mount] = BackupStage.Failed;
+        ApplyDevices(model, new UsbDevice("failed", mount));
+        model.Ports[0].State = PortState.Failed;
+        model.OpenBayCommand.Execute(model.Ports[0]);
+        model.BayConfirm = "priority";
+
+        model.PrioritizeBayCommand.Execute(null);
+
+        Assert.Equal(mount, Field<string>(model, "_priority"));
+        Assert.False(finished.ContainsKey(mount));
+    }
+
     private const BindingFlags PrivateFields = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    private static void Prioritize(MainWindowViewModel model, bool remote)
+    {
+        if (!remote)
+            model.PrioritizeBayCommand.Execute(null);
+        else
+        {
+            StationCommands.Request(StationAction.Prioritize, model.Bay!.Slot);
+            typeof(MainWindowViewModel).GetMethod("ApplyRemoteCommands", PrivateFields)!.Invoke(model, null);
+        }
+    }
 
     private static T Field<T>(MainWindowViewModel model, string name) =>
         (T)typeof(MainWindowViewModel).GetField(name, PrivateFields)!.GetValue(model)!;
 
-    private static void CacheCard(MainWindowViewModel model, string mount)
+    private static void CacheCard(MainWindowViewModel model, string mount, long id = 7)
     {
         var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
         Field<System.Collections.IDictionary>(model, "_identified")[mount] =
-            Activator.CreateInstance(cardType, [7L, "Astra ID 7", "", "", "", ""]);
+            Activator.CreateInstance(cardType, [id, $"Astra ID {id}", "", "", "", ""]);
     }
 
     private static void ApplyDevices(MainWindowViewModel model, params UsbDevice[] found) =>

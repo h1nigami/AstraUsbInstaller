@@ -536,7 +536,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void PrioritizeBay()
     {
-        if (Bay is not { } port || MountOf(port) is not { } mount)
+        if (Bay is not { } port || MountOf(port) is not { } mount
+            || HasAnotherOwner(_identified[mount].DeviceId, mount))
             return;
 
         if (BayConfirm != "priority")
@@ -605,6 +606,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private string? MountOf(PortViewModel port) =>
         port.MountPoint is { } mount && _identified.TryGetValue(mount, out var card)
             && card.DeviceId > 0 ? mount : null;
+
+    private bool HasAnotherOwner(long deviceId, string mount) =>
+        _astraOwners.TryGetValue(deviceId, out var owner) && owner != mount;
 
     private void Cancel(string mount)
     {
@@ -745,7 +749,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 employee = card.Employee;
                 department = card.Department;
                 var failure = card.DeviceId <= 0 ? detail
-                    : _astraOwners.TryGetValue(card.DeviceId, out var owner) && owner != mount
+                    : HasAnotherOwner(card.DeviceId, mount)
                         ? $"Дубликат Astra ID {card.DeviceId}"
                     : null;
                 if (failure is not null)
@@ -1181,6 +1185,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             switch (command.Action)
             {
                 case StationAction.Prioritize:
+                    if (HasAnotherOwner(_identified[mount].DeviceId, mount))
+                        break;
                     _priority = mount;
                     _chargeOnly.Remove(mount);
                     _finished.Remove(mount);
