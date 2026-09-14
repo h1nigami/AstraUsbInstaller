@@ -34,11 +34,21 @@ class PickAssetTest(unittest.TestCase):
                          ("https://example/app.tar.gz", "https://example/app.sha256"))
 
     def test_none_when_checksum_missing(self):
-        release = {"assets": [RELEASE["assets"][0]]}
+        release = dict(RELEASE, assets=[RELEASE["assets"][0]])
         self.assertIsNone(updater.pick_asset(release))
 
     def test_none_when_no_assets(self):
         self.assertIsNone(updater.pick_asset({"assets": []}))
+
+    def test_rejects_foreign_or_unpublished_release(self):
+        for fields in ({"tag_name": "v2.0.3"}, {"tag_name": "v10.2"},
+                       {"tag_name": "v1."}, {"tag_name": "v1.2/other"},
+                       {"prerelease": True}, {"draft": True}):
+            with self.subTest(fields=fields):
+                self.assertIsNone(updater.pick_asset(dict(RELEASE, **fields)))
+
+    def test_archive_must_match_release_tag(self):
+        self.assertIsNone(updater.pick_asset(dict(RELEASE, tag_name="v1.3")))
 
 
 class NeedsUpdateTest(unittest.TestCase):
@@ -241,6 +251,17 @@ class MainTest(unittest.TestCase):
         apply_mock.assert_not_called()
         self.assertEqual(rc, 0)
 
+    def test_copying_started_during_download_skips_install(self):
+        payload = _make_tarball()
+        responses = [self._release_bytes(), payload,
+                     hashlib.sha256(payload).hexdigest().encode()]
+        with mock.patch.object(updater, "_fetch", side_effect=responses), \
+             mock.patch.object(updater, "_apply") as apply_mock, \
+             mock.patch.object(updater.usb_monitor, "read_version", return_value=None), \
+             mock.patch.object(updater.usb_monitor, "is_copying", side_effect=[False, True]):
+            self.assertEqual(updater.main(), 0)
+        apply_mock.assert_not_called()
+
     def test_failed_tag_skips_without_further_fetch(self):
         updater._write_failed_tag(RELEASE["tag_name"], self.failed_tag_path)
         with mock.patch.object(updater, "_fetch", return_value=self._release_bytes()) as fetch_mock, \
@@ -269,24 +290,24 @@ class MixedAssetsTest(unittest.TestCase):
 
     @staticmethod
     def _release(*names):
-        return {"tag_name": "v9.9", "assets": [
+        return {"tag_name": "v1.9", "assets": [
             {"name": n, "browser_download_url": "https://example/" + n} for n in names]}
 
     def test_ignores_release_without_tarball(self):
-        r = self._release("astra-usb-monitor-win-v9.9.zip",
-                          "astra-usb-monitor-win-v9.9.zip.sha256")
+        r = self._release("astra-usb-monitor-win-v1.9.zip",
+                          "astra-usb-monitor-win-v1.9.zip.sha256")
         self.assertIsNone(updater.pick_asset(r))
 
     def test_picks_checksum_belonging_to_the_tarball(self):
-        r = self._release("astra-usb-monitor-win-v9.9.zip",
-                          "astra-usb-monitor-win-v9.9.zip.sha256",
-                          "astra-usb-monitor-v9.9.tar.gz",
-                          "astra-usb-monitor-v9.9.tar.gz.sha256")
+        r = self._release("astra-usb-monitor-win-v1.9.zip",
+                          "astra-usb-monitor-win-v1.9.zip.sha256",
+                          "astra-usb-monitor-v1.9.tar.gz",
+                          "astra-usb-monitor-v1.9.tar.gz.sha256")
         picked = updater.pick_asset(r)
         self.assertIsNotNone(picked)
         tarball, checksum = picked
-        self.assertTrue(tarball.endswith("astra-usb-monitor-v9.9.tar.gz"))
-        self.assertTrue(checksum.endswith("astra-usb-monitor-v9.9.tar.gz.sha256"),
+        self.assertTrue(tarball.endswith("astra-usb-monitor-v1.9.tar.gz"))
+        self.assertTrue(checksum.endswith("astra-usb-monitor-v1.9.tar.gz.sha256"),
                         "сумма должна принадлежать выбранному архиву, а не чужому")
 
     def test_ignores_cross_platform_archives(self):
@@ -302,15 +323,60 @@ class MixedAssetsTest(unittest.TestCase):
     def test_takes_own_archive_from_a_mixed_release(self):
         r = self._release("bestcam-station-v2.0-linux-x64.tar.gz",
                           "bestcam-station-v2.0-linux-x64.tar.gz.sha256",
-                          "astra-usb-monitor-v2.0.tar.gz",
-                          "astra-usb-monitor-v2.0.tar.gz.sha256")
+                          "astra-usb-monitor-v1.9.tar.gz",
+                          "astra-usb-monitor-v1.9.tar.gz.sha256")
         picked = updater.pick_asset(r)
         self.assertIsNotNone(picked)
         tarball, checksum = picked
-        self.assertTrue(tarball.endswith("astra-usb-monitor-v2.0.tar.gz"))
-        self.assertTrue(checksum.endswith("astra-usb-monitor-v2.0.tar.gz.sha256"))
+        self.assertTrue(tarball.endswith("astra-usb-monitor-v1.9.tar.gz"))
+        self.assertTrue(checksum.endswith("astra-usb-monitor-v1.9.tar.gz.sha256"))
 
     def test_none_when_tarball_has_no_own_checksum(self):
-        r = self._release("astra-usb-monitor-v9.9.tar.gz",
-                          "astra-usb-monitor-win-v9.9.zip.sha256")
+        r = self._release("astra-usb-monitor-v1.9.tar.gz",
+                          "astra-usb-monitor-win-v1.9.zip.sha256")
         self.assertIsNone(updater.pick_asset(r))
+
+
+class ServiceHealthTest(unittest.TestCase):
+    def test_requires_successful_restart_count_query(self):
+        for code, count, healthy in ((0, "0\n", True), (0, "1\n", False),
+                                     (1, "", False), (0, "", False),
+                                     (1, "0\n", False)):
+            with self.subTest(code=code, count=count), \
+                 mock.patch.object(updater.subprocess, "run", side_effect=[
+                     mock.Mock(returncode=0),
+                     mock.Mock(returncode=code, stdout=count)]):
+                self.assertEqual(updater._service_healthy(), healthy)
+
+
+class ApplyTest(unittest.TestCase):
+    def test_wrong_installed_version_restores_previous_code_and_preserves_data(self):
+        with tempfile.TemporaryDirectory() as root:
+            app = os.path.join(root, "app")
+            previous = app + ".prev"
+            os.makedirs(os.path.join(app, "data"))
+            code = os.path.join(app, "main.py")
+            database = os.path.join(app, "data", "devices.db")
+            for path, content in ((code, "old"), (database, "history")):
+                with open(path, "w") as stream:
+                    stream.write(content)
+
+            def run(command, **kwargs):
+                if command[0] == "bash":
+                    with open(code, "w") as stream:
+                        stream.write("new")
+                return mock.Mock(returncode=0)
+
+            with mock.patch.multiple(updater, APP_DIR=app, PREV_DIR=previous,
+                                     FAILED_TAG_FILE=app + ".failed"), \
+                 mock.patch.object(updater.subprocess, "run", side_effect=run), \
+                 mock.patch.object(updater.time, "sleep"), \
+                 mock.patch.object(updater, "_service_healthy", return_value=True), \
+                 mock.patch.object(updater.usb_monitor, "read_version", return_value=("v1.1", "2026-09-14")):
+                result = updater._apply(root, "v1.2")
+                self.assertEqual(updater._read_failed_tag(), "v1.2")
+            self.assertEqual(result, 1)
+            with open(code) as stream:
+                self.assertEqual(stream.read(), "old")
+            with open(database) as stream:
+                self.assertEqual(stream.read(), "history")

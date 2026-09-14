@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
 ## Commands
 
@@ -41,7 +41,7 @@ Four top-level modules:
 - Destination stability across mountpoints: a GUI-selected destination now stores not just the chosen path but also the filesystem UUID/serial plus the relative path inside that filesystem. If native mode later mounts the same disk under `/mnt/usb_backup/<dev>`, `get_dest_base()` resolves the live path there, so the destination disk is still recognised as destination (not as source) and backups keep landing on the real disk without requiring the desktop's old mountpoint.
 - Destination availability: a GUI-selected `backup_dest` is stamped with a `.astra_dest` marker (`ensure_dest_marker`) at selection time, and `copy_task` refuses to write (state `error`) while the marker is absent (`dest_available()`) — a missing marker means the destination disk is not mounted at that path, and `makedirs` would otherwise silently back up into a shadow directory on the root/overlay FS. The drive hosting the destination (`_is_dest_path`) is never treated as a backup source and is kept mounted (`copy_task_linux` skips it, `_mount_device` tolerates an existing mount); reconnecting it re-stamps the marker.
 - Each backup runs in its own `ThreadPoolExecutor` worker and opens its own SQLite connection via `_connect()` (sharing one connection across the pool is not safe for concurrent writes). `_init_db()` is called once at startup to create the schema / run migrations, then closed.
-- `_resolve_device_id()` сохраняет номер в `.astra_id`; носитель без маркера всегда получает новый номер, даже при совпадении заводского USB-серийника. Одновременно подключённые носители с одинаковым маркером разделяются под блокировкой до начала копирования. `_connected_devices` хранит актуальный список подключений, `_connected_device_ids` сохраняет владельцев ID до подтверждённого отключения. Маркер исключён из сканирования и копирования.
+- `_resolve_device_id()` — stable device identity: reads/writes `.astra_id` on the USB, falls back to serial number lookup in SQLite, then creates a new record. The `.astra_id` marker file is excluded from scans and copies.
 - `_parse_lsblk_tree()` — pure helper over parsed `lsblk -J` output (unit-tested); partitions of a USB disk are listed exactly once, a whole-disk filesystem yields the disk itself.
 - SQLite DB at `data/devices.db`: tables `devices` (serial, label, person) and `backups` (per-session stats). `started_at`/`finished_at` are stored via `datetime.isoformat()` (`T` separator).
 - `format_filter_dt()` — builds search range bounds with the same `T` separator as stored `started_at` so lexicographic SQL comparisons are correct (a space would sort before `T` and wrongly exclude same-day backups).
@@ -162,36 +162,6 @@ Python и C#/Avalonia являются отдельными продуктами
 Это обязательные правила выпуска. Перед каждым релизом проверяй фактические
 условия GitHub Actions и состав архивов, включая повторный запуск старых workflow.
 
-## Cross-platform version: versioning, release and self-update
-
-- **Version.** `<Version>` in `AstraUsb.csproj` is compiled into the assembly;
-  `Services/VersionInfo` prefers the `VERSION` file written by the release
-  workflow (`<tag> <date>`) and falls back to the assembly version, so the
-  Настройки → О программе screen always shows a version, offline included.
-- **Сборки.** `.github/workflows/release-station.yml` собирает C# только для
-  prerelease `v2.*` или ручного запуска с тегом `v2.*`. Оба задания берут
-  исходники указанного тега. Платформы: `linux-x64`, `linux-arm64`, `win-x64`,
-  `osx-x64`, `osx-arm64`. Python workflow собирает только stable `v1.*`.
-- **Обновление C#.** `AstraUsb --update` запускается отдельной службой
-  `astra-usb-avalonia-update.service` по таймеру. Из списка релизов выбирается
-  последний по дате публикации готовый `v2.*` с архивом своей платформы и
-  соответствующей суммой. Проверка занятости выполняется до загрузки и перед
-  установкой. После проверки архива и запуска `--version` создаётся резервная
-  копия, запускается установщик и проверяются служба, перезапуски и `VERSION`.
-  Ошибка установки или неверная версия вызывают откат с сохранением сбойного тега.
-- `ASTRA_UPDATE_API` заменяет источник релизов для закрытых сетей; зеркало
-  может вернуть список или один релиз. Windows и macOS обновляются вручную.
-- **Install paths.** Linux: `avalonia/install.sh` (one-liner that picks the
-  `.deb` for the machine's architecture, verifies the checksum and installs it
-  via apt) or the `.deb` directly; the package is built by
-  `avalonia/packaging/build_deb.sh`, whose `postinst` calls
-  `install_native.sh --units-only` so the systemd units and the udev rule are
-  described in exactly one place. Windows: `BestCamStationSetup-<tag>.exe`,
-  built by the `windows-setup` job from `avalonia/windows/setup.iss` (Inno
-  Setup, PowerShell step — bash mangles ISCC's `/D` and `/O` switches).
-  `install_native.sh` guards every `systemctl` call behind
-  `/run/systemd/system` so the package installs cleanly in containers.
-
 ## Development branch
 
-Active feature branch: `claude/avalonia-rewrite`. Base: `master`.
+Active feature branch: `Codex/version-and-auto-update`. Base: `master`.

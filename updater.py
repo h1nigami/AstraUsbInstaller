@@ -9,6 +9,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -41,25 +42,17 @@ def pick_asset(release):
 
     Оба файла обязательны: без контрольной суммы устанавливать ничего не будем.
     """
-    # Сумма ищется по имени именно этого архива. В релизе может лежать сборка
-    # для другой платформы со своим .sha256, и если брать любой попавшийся файл
-    # с таким расширением, точка скачает свой архив и сверит его с чужой суммой —
-    # обновления встанут на всех точках сразу.
+    tag = release.get("tag_name")
+    if (not isinstance(tag, str) or not re.fullmatch(r"v1\.[0-9]+(?:\.[0-9]+)*", tag)
+            or release.get("prerelease") or release.get("draft")):
+        return None
     urls = {
         a.get("name", ""): a.get("browser_download_url")
         for a in release.get("assets", [])
     }
-    # Архив опознаётся по имени, а не по одному расширению. В том же
-    # репозитории выходят релизы кроссплатформенной версии, и там лежат свои
-    # .tar.gz со своими суммами: без проверки имени точка на Python скачала бы
-    # чужую сборку и попыталась поставить её этим установщиком.
-    for name, url in urls.items():
-        if not name.startswith(ARCHIVE_PREFIX) or not name.endswith(".tar.gz") or not url:
-            continue
-        checksum = urls.get(name + ".sha256")
-        if checksum:
-            return url, checksum
-    return None
+    name = f"{ARCHIVE_PREFIX}{tag}.tar.gz"
+    archive, checksum = urls.get(name), urls.get(name + ".sha256")
+    return (archive, checksum) if archive and checksum else None
 
 
 def needs_update(current, latest):
@@ -100,8 +93,10 @@ def _service_healthy():
         active = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE],
                                  timeout=10).returncode == 0
         shown = subprocess.run(["systemctl", "show", "-p", "NRestarts", "--value", SERVICE],
-                                capture_output=True, text=True, timeout=10).stdout.strip()
-        restarts = int(shown or 0)
+                                capture_output=True, text=True, timeout=10)
+        if shown.returncode != 0:
+            return False
+        restarts = int(shown.stdout.strip())
     except Exception:
         return False
     return active and restarts == 0
@@ -178,25 +173,25 @@ def _apply(src_dir, tag):
     _backup_app_dir(APP_DIR, PREV_DIR)
 
     try:
+        subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
         installer = os.path.join(src_dir, "install_native.sh")
         result = subprocess.run(["bash", installer], cwd=src_dir, timeout=1800)
         if result.returncode != 0:
             raise RuntimeError(f"установщик вернул {result.returncode}")
 
-        # start_native.sh — бесконечный цикл: он ловит падение python и просто
-        # перезапускает GUI каждые 5 секунд, сам никогда не завершаясь. Из-за
-        # этого systemctl is-active остаётся "active", а NRestarts — 0 даже
-        # для битого релиза, и _service_healthy() ничего не замечает. Поэтому
-        # сначала проверяем напрямую, что новый код вообще импортируется.
+        # Проверяем импорт до ожидания здоровья службы.
         probe = subprocess.run([sys.executable, "-c", "import gui, usb_monitor, main"],
                                cwd=APP_DIR, timeout=60)
         if probe.returncode != 0:
             raise RuntimeError("новая версия не импортируется")
 
-        subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
         time.sleep(60)
         if not _service_healthy():
             raise RuntimeError("сервис не поднялся после обновления")
+        installed = usb_monitor.read_version()
+        installed_tag = installed[0] if installed else None
+        if installed_tag != tag:
+            raise RuntimeError(f"после установки VERSION даёт {installed_tag}, а не {tag}")
     except Exception as e:
         _log(f"установка не удалась ({e})")
         _write_failed_tag(tag)
@@ -205,18 +200,7 @@ def _apply(src_dir, tag):
 
     shutil.rmtree(PREV_DIR, ignore_errors=True)
 
-    # Установка прошла и сервис жив, но VERSION мог не совпасть с ожидаемым
-    # тегом (архив собран не релизным workflow) — тогда без этой проверки
-    # каждый тик таймера видел бы current != latest и ставил бы то же самое
-    # заново до бесконечности.
-    installed = usb_monitor.read_version()
-    installed_tag = installed[0] if installed else None
-    if installed_tag != tag:
-        _log(f"после установки VERSION даёт {installed_tag}, а не {tag} — "
-             "повторные попытки этого релиза остановлены")
-        _write_failed_tag(tag)
-    else:
-        _clear_failed_tag()
+    _clear_failed_tag()
 
     _log("обновление установлено")
     return 0

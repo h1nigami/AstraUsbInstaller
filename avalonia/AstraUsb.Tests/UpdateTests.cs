@@ -1,4 +1,8 @@
 using System.Text;
+using System.Diagnostics;
+using System.Reflection;
+using System.Net;
+using System.Net.Sockets;
 using AstraUsb.Services;
 using Xunit;
 
@@ -100,9 +104,55 @@ public sealed class UpdateTests : IDisposable
 
         var release = Release.Parse(python);
 
-        Assert.NotNull(release);
-        Assert.Null(release!.Pick("linux-x64"));
-        Assert.Null(release.Pick("linux-arm64"));
+        Assert.Null(release);
+    }
+
+    [Theory]
+    [InlineData("v1.6")]
+    [InlineData("v20.0")]
+    [InlineData("v2.")]
+    [InlineData("v2.0/other")]
+    public void Foreign_or_invalid_tags_are_rejected_even_with_station_assets(string tag)
+    {
+        Assert.Null(Release.Parse(Answer.Replace("v2.0", tag)));
+        Assert.False(Updater.NeedsUpdate("v2.0", tag));
+        var release = new Release(tag, DateTime.Today, new Dictionary<string, string>());
+        Assert.Null(release.Pick("linux-x64"));
+    }
+
+    [Fact]
+    public void Drafts_are_rejected_but_station_prereleases_are_allowed()
+    {
+        Assert.Null(Release.Parse(Answer.Replace("\"prerelease\": false", "\"draft\": true")));
+        Assert.NotNull(Release.Parse(Answer.Replace("\"prerelease\": false", "\"prerelease\": true")));
+    }
+
+    [Theory]
+    [InlineData("other-v2.0-linux-x64.tar.gz")]
+    [InlineData("bestcam-station-v2.1-linux-x64.tar.gz")]
+    [InlineData("bestcam-station-v2.0-linux-arm64.tar.gz")]
+    public void Archive_must_match_product_tag_and_platform(string name)
+    {
+        var release = new Release("v2.0", DateTime.Today, new Dictionary<string, string>
+        {
+            [name] = "https://example/archive",
+            [name + ".sha256"] = "https://example/sum",
+        });
+        Assert.Null(release.Pick("linux-x64"));
+    }
+
+    [Fact]
+    public void Station_channel_ignores_python_drafts_and_incomplete_releases()
+    {
+        var ready = Answer.Replace("v2.0", "v2.1").Replace("2026-09-02", "2026-09-03")
+            .Replace("\"prerelease\": false", "\"prerelease\": true");
+        var python = Answer.Replace("v2.0", "v1.6").Replace("2026-09-02", "2026-09-14");
+        var draft = Answer.Replace("v2.0", "v2.9").Replace("\"prerelease\": false", "\"draft\": true");
+        var incomplete = Answer.Replace("v2.0", "v2.2").Replace(".sha256", ".missing")
+            .Replace("2026-09-02", "2026-09-04");
+        var result = Release.Select($"[{python},{incomplete},{Answer},{ready},{draft}]", "linux-x64");
+        Assert.Equal("v2.1", result?.Tag);
+        Assert.Equal("v2.0", Release.Select(Answer, "linux-x64")?.Tag);
     }
 
     [Fact]
@@ -197,6 +247,93 @@ public sealed class UpdateTests : IDisposable
         // Пустой тег означал бы «версия неизвестна», и станция считала бы себя
         // устаревшей при каждой проверке.
         Assert.Equal(VersionInfo.Build(), Updater.InstalledTag());
+    }
+
+    [Fact]
+    public void Process_output_is_drained_from_both_pipes()
+    {
+        var info = Script(OperatingSystem.IsWindows()
+            ? "1..20000 | ForEach-Object { [Console]::Error.WriteLine('error') }; [Console]::Write('done')"
+            : "i=0; while [ $i -lt 20000 ]; do echo error >&2; i=$((i+1)); done; printf done");
+        var result = Execute(info, TimeSpan.FromSeconds(15));
+        Assert.Equal(0, result.Code);
+        Assert.Equal("done", result.Output);
+        Assert.Contains("error", result.Error);
+    }
+
+    [Fact]
+    public void A_hung_process_is_killed_within_the_deadline()
+    {
+        var pidFile = Path.Combine(_dir, "pid");
+        var info = Script(OperatingSystem.IsWindows()
+            ? $"[IO.File]::WriteAllText('{pidFile}', [string]$PID); Start-Sleep 30"
+            : $"echo $$ > '{pidFile}'; sleep 30");
+        var watch = Stopwatch.StartNew();
+        Assert.ThrowsAny<OperationCanceledException>(() => Execute(info, TimeSpan.FromSeconds(2)));
+        Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10));
+        if (File.Exists(pidFile))
+        {
+            var pid = int.Parse(File.ReadAllText(pidFile));
+            Assert.Throws<ArgumentException>(() => Process.GetProcessById(pid));
+        }
+    }
+
+    private static ProcessStartInfo Script(string script)
+    {
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "powershell.exe" : "/bin/sh");
+        if (OperatingSystem.IsWindows())
+            info.ArgumentList.Add("-NoProfile");
+        info.ArgumentList.Add(OperatingSystem.IsWindows() ? "-Command" : "-c");
+        info.ArgumentList.Add(script);
+        return info;
+    }
+
+    [Fact]
+    public async Task Download_deadline_also_covers_a_stalled_response_body()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var server = Task.Run(async () =>
+        {
+            using var socket = await listener.AcceptTcpClientAsync(stop.Token);
+            using var stream = socket.GetStream();
+            var request = new byte[4096];
+            await stream.ReadAsync(request, stop.Token);
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(
+                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\na"), stop.Token);
+            try { await Task.Delay(Timeout.Infinite, stop.Token); }
+            catch (OperationCanceledException) { }
+        });
+        var method = typeof(Updater).GetMethod("Download", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var url = $"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/archive";
+            Assert.False((bool)method.Invoke(null,
+                [url, Path.Combine(_dir, "download"), TimeSpan.FromMilliseconds(300)])!);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await server; } catch (OperationCanceledException) { }
+        }
+    }
+
+    private static (int Code, string Output, string Error) Execute(ProcessStartInfo info, TimeSpan timeout)
+    {
+        var method = typeof(Updater).GetMethod("Execute", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        try
+        {
+            return ((int, string, string))method.Invoke(null, [info, timeout])!;
+        }
+        catch (TargetInvocationException e) when (e.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+            throw;
+        }
     }
 
     public void Dispose()

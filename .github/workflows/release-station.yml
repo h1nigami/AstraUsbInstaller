@@ -18,10 +18,13 @@ permissions:
 
 jobs:
   build:
+    if: (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -127,10 +130,13 @@ jobs:
   # Windows-машине. Архив при этом никуда не девается, он нужен тем, кто
   # ставит программу без установки.
   windows-setup:
+    if: (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - uses: actions/setup-dotnet@v4
         with:
