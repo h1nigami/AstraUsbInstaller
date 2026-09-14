@@ -499,7 +499,8 @@ def _read_device_id_from_usb(mountpoint):
         device_id = int(value)
     except ValueError as error:
         raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
-    if not value.isascii() or not value.isdigit() or device_id <= 0:
+    if (not value.isascii() or not value.isdigit()
+            or not 0 < device_id <= 9223372036854775807):
         raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}")
     return device_id
 
@@ -556,7 +557,6 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
                 raise OSError(f"Устройство {devname} отключено")
             duplicate = id_from_usb is not None and any(
                 key[0] == database and key != owner and claim[0] == id_from_usb
-                and (present is None or key[1] in present)
                 for key, claim in _connected_device_ids.items())
             if duplicate:
                 raise OSError(f"Дубликат Astra ID {id_from_usb}: {devname}")

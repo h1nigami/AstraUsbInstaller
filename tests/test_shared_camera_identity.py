@@ -44,10 +44,11 @@ class SharedCameraIdentityTest(unittest.TestCase):
             self.resolve(second, "sdc1")
         self.assertEqual(um._read_device_id_from_usb(second), 123456)
 
-    def test_fast_reconnect_under_new_device_name_keeps_id(self):
+    def test_reconnect_after_confirmed_release_keeps_id(self):
         mount = self.mount(1)
         um._update_connected_devices({"sdb1"})
         device_id = self.resolve(mount, "sdb1")
+        um._release_device_id("sdb1")
         um._update_connected_devices({"sdc1"})
         self.assertEqual(self.resolve(mount, "sdc1"), device_id)
 
@@ -60,14 +61,15 @@ class SharedCameraIdentityTest(unittest.TestCase):
         um._update_connected_devices({"sdc1"})
         self.assertEqual(self.resolve(mount, "sdc1"), 123456)
 
-    def test_single_missing_poll_does_not_forget_existing_owner(self):
+    def test_single_missing_poll_keeps_claim_until_confirmed_release(self):
         first, second = self.mount(1, 123456), self.mount(2, 123456)
         um._update_connected_devices({"sdb1"})
         self.resolve(first, "sdb1")
-        um._update_connected_devices(set())
-        um._update_connected_devices({"sdb1", "sdc1"})
+        um._update_connected_devices({"sdc1"})
         with self.assertRaisesRegex(OSError, "Дубликат Astra ID 123456"):
             self.resolve(second, "sdc1")
+        um._release_device_id("sdb1")
+        self.assertEqual(self.resolve(second, "sdc1"), 123456)
 
     def test_slow_marker_io_does_not_block_poll_or_other_camera(self):
         for operation in ("_read_device_id_from_usb", "_write_device_id_to_usb"):
@@ -166,6 +168,7 @@ class SharedCameraIdentityTest(unittest.TestCase):
         self.assertEqual(len(set(ids)), 10)
         for n, device_id in enumerate(ids):
             self.assertEqual(um._read_device_id_from_usb(mounts[n]), device_id)
+            um._release_device_id(f"sd{n}")
         um._update_connected_devices({f"new{n}" for n in range(10)})
         for n, device_id in enumerate(ids):
             self.assertEqual(self.resolve(mounts[n], f"new{n}"), device_id)
@@ -223,6 +226,26 @@ class SharedCameraIdentityTest(unittest.TestCase):
         self.assertEqual(progress.get_nowait()[2], "error")
         self.assertEqual(os.listdir(dest), [])
         self.assertTrue(os.path.isfile(os.path.join(mount, "video.mp4")))
+
+    def test_out_of_int64_marker_reports_error_without_copy_or_delete(self):
+        mount = self.mount(1, 9223372036854775808)
+        progress = queue.Queue()
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um, "_get_drive_label_linux", return_value="CAM"), \
+             mock.patch.object(um, "_get_device_serial_linux", return_value="SER"), \
+             mock.patch.object(um, "_copy_files") as copy, \
+             mock.patch.object(um, "_delete_source_videos") as delete, \
+             mock.patch.object(um, "_unmount") as unmount:
+            result = um.copy_task(
+                mount, mount, "sdb1", None, None,
+                should_unmount=True, progress_queue=progress)
+        self.assertEqual(result, (None, 0, 0))
+        event = progress.get_nowait()
+        self.assertEqual(event[2], "error")
+        self.assertIn("Некорректный Astra ID", event[5])
+        unmount.assert_called_once_with(mount)
+        copy.assert_not_called()
+        delete.assert_not_called()
 
 
 if __name__ == "__main__":
