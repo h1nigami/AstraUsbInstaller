@@ -1,9 +1,4 @@
-"""Tests for device identity + SQLite schema logic in usb_monitor.py.
-
-Covers: _init_db schema/migrations, the .astra_id marker file round-trip,
-and _resolve_device_id's three resolution paths (marker file, serial match,
-brand-new device).
-"""
+"""Проверки регистрации устройств, маркера .astra_id и схемы SQLite."""
 
 import os
 import sys
@@ -90,14 +85,13 @@ class ResolveDeviceIdTest(unittest.TestCase):
                 "SELECT label FROM devices WHERE id=?", (999,)).fetchone()
             self.assertEqual(row[0], "NEWLABEL")
 
-    def test_serial_match_reuses_existing_id_without_marker(self):
+    def test_shared_serial_without_marker_creates_distinct_id(self):
         with tempfile.TemporaryDirectory() as mp1:
             first_id = um._resolve_device_id(self.conn, mp1, "SERIALSAME", "L1", "sda1")
         with tempfile.TemporaryDirectory() as mp2:
-            # Marker missing on mp2 (e.g. reformatted drive), but serial matches DB.
             second_id = um._resolve_device_id(self.conn, mp2, "SERIALSAME", "L1", "sda2")
-            self.assertEqual(second_id, first_id)
-            self.assertEqual(um._read_device_id_from_usb(mp2), first_id)
+            self.assertNotEqual(second_id, first_id)
+            self.assertEqual(um._read_device_id_from_usb(mp2), second_id)
 
     def test_no_marker_no_serial_creates_distinct_devices_without_crashing(self):
         # Regression: devices.serial is UNIQUE NOT NULL, so two drives that
@@ -111,11 +105,6 @@ class ResolveDeviceIdTest(unittest.TestCase):
         serials = [r[0] for r in self.conn.execute(
             "SELECT serial FROM devices WHERE id IN (?, ?)", (id1, id2))]
         self.assertEqual(len(set(serials)), 2, "synthetic serials must not collide")
-
-    def test_get_device_id_by_serial_edge_cases(self):
-        self.assertIsNone(um._get_device_id_by_serial(self.conn, None))
-        self.assertIsNone(um._get_device_id_by_serial(None, "x"))
-        self.assertIsNone(um._get_device_id_by_serial(self.conn, "unknown-serial"))
 
     def test_rename_survives_reconnect_and_label_refresh(self):
         # A user-assigned "name" is a separate column from "label" (which is

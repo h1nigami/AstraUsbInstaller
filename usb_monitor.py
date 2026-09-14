@@ -6,6 +6,8 @@ import json
 import platform
 import sys
 import sqlite3
+import threading
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -477,6 +479,10 @@ def _init_db():
 
 
 DEVICE_ID_FILE = ".astra_id"
+# ponytail: одна блокировка регистрации; разделить по БД при работе с несколькими станциями.
+_device_id_lock = threading.Lock()
+_connected_device_ids = {}
+_connected_devices = {}
 
 
 def _read_device_id_from_usb(mountpoint):
@@ -527,34 +533,46 @@ def _register_id_from_usb(conn, device_id, serial, label, now):
 
 
 def _resolve_device_id(conn, mountpoint, serial, label, devname):
-    id_from_usb = _read_device_id_from_usb(mountpoint)
-    if id_from_usb is not None:
+    database = os.path.realpath(conn.execute("PRAGMA database_list").fetchone()[2])
+    owner = (database, devname)
+    with _device_id_lock:
+        present = _connected_devices.get(database)
+        if present is not None and devname not in present:
+            raise OSError(f"Устройство {devname} отключено")
+        id_from_usb = _read_device_id_from_usb(mountpoint)
+        duplicate = id_from_usb is not None and any(
+            key[0] == database and key != owner and device_id == id_from_usb
+            and (present is None or key[1] in present)
+            for key, device_id in _connected_device_ids.items())
+        if id_from_usb is None or duplicate:
+            device_id = _create_device(conn, serial, label, devname)
+            _write_device_id_to_usb(mountpoint, device_id)
+            if _read_device_id_from_usb(mountpoint) != device_id:
+                raise OSError(f"Не удалось сохранить {DEVICE_ID_FILE} на {devname}")
+            if duplicate:
+                print(f"Повторный ID {id_from_usb} на {devname}: назначен {device_id}", flush=True)
+        else:
+            device_id = id_from_usb
         now = datetime.now().isoformat()
         if not conn.execute("SELECT 1 FROM devices WHERE id = ?",
-                            (id_from_usb,)).fetchone():
-            _register_id_from_usb(conn, id_from_usb, serial, label or devname, now)
+                            (device_id,)).fetchone():
+            _register_id_from_usb(conn, device_id, serial, label or devname, now)
         conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
-                     (now, label or devname, id_from_usb))
+                     (now, label or devname, device_id))
         conn.commit()
-        return id_from_usb
-
-    if serial:
-        db_id = _get_device_id_by_serial(conn, serial)
-        if db_id is not None:
-            _write_device_id_to_usb(mountpoint, db_id)
-            return db_id
-
-    new_id = _create_device(conn, serial, label, devname)
-    _write_device_id_to_usb(mountpoint, new_id)
-    return new_id
+        _connected_device_ids[owner] = device_id
+        return device_id
 
 
-def _get_device_id_by_serial(conn, serial):
-    if not serial or not conn:
-        return None
-    cur = conn.execute("SELECT id FROM devices WHERE serial = ?", (serial,))
-    row = cur.fetchone()
-    return row[0] if row else None
+def _update_connected_devices(devices):
+    database = os.path.realpath(DB_PATH)
+    with _device_id_lock:
+        _connected_devices[database] = set(devices)
+
+
+def _release_device_id(devname):
+    with _device_id_lock:
+        _connected_device_ids.pop((os.path.realpath(DB_PATH), devname), None)
 
 
 def _get_device_name(conn, device_id):
@@ -573,15 +591,13 @@ def _friendly_device_label(device_id, name):
 
 def _create_device(conn, serial, label, devname):
     now = datetime.now().isoformat()
-    # devices.serial is UNIQUE NOT NULL: a real serial is unusable to more
-    # than one device anyway, but when the hardware exposes none at all we
-    # must not insert the same "" for every such drive — that collides on
-    # the second one and crashes the backup worker with an IntegrityError.
-    serial = serial or f"NOSERIAL_{devname or 'usb'}_{now}"
-    cur = conn.execute(
-        "INSERT INTO devices (serial, label, first_seen, last_seen) VALUES (?, ?, ?, ?)",
-        (serial, label or devname or "USB", now, now),
-    )
+    serial = serial or f"NOSERIAL_{uuid.uuid4().hex}"
+    sql = "INSERT INTO devices (serial, label, first_seen, last_seen) VALUES (?, ?, ?, ?)"
+    try:
+        cur = conn.execute(sql, (serial, label or devname or "USB", now, now))
+    except sqlite3.IntegrityError:
+        # Сохраняем совместимость с UNIQUE в старых БД, не объединяя камеры.
+        cur = conn.execute(sql, (f"{serial}#{uuid.uuid4().hex}", label or devname or "USB", now, now))
     conn.commit()
     did = cur.lastrowid
     print(f"  New device registered: {did} ({label or devname or serial})", flush=True)
@@ -970,7 +986,16 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     # not safe for concurrent writes.
     conn = _connect()
     try:
-        device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
+        try:
+            device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
+        except (OSError, sqlite3.Error) as error:
+            msg = f"Ошибка регистрации {devname}: {error}"
+            print(msg, flush=True)
+            if progress_queue is not None:
+                progress_queue.put_nowait((f"identity:{devname}", devname, "error", 0, 0, msg, devname))
+            if should_unmount:
+                _unmount(mountpoint)
+            return None, 0, 0
         # display_id names the backup folder and must stay stable across
         # renames; friendly is the human-facing label shown in messages/GUI.
         display_id = f"Device{device_id}"
@@ -1166,6 +1191,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     else:
         known = get_removable_drives()
 
+    _update_connected_devices(known)
     for dev in sorted(known):
         mp = known[dev] if is_linux else None
         print(f"  Connected: {dev}", flush=True)
@@ -1190,6 +1216,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             now_t = time.time()
             current = _get_linux_partitions() if is_linux else get_removable_drives()
+            _update_connected_devices(current)
 
             known_keys = set(known) if is_linux else known
             current_keys = set(current) if is_linux else current
@@ -1214,6 +1241,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             for dev in confirmed_removed:
                 pending_removals.pop(dev, None)
+                _release_device_id(dev)
                 if is_linux:
                     known.pop(dev, None)
                 else:
@@ -1242,6 +1270,9 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        _update_connected_devices(set())
+        for dev in known:
+            _release_device_id(dev)
         executor.shutdown(wait=False)
 
 
