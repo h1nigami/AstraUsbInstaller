@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Globalization;
+
 namespace AstraUsb.Services;
 
 /// <summary>
@@ -11,6 +14,53 @@ namespace AstraUsb.Services;
 /// </summary>
 public static class ArchiveGuard
 {
+    public static bool IsDeviceFolderName(string? name) =>
+        name is { Length: > 6 }
+        && name.StartsWith(DeviceRegistry.DeviceDirPrefix, StringComparison.Ordinal)
+        && long.TryParse(name[6..], NumberStyles.None, CultureInfo.InvariantCulture, out var id)
+        && id > 0;
+
+    private static ProcessStartInfo? OwnershipCommand(string root, string deviceDir)
+    {
+        var archive = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)));
+        var folder = new DirectoryInfo(Path.TrimEndingDirectorySeparator(Path.GetFullPath(deviceDir)));
+        if (!archive.Exists || !folder.Exists || !IsDeviceFolderName(folder.Name)
+            || archive.Attributes.HasFlag(FileAttributes.ReparsePoint)
+            || folder.Attributes.HasFlag(FileAttributes.ReparsePoint)
+            || !string.Equals(folder.Parent?.FullName, archive.FullName,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            return null;
+
+        var command = new ProcessStartInfo("chown") { UseShellExecute = false, CreateNoWindow = true };
+        command.ArgumentList.Add("-R");
+        command.ArgumentList.Add($"--reference={archive.FullName}");
+        command.ArgumentList.Add("--");
+        command.ArgumentList.Add(folder.FullName);
+        return command;
+    }
+
+    /// <summary>Передаёт папки устройств владельцу и группе корня архива.</summary>
+    public static void RepairOwnership(string root, string? deviceDir = null)
+    {
+        if (!OperatingSystem.IsLinux() || !Directory.Exists(root))
+            return;
+        try
+        {
+            foreach (var folder in deviceDir is null ? Directory.EnumerateDirectories(root) : [deviceDir])
+            {
+                if (OwnershipCommand(root, folder) is not { } command)
+                    continue;
+                using var process = Process.Start(command);
+                process?.WaitForExit();
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+                                    or System.ComponentModel.Win32Exception)
+        {
+            // Отказ файловой системы менять владельца не отменяет сохранённую копию.
+        }
+    }
+
     /// <summary>Ставит метку тома. False, если записать не удалось.</summary>
     public static bool Mark(string? root)
     {

@@ -39,11 +39,22 @@ public sealed class DeviceRegistryTests : IDisposable
     }
 
     [Fact]
-    public void Garbage_in_marker_reads_as_no_id()
+    public void Garbage_in_marker_is_rejected()
     {
         var mount = Mount("junk");
         File.WriteAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile), "не число\n");
-        Assert.Null(DeviceRegistry.ReadDeviceIdFromUsb(mount));
+        Assert.Throws<InvalidDataException>(() => DeviceRegistry.ReadDeviceIdFromUsb(mount));
+    }
+
+    [Fact]
+    public void Corrupt_astra_marker_stops_device_resolution()
+    {
+        using var registry = NewRegistry();
+        var mount = Mount("corrupt");
+        File.WriteAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile), "broken\n");
+
+        Assert.Throws<InvalidDataException>(() =>
+            registry.ResolveDeviceId(mount, "SER", "CAM", "sdb1"));
     }
 
     [Fact]
@@ -59,14 +70,41 @@ public sealed class DeviceRegistryTests : IDisposable
     }
 
     [Fact]
-    public void Same_serial_without_marker_is_the_same_device()
+    public void An_unwritable_marker_stops_resolution()
+    {
+        using var registry = NewRegistry();
+        var mount = Mount("blocked");
+        Directory.CreateDirectory(Path.Combine(mount, DeviceRegistry.DeviceIdFile));
+
+        Assert.Throws<IOException>(() => registry.ResolveDeviceId(mount, "SER", "CAM", "sdb1"));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("0")]
+    [InlineData("-1")]
+    [InlineData("9223372036854775808")]
+    public void Invalid_existing_markers_are_preserved(string text)
+    {
+        using var registry = NewRegistry();
+        var mount = Mount("invalid");
+        var marker = Path.Combine(mount, DeviceRegistry.DeviceIdFile);
+        File.WriteAllText(marker, text);
+
+        Assert.Throws<InvalidDataException>(() => registry.ResolveByCard(mount, 1, "CAM", "sdb1"));
+        Assert.Equal(text, File.ReadAllText(marker));
+        Assert.Empty(registry.ListDevices());
+    }
+
+    [Fact]
+    public void Same_serial_without_markers_gets_next_local_ids()
     {
         using var registry = NewRegistry();
 
         var first = registry.ResolveDeviceId(Mount("one"), "SHARED", "L", "sda1");
         var second = registry.ResolveDeviceId(Mount("two"), "SHARED", "L", "sdb1");
 
-        Assert.Equal(first, second);
+        Assert.Equal((1L, 2L), (first, second));
     }
 
     [Fact]
@@ -141,9 +179,9 @@ public sealed class DeviceRegistryTests : IDisposable
     [Fact]
     public void Friendly_label_prefers_the_name_and_falls_back_to_the_number()
     {
-        Assert.Equal("Проходная", DeviceRegistry.FriendlyLabel(3, "Проходная"));
-        Assert.Equal("3", DeviceRegistry.FriendlyLabel(3, ""));
-        Assert.Equal("3", DeviceRegistry.FriendlyLabel(3, null));
+        Assert.Equal("Astra ID 3 · Проходная", DeviceRegistry.FriendlyLabel(3, "Проходная"));
+        Assert.Equal("Astra ID 3", DeviceRegistry.FriendlyLabel(3, ""));
+        Assert.Equal("Astra ID 3", DeviceRegistry.FriendlyLabel(3, null));
     }
 
     public void Dispose()

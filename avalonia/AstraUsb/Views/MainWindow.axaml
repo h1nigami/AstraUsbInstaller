@@ -169,9 +169,7 @@
               <DataTemplate x:DataType="vm:PortViewModel">
                 <Border Classes="bay" Padding="10,8" Background="{Binding Fill}"
                         BorderBrush="{Binding Edge}">
-                  <!-- Четыре строки и полоса: больше в окно при высоте
-                       станции не влезает, не отняв у состояния его кегль. -->
-                  <Grid RowDefinitions="22,*,Auto,3,7">
+                  <Grid RowDefinitions="22,Auto,*,Auto,3,7">
 
                     <Grid Grid.Row="0" ColumnDefinitions="22,*">
                       <Border Grid.Column="0" Width="22" Height="22" CornerRadius="11"
@@ -188,7 +186,10 @@
                                  Text="{Binding EmployeeLine}" Foreground="{Binding Ink}" />
                     </Grid>
 
-                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                    <TextBlock Grid.Row="1" Text="{Binding CameraLine}" FontSize="11"
+                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                               Foreground="{Binding InkMuted}" />
+                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Center">
                       <TextBlock Grid.Column="0" Text="{Binding StateText}" Classes="state"
                                  FontSize="17" VerticalAlignment="Center"
                                  TextTrimming="CharacterEllipsis" Foreground="{Binding Ink}" />
@@ -197,11 +198,11 @@
                                  Foreground="{Binding Ink}" />
                     </Grid>
 
-                    <TextBlock Grid.Row="2" Text="{Binding StateHint}" FontSize="12"
+                    <TextBlock Grid.Row="3" Text="{Binding StateHint}" FontSize="12"
                                FontWeight="Bold"
                                TextTrimming="CharacterEllipsis" Foreground="{Binding InkMuted}" />
 
-                    <Border Grid.Row="4" Height="7" CornerRadius="4" ClipToBounds="True"
+                    <Border Grid.Row="5" Height="7" CornerRadius="4" ClipToBounds="True"
                             Background="{Binding Track}">
                       <Border Classes="fill" HorizontalAlignment="Left" CornerRadius="4"
                               Width="{Binding BarFill}" Background="{Binding Mark}" />
@@ -233,6 +234,9 @@
                       </Border>
 
                       <StackPanel Grid.Column="1" Margin="8,0" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding CameraLine}" FontSize="11"
+                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                   Foreground="{Binding InkMuted}" />
                         <TextBlock Text="{Binding EmployeeLine}" FontSize="12"
                                    FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding Ink}" />
@@ -309,6 +313,9 @@
                         <TextBlock Text="{Binding EmployeeLine}" FontSize="11"
                                    HorizontalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
+                                   Foreground="{Binding InkMuted}" />
+                        <TextBlock Text="{Binding CameraLine}" FontSize="11"
+                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding InkMuted}" />
                       </StackPanel>
                     </Border>

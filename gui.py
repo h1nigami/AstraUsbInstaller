@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, format_filter_dt, read_version, touch_copying_marker
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, format_filter_dt, read_version, touch_copying_marker
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -783,16 +783,13 @@ class App:
         return sqlite3.connect(DB_PATH)
 
     def _device_label(self, dev_id):
-        """Human-facing label for a device: its custom name if set, else the
-        bare number. The backup folder is named Device{id} regardless and is
-        never renamed."""
         conn = self._get_db()
         try:
             row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
         finally:
             conn.close()
         name = (row[0] if row else "") or ""
-        return name if name else str(dev_id)
+        return _friendly_device_label(dev_id, name)
 
     def _refresh_search_filters(self):
         conn = self._get_db()
@@ -800,7 +797,7 @@ class App:
             devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
             self._device_filter_ids = {
-                (r[1] if r[1] else str(r[0])): r[0] for r in devices
+                _friendly_device_label(r[0], r[1]): r[0] for r in devices
             }
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
@@ -890,7 +887,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": dev_name if dev_name else str(dev_id),
+                            "device": _friendly_device_label(dev_id, dev_name),
                             "person": person or "",
                             "datetime": dt_str,
                         })

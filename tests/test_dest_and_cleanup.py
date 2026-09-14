@@ -227,6 +227,89 @@ class CleanupOldVideosTest(unittest.TestCase):
             self.assertFalse(os.path.exists(video))
 
 
+class RepairArchiveOwnershipTest(unittest.TestCase):
+    def test_repairs_only_direct_device_directories_with_numeric_suffix(self):
+        root = os.path.realpath("/archive")
+
+        def entry(name, is_dir=True):
+            item = mock.Mock()
+            item.path = os.path.join(root, name)
+            item.name = name
+            item.is_dir.return_value = is_dir
+            return item
+
+        entries = [
+            entry("Device1"),
+            entry("Device200"),
+            entry("Device0"),
+            entry("Devicebad"),
+            entry("Device3", is_dir=False),
+            entry("Backup7"),
+            entry("ABCDEF1"),
+            entry("Other4"),
+        ]
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um.os, "scandir", return_value=entries), \
+             mock.patch.object(um.subprocess, "run") as run:
+            um._repair_archive_ownership(root)
+
+        self.assertEqual(run.call_args_list, [
+            mock.call(
+                ["chown", "-R", f"--reference={root}", "--", os.path.join(root, "Device1")],
+                check=False,
+                capture_output=True,
+            ),
+            mock.call(
+                ["chown", "-R", f"--reference={root}", "--", os.path.join(root, "Device200")],
+                check=False,
+                capture_output=True,
+            ),
+        ])
+
+    def test_specific_path_must_be_direct_positive_device_directory(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as outside:
+            paths = [
+                os.path.join(root, "Device1"),
+                os.path.join(root, "Device0"),
+                os.path.join(root, "Backup7"),
+                os.path.join(root, "ABCDEF1"),
+                os.path.join(outside, "Device2"),
+            ]
+            for path in paths:
+                os.mkdir(path)
+            with mock.patch.object(um.platform, "system", return_value="Linux"), \
+                 mock.patch.object(um.subprocess, "run") as run:
+                for path in paths:
+                    um._repair_archive_ownership(root, path)
+
+        run.assert_called_once_with(
+            ["chown", "-R", f"--reference={os.path.realpath(root)}", "--", os.path.realpath(paths[0])],
+            check=False,
+            capture_output=True,
+        )
+
+    def test_specific_path_rejects_symlink_and_changed_realpath(self):
+        with tempfile.TemporaryDirectory() as root:
+            symlink = os.path.join(root, "Device1")
+            changed = os.path.join(root, "Device2")
+            os.mkdir(symlink)
+            os.mkdir(changed)
+            original_realpath = os.path.realpath
+            real_root = original_realpath(root)
+
+            def realpath(path):
+                return os.path.join(real_root, "Backup7") if path == changed else original_realpath(path)
+
+            with mock.patch.object(um.platform, "system", return_value="Linux"), \
+                 mock.patch.object(um.os.path, "islink", side_effect=lambda path: path == symlink), \
+                 mock.patch.object(um.os.path, "realpath", side_effect=realpath), \
+                 mock.patch.object(um.subprocess, "run") as run:
+                um._repair_archive_ownership(root, symlink)
+                um._repair_archive_ownership(root, changed)
+
+        run.assert_not_called()
+
+
 class LogProgressTest(unittest.TestCase):
     def setUp(self):
         um._log_progress_cache.clear()

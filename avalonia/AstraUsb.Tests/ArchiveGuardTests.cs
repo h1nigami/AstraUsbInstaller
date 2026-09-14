@@ -1,4 +1,6 @@
 using AstraUsb.Services;
+using System.Diagnostics;
+using System.Reflection;
 using Xunit;
 
 namespace AstraUsb.Tests;
@@ -77,6 +79,82 @@ public sealed class ArchiveGuardTests : IDisposable
         var archive = Path.Combine(_dir, "media", "CAM_OLD", "archive");
 
         Assert.False(ArchiveGuard.IsArchiveMedia(media, archive));
+    }
+
+    [Theory]
+    [InlineData("Device1", true)]
+    [InlineData("Device999", true)]
+    [InlineData("Device0", false)]
+    [InlineData("DeviceX", false)]
+    [InlineData("Device+1", false)]
+    [InlineData("Device 1", false)]
+    [InlineData("lost+found", false)]
+    public void Ownership_targets_only_direct_device_folders(string name, bool accepted)
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_dir, "archive with spaces")).FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+        var command = OwnershipCommand(root, folder);
+
+        if (!accepted)
+        {
+            Assert.Null(command);
+            return;
+        }
+        Assert.NotNull(command);
+        Assert.Equal("chown", command.FileName);
+        Assert.False(command.UseShellExecute);
+        Assert.Equal(new[] { "-R", $"--reference={root}", "--", folder }, command.ArgumentList);
+    }
+
+    [Fact]
+    public void Ownership_rejects_outside_nested_missing_and_file_targets()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_dir, "archive")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_dir, "Device1")).FullName;
+        var nested = Directory.CreateDirectory(Path.Combine(root, "Device1", "Device2")).FullName;
+        var file = Path.Combine(root, "Device3");
+        File.WriteAllText(file, "x");
+
+        Assert.Null(OwnershipCommand(root, outside));
+        Assert.Null(OwnershipCommand(root, nested));
+        Assert.Null(OwnershipCommand(root, root));
+        Assert.Null(OwnershipCommand(root, Path.Combine(root, "Device4")));
+        Assert.Null(OwnershipCommand(root, file));
+    }
+
+    [Fact]
+    public void Ownership_rejects_a_symbolic_device_folder()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+        var root = Directory.CreateDirectory(Path.Combine(_dir, "archive")).FullName;
+        var outside = Directory.CreateDirectory(Path.Combine(_dir, "outside")).FullName;
+        var link = Path.Combine(root, "Device1");
+        Directory.CreateSymbolicLink(link, outside);
+
+        Assert.Null(OwnershipCommand(root, link));
+    }
+
+    private static ProcessStartInfo? OwnershipCommand(string root, string folder)
+    {
+        var method = typeof(ArchiveGuard).GetMethod("OwnershipCommand", BindingFlags.Static | BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        return (ProcessStartInfo?)method.Invoke(null, [root, folder]);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Ownership_accepts_a_root_with_a_trailing_separator(bool folderSeparator)
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_dir, "archive")).FullName;
+        var folder = Directory.CreateDirectory(Path.Combine(root, "Device1")).FullName;
+        var separator = Path.DirectorySeparatorChar.ToString();
+
+        var command = OwnershipCommand(root + separator, folder + (folderSeparator ? separator : ""));
+
+        Assert.NotNull(command);
+        Assert.Equal(new[] { "-R", $"--reference={root}", "--", folder }, command.ArgumentList);
     }
 
     public void Dispose()

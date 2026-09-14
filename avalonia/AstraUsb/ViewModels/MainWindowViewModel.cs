@@ -45,6 +45,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// держим до извлечения носителя.
     /// </summary>
     private readonly Dictionary<string, CardInfo> _identified = new(StringComparer.Ordinal);
+    private readonly Dictionary<long, string> _astraOwners = new();
 
     /// <summary>
     /// Карты, которые станция смонтировала сама. Рабочему столу это запрещено
@@ -535,7 +536,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void PrioritizeBay()
     {
-        if (Bay is not { } port || MountOf(port) is not { } mount)
+        if (Bay is not { } port || MountOf(port) is not { } mount
+            || HasAnotherOwner(_identified[mount].DeviceId, mount))
             return;
 
         if (BayConfirm != "priority")
@@ -602,8 +604,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Точка монтирования, которой сейчас занят этот отсек.</summary>
     private string? MountOf(PortViewModel port) =>
-        _identified.FirstOrDefault(pair => pair.Value.DeviceId != 0
-                                           && pair.Value.CameraId == port.CameraId).Key;
+        port.MountPoint is { } mount && _identified.TryGetValue(mount, out var card)
+            && card.DeviceId > 0 ? mount : null;
+
+    private bool HasAnotherOwner(long deviceId, string mount) =>
+        _astraOwners.TryGetValue(deviceId, out var owner) && owner != mount;
 
     private void Cancel(string mount)
     {
@@ -710,6 +715,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private void Apply(IReadOnlyList<UsbDevice> found, StorageState storage)
     {
         var devices = HoldBriefly(found);
+        var present = devices.Select(MountPointFor).Where(m => !string.IsNullOrEmpty(m))
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var id in _astraOwners.Keys.Where(id => !present.Contains(_astraOwners[id])).ToArray())
+            _astraOwners.Remove(id);
 
         // Носители раскладываются по закреплённым гнёздам: камера из второго
         // разъёма занимает второе окно независимо от очерёдности подключения.
@@ -725,6 +734,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var port = Ports[i];
             var mount = MountPointFor(device);
+            port.MountPoint = mount;
             var cameraId = device.Name;
             var detail = mount is null ? "готовим носитель" : "опознаём камеру";
             var personnel = "";
@@ -738,6 +748,20 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 personnel = card.PersonnelNo;
                 employee = card.Employee;
                 department = card.Department;
+                var failure = card.DeviceId <= 0 ? detail
+                    : HasAnotherOwner(card.DeviceId, mount)
+                        ? $"Дубликат Astra ID {card.DeviceId}"
+                    : null;
+                if (failure is not null)
+                {
+                    port.CameraId = cameraId;
+                    port.State = PortState.Failed;
+                    port.Detail = failure;
+                    port.FilesLine = port.Detail;
+                    port.Progress = 0;
+                    continue;
+                }
+                _astraOwners[card.DeviceId] = mount;
                 StartBackup(port, card.DeviceId, mount);
             }
 
@@ -767,11 +791,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // Камеру вынули, забываем итог, чтобы при следующем подключении
         // выгрузка началась заново.
-        var present = devices
-            .Select(d => MountPointFor(d))
-            .Where(m => !string.IsNullOrEmpty(m))
-            .ToHashSet(StringComparer.Ordinal)!;
-
         foreach (var gone in _finished.Keys.Where(m => !present.Contains(m)).ToArray())
             _finished.Remove(gone);
 
@@ -927,7 +946,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
                 deviceName, deviceName);
 
-            var number = registry.FirmwareIdOf(id) ?? "";
             var name = registry.GetDeviceName(id);
 
             var staff = new StaffDirectory(AppPaths.Database);
@@ -935,13 +953,19 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var info = new CardInfo(
                 id,
-                string.IsNullOrEmpty(name) ? number : name,
-                Origin(number),
+                DeviceRegistry.FriendlyLabel(id, name),
+                $"Папка {DeviceRegistry.DeviceDirPrefix}{id}",
                 personnel,
                 person?.FullName ?? "",
                 staff.DepartmentPath(person?.DepartmentId));
 
             return info;
+        }
+        catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            return new CardInfo(0, deviceName, error is InvalidDataException
+                ? $"Некорректный {DeviceRegistry.DeviceIdFile}"
+                : $"Не удалось прочитать или сохранить {DeviceRegistry.DeviceIdFile}", "", "", "");
         }
         catch (Exception)
         {
@@ -949,14 +973,6 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return null;
         }
     }
-
-    /// <summary>Откуда у камеры номер: от этой станции, от чужой или из самой камеры.</summary>
-    private string Origin(string number) =>
-        CardIdentity.StationOf(number) is { } station
-            ? station == _stationSettings.StationNumber
-                ? "номер выдан этой станцией"
-                : $"номер станции {station:00}"
-            : "номер задан в камере";
 
     /// <summary>
     /// Запускает выгрузку камеры, если она ещё не идёт. Плитка показывает ход:
@@ -1169,6 +1185,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             switch (command.Action)
             {
                 case StationAction.Prioritize:
+                    if (HasAnotherOwner(_identified[mount].DeviceId, mount))
+                        break;
                     _priority = mount;
                     _chargeOnly.Remove(mount);
                     _finished.Remove(mount);

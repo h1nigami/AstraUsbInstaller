@@ -487,13 +487,22 @@ def _read_device_id_from_usb(mountpoint):
         return None
     path = os.path.join(mountpoint, DEVICE_ID_FILE)
     try:
-        with open(path) as f:
-            val = f.read().strip()
-            if val.isdigit():
-                return int(val)
-    except Exception:
-        pass
-    return None
+        with open(path, encoding="utf-8") as stream:
+            value = stream.read().strip()
+    except FileNotFoundError:
+        return None
+    except UnicodeError as error:
+        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
+    except OSError as error:
+        raise OSError(f"Не удалось прочитать Astra ID: {error}") from error
+    try:
+        device_id = int(value)
+    except ValueError as error:
+        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
+    if (not value.isascii() or not value.isdigit()
+            or not 0 < device_id <= 9223372036854775807):
+        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}")
+    return device_id
 
 
 def _write_device_id_to_usb(mountpoint, device_id):
@@ -548,12 +557,10 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
                 raise OSError(f"Устройство {devname} отключено")
             duplicate = id_from_usb is not None and any(
                 key[0] == database and key != owner and claim[0] == id_from_usb
-                and (present is None or key[1] in present)
                 for key, claim in _connected_device_ids.items())
-            if id_from_usb is None or duplicate:
-                device_id = _create_device(conn, serial, label, devname)
-            else:
-                device_id = id_from_usb
+            if duplicate:
+                raise OSError(f"Дубликат Astra ID {id_from_usb}: {devname}")
+            device_id = _create_device(conn, serial, label, devname) if id_from_usb is None else id_from_usb
             now = datetime.now().isoformat()
             if not conn.execute("SELECT 1 FROM devices WHERE id = ?",
                                 (device_id,)).fetchone():
@@ -563,12 +570,10 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             conn.commit()
             reservation = (device_id, reservation[1])
             _connected_device_ids[owner] = reservation
-        if id_from_usb is None or duplicate:
+        if id_from_usb is None:
             _write_device_id_to_usb(mountpoint, device_id)
             if _read_device_id_from_usb(mountpoint) != device_id:
                 raise OSError(f"Не удалось сохранить {DEVICE_ID_FILE} на {devname}")
-            if duplicate:
-                print(f"Повторный ID {id_from_usb} на {devname}: назначен {device_id}", flush=True)
         with _device_id_lock:
             present = _connected_devices.get(database)
             if ((present is not None and devname not in present)
@@ -601,10 +606,35 @@ def _get_device_name(conn, device_id):
 
 
 def _friendly_device_label(device_id, name):
-    """Human-facing label for a device: its custom name when set, else the
-    bare number. The backup folder is named Device{id} regardless and is
-    never renamed."""
-    return name if name else str(device_id)
+    astra_id = f"Astra ID {device_id}"
+    return f"{astra_id} · {name}" if name else astra_id
+
+
+def _repair_archive_ownership(root, device_dir=None):
+    if platform.system() == "Windows" or not root:
+        return
+    root = os.path.realpath(root)
+    if device_dir and (os.path.islink(device_dir) or not os.path.isdir(device_dir)):
+        return
+    candidates = [device_dir] if device_dir else [
+        entry.path for entry in os.scandir(root)
+        if entry.is_dir(follow_symlinks=False)
+        and entry.name.startswith("Device")
+        and entry.name[6:].isascii()
+        and entry.name[6:].isdigit()
+        and int(entry.name[6:]) > 0
+    ]
+    for path in candidates:
+        path = os.path.realpath(path)
+        name = os.path.basename(path)
+        suffix = name[6:] if name.startswith("Device") else ""
+        if (os.path.dirname(path) != root or not suffix.isascii()
+                or not suffix.isdigit() or int(suffix) <= 0):
+            continue
+        subprocess.run(
+            ["chown", "-R", f"--reference={root}", "--", path],
+            check=False, capture_output=True,
+        )
 
 
 def _create_device(conn, serial, label, devname):
@@ -1071,6 +1101,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         copied_files, copied_bytes, backed_up, failed = _copy_files(
             mountpoint, dest, ts, friendly, total_files, total_bytes,
             progress_obj, task_id, start_time, emit_fn=_emit)
+        _repair_archive_ownership(dest_base, dest)
 
         # Only delete videos that were actually backed up successfully.
         _delete_source_videos(mountpoint, backed_up)
@@ -1187,6 +1218,10 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         else:
             print(f"WARNING: backup destination is not available yet: {resolved_dest} "
                   f"(backups will fail until its disk is mounted)", flush=True)
+
+    archive_root = get_dest_base()
+    if os.path.isdir(archive_root):
+        _repair_archive_ownership(archive_root)
 
     print(f"USB Monitor | Platform: {system} | Workers: {MAX_WORKERS} | DB: {DB_PATH}", flush=True)
     print("Waiting for USB devices... (Ctrl+C to stop)", flush=True)

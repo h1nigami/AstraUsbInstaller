@@ -102,6 +102,268 @@ public sealed class MainWindowViewModelTests : IDisposable
         typeof(MainWindowViewModel).GetMethod("UpdateStorage", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(model, [storage]);
 
+    [AvaloniaFact]
+    public async Task A_duplicate_astra_id_never_starts_a_second_backup()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
+        var second = Directory.CreateDirectory(Path.Combine(_dir, "second")).FullName;
+        var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var identified = (System.Collections.IDictionary)typeof(MainWindowViewModel)
+            .GetField("_identified", fields)!.GetValue(model)!;
+        var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
+        foreach (var mount in new[] { first, second })
+            identified[mount] = Activator.CreateInstance(cardType, [7L, "Astra ID 7", "", "", "", ""]);
+
+        typeof(MainWindowViewModel).GetMethod("Apply", fields)!.Invoke(model,
+            [new UsbDevice[] { new("first", first), new("second", second) }, StorageState.Unknown("archive")]);
+
+        var cancels = (Dictionary<string, CancellationTokenSource>)typeof(MainWindowViewModel)
+            .GetField("_cancels", fields)!.GetValue(model)!;
+        try
+        {
+            Assert.NotEqual(PortState.Failed, model.Ports[0].State);
+            Assert.Equal(PortState.Failed, model.Ports[1].State);
+            Assert.Contains("Дубликат Astra ID 7", model.Ports[1].Detail);
+            Assert.False(cancels.ContainsKey(second));
+        }
+        finally
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (cancels.Count > 0 && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Empty(cancels);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_later_duplicate_cannot_take_the_id_of_a_finished_camera()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
+        var second = Directory.CreateDirectory(Path.Combine(_dir, "second")).FullName;
+        var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var identified = (System.Collections.IDictionary)typeof(MainWindowViewModel)
+            .GetField("_identified", fields)!.GetValue(model)!;
+        var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
+        foreach (var mount in new[] { first, second })
+            identified[mount] = Activator.CreateInstance(cardType, [7L, "Astra ID 7", "", "", "", ""]);
+        var finished = (Dictionary<string, BackupStage>)typeof(MainWindowViewModel)
+            .GetField("_finished", fields)!.GetValue(model)!;
+        finished[first] = BackupStage.Done;
+        ApplyDevices(model, new UsbDevice("first", first));
+        CacheCard(model, second);
+        model.Ports[1].State = PortState.Done;
+        // Занятость очереди удерживает ошибочный запуск от фоновой записи в тесте.
+        typeof(MainWindowViewModel).GetField("_priority", fields)!.SetValue(model, first);
+
+        typeof(MainWindowViewModel).GetMethod("Apply", fields)!.Invoke(model,
+            [new UsbDevice[] { new("second", second), new("first", first) }, StorageState.Unknown("archive")]);
+
+        Assert.Equal(PortState.Failed, model.Ports[0].State);
+        Assert.Contains("Дубликат Astra ID 7", model.Ports[0].Detail);
+        Assert.Equal(PortState.Done, model.Ports[1].State);
+    }
+
+    [AvaloniaFact]
+    public void A_corrupt_astra_marker_is_shown_as_an_error_without_backup()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Directory.CreateDirectory(Path.Combine(_dir, "corrupt")).FullName;
+        File.WriteAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile), "broken");
+        var fields = BindingFlags.Instance | BindingFlags.NonPublic;
+        var card = typeof(MainWindowViewModel).GetMethod("ReadCard", fields)!
+            .Invoke(model, ["camera", mount]);
+        Assert.NotNull(card);
+        var identified = (System.Collections.IDictionary)typeof(MainWindowViewModel)
+            .GetField("_identified", fields)!.GetValue(model)!;
+        identified[mount] = card;
+
+        typeof(MainWindowViewModel).GetMethod("Apply", fields)!.Invoke(model,
+            [new UsbDevice[] { new("camera", mount) }, StorageState.Unknown("archive")]);
+
+        Assert.Equal(PortState.Failed, model.Ports[0].State);
+        Assert.Contains("Некорректный .astra_id", model.Ports[0].Detail);
+        Assert.Empty((System.Collections.IDictionary)typeof(MainWindowViewModel)
+            .GetField("_cancels", fields)!.GetValue(model)!);
+        Assert.Equal("broken", File.ReadAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile)));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task A_connected_camera_keeps_its_id_while_charging_or_queued(bool charging, bool duplicateFirst)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var owner = Directory.CreateDirectory(Path.Combine(_dir, "owner")).FullName;
+        var duplicate = Directory.CreateDirectory(Path.Combine(_dir, "duplicate")).FullName;
+        CacheCard(model, owner);
+        if (charging)
+            Field<HashSet<string>>(model, "_chargeOnly").Add(owner);
+        else
+            typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+        ApplyDevices(model, new UsbDevice("owner", owner));
+        CacheCard(model, duplicate);
+        if (!charging)
+            typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+        var found = new UsbDevice[] { new("owner", owner), new("duplicate", duplicate) };
+        if (duplicateFirst)
+            Array.Reverse(found);
+        ApplyDevices(model, found);
+
+        var cancels = Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels");
+        try
+        {
+            Assert.Equal(PortState.Failed, model.Ports[duplicateFirst ? 0 : 1].State);
+            Assert.Equal(charging ? PortState.ChargeOnly : PortState.Detected,
+                model.Ports[duplicateFirst ? 1 : 0].State);
+            Assert.False(cancels.ContainsKey(duplicate));
+        }
+        finally
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (cancels.Count > 0 && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Empty(cancels);
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData("charge")]
+    [InlineData("resume")]
+    [InlineData("priority")]
+    [InlineData("remote-priority")]
+    public void Modal_commands_target_the_selected_mount_even_when_camera_labels_match(string command)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
+        var second = Directory.CreateDirectory(Path.Combine(_dir, "second")).FullName;
+        CacheCard(model, first);
+        CacheCard(model, second);
+        typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+        ApplyDevices(model, new("first", first), new("second", second));
+        Assert.Equal(model.Ports[0].CameraId, model.Ports[1].CameraId);
+        var charging = Field<HashSet<string>>(model, "_chargeOnly");
+        if (command != "charge")
+            charging.UnionWith([first, second]);
+        using var firstCancel = new CancellationTokenSource();
+        using var secondCancel = new CancellationTokenSource();
+        var cancels = Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels");
+        cancels[first] = firstCancel;
+        cancels[second] = secondCancel;
+
+        model.OpenBayCommand.Execute(model.Ports[1]);
+        model.BayConfirm = command;
+        if (command == "charge")
+        {
+            model.ChargeOnlyBayCommand.Execute(null);
+            Assert.Contains(second, charging);
+            Assert.DoesNotContain(first, charging);
+            Assert.True(secondCancel.IsCancellationRequested);
+            Assert.False(firstCancel.IsCancellationRequested);
+        }
+        else if (command == "resume")
+        {
+            model.ResumeBayCommand.Execute(null);
+            Assert.Contains(first, charging);
+            Assert.DoesNotContain(second, charging);
+        }
+        else
+        {
+            Prioritize(model, command == "remote-priority");
+            Assert.Null(Field<string?>(model, "_priority"));
+            Assert.False(firstCancel.IsCancellationRequested);
+            Assert.Contains(first, charging);
+            Assert.Contains(second, charging);
+        }
+        cancels.Clear();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prioritizing_a_duplicate_does_not_block_the_next_poll_or_queued_cameras(bool remote)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
+        var duplicate = Directory.CreateDirectory(Path.Combine(_dir, "duplicate")).FullName;
+        var next = Directory.CreateDirectory(Path.Combine(_dir, "next")).FullName;
+        CacheCard(model, first);
+        CacheCard(model, duplicate);
+        typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+        ApplyDevices(model, new("first", first), new("duplicate", duplicate));
+        model.OpenBayCommand.Execute(model.Ports[1]);
+        model.BayConfirm = "priority";
+
+        Prioritize(model, remote);
+        CacheCard(model, next, 8);
+        ApplyDevices(model, new("first", first), new("duplicate", duplicate), new("next", next));
+
+        var cancels = Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels");
+        try
+        {
+            Assert.True(cancels.ContainsKey(first));
+            Assert.True(cancels.ContainsKey(next));
+            Assert.False(cancels.ContainsKey(duplicate));
+            Assert.Equal(PortState.Failed, model.Ports[1].State);
+        }
+        finally
+        {
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (cancels.Count > 0 && DateTime.UtcNow < deadline)
+                await Task.Delay(10);
+            Assert.Empty(cancels);
+        }
+    }
+
+    [AvaloniaFact]
+    public void A_failed_owner_can_still_be_prioritized_for_retry()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Directory.CreateDirectory(Path.Combine(_dir, "failed")).FullName;
+        CacheCard(model, mount);
+        var finished = Field<Dictionary<string, BackupStage>>(model, "_finished");
+        finished[mount] = BackupStage.Failed;
+        ApplyDevices(model, new UsbDevice("failed", mount));
+        model.Ports[0].State = PortState.Failed;
+        model.OpenBayCommand.Execute(model.Ports[0]);
+        model.BayConfirm = "priority";
+
+        model.PrioritizeBayCommand.Execute(null);
+
+        Assert.Equal(mount, Field<string>(model, "_priority"));
+        Assert.False(finished.ContainsKey(mount));
+    }
+
+    private const BindingFlags PrivateFields = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    private static void Prioritize(MainWindowViewModel model, bool remote)
+    {
+        if (!remote)
+            model.PrioritizeBayCommand.Execute(null);
+        else
+        {
+            StationCommands.Request(StationAction.Prioritize, model.Bay!.Slot);
+            typeof(MainWindowViewModel).GetMethod("ApplyRemoteCommands", PrivateFields)!.Invoke(model, null);
+        }
+    }
+
+    private static T Field<T>(MainWindowViewModel model, string name) =>
+        (T)typeof(MainWindowViewModel).GetField(name, PrivateFields)!.GetValue(model)!;
+
+    private static void CacheCard(MainWindowViewModel model, string mount, long id = 7)
+    {
+        var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
+        Field<System.Collections.IDictionary>(model, "_identified")[mount] =
+            Activator.CreateInstance(cardType, [id, $"Astra ID {id}", "", "", "", ""]);
+    }
+
+    private static void ApplyDevices(MainWindowViewModel model, params UsbDevice[] found) =>
+        typeof(MainWindowViewModel).GetMethod("Apply", PrivateFields)!.Invoke(model,
+            [found, StorageState.Unknown("archive")]);
+
     public void Dispose()
     {
         AppPaths.Root = _root;
