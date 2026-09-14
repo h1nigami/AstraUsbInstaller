@@ -5,7 +5,7 @@ import queue
 import tempfile
 import threading
 import unittest
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from unittest import mock
 
 import usb_monitor as um
@@ -63,6 +63,88 @@ class SharedCameraIdentityTest(unittest.TestCase):
         um._update_connected_devices(set())
         um._update_connected_devices({"sdb1", "sdc1"})
         self.assertNotEqual(self.resolve(second, "sdc1"), 123456)
+
+    def test_slow_marker_io_does_not_block_poll_or_other_camera(self):
+        for operation in ("_read_device_id_from_usb", "_write_device_id_to_usb"):
+            with self.subTest(operation=operation):
+                first, second = self.mount(operation + "a"), self.mount(operation + "b")
+                entered, release = threading.Event(), threading.Event()
+                original = getattr(um, operation)
+
+                def delayed(path, *args):
+                    if path == first:
+                        entered.set()
+                        release.wait(5)
+                    return original(path, *args)
+
+                um._update_connected_devices({"sdb1", "sdc1"})
+                with mock.patch.object(um, operation, side_effect=delayed), \
+                     ThreadPoolExecutor(max_workers=3) as pool:
+                    slow = pool.submit(self.resolve, first, "sdb1")
+                    try:
+                        self.assertTrue(entered.wait(2))
+                        poll = pool.submit(um._update_connected_devices, {"sdb1", "sdc1"})
+                        other = pool.submit(self.resolve, second, "sdc1")
+                        self.assertIsNone(poll.result(timeout=1))
+                        other_id = other.result(timeout=1)
+                    except TimeoutError:
+                        self.fail("Задержка одного USB блокирует опрос или другую камеру")
+                    finally:
+                        release.set()
+                    self.assertNotEqual(slow.result(timeout=2), other_id)
+
+    def test_disconnect_during_marker_write_rejects_registration(self):
+        mount = self.mount(1)
+        um._update_connected_devices({"sdb1"})
+        original = um._write_device_id_to_usb
+
+        def disconnect(path, device_id):
+            original(path, device_id)
+            um._update_connected_devices(set())
+
+        with mock.patch.object(um, "_write_device_id_to_usb", side_effect=disconnect):
+            with self.assertRaises(OSError):
+                self.resolve(mount, "sdb1")
+        device_id = um._read_device_id_from_usb(mount)
+        second = self.mount(2, device_id)
+        um._update_connected_devices({"sdb1", "sdc1"})
+        self.assertEqual(self.resolve(second, "sdc1"), device_id)
+
+    def test_failed_late_write_does_not_release_replacement_claim(self):
+        first, replacement = self.mount(1), self.mount(2)
+        original = um._write_device_id_to_usb
+        replacement_ids = []
+
+        def replace(path, device_id):
+            if path == first:
+                um._release_device_id("sdb1")
+                original(replacement, device_id)
+                replacement_ids.append(self.resolve(replacement, "sdb1"))
+            else:
+                original(path, device_id)
+
+        with mock.patch.object(um, "_write_device_id_to_usb", side_effect=replace):
+            with self.assertRaises(OSError):
+                self.resolve(first, "sdb1")
+        clone = self.mount(3, replacement_ids[0])
+        self.assertNotEqual(self.resolve(clone, "sdc1"), replacement_ids[0])
+
+    def test_late_initial_read_does_not_replace_reconnected_device_claim(self):
+        first, replacement = self.mount(1, 7), self.mount(2, 9)
+        original = um._read_device_id_from_usb
+        um._update_connected_devices({"sdb1", "sdc1"})
+
+        def reconnect(path):
+            if path == first:
+                um._release_device_id("sdb1")
+                self.assertEqual(self.resolve(replacement, "sdb1"), 9)
+            return original(path)
+
+        with mock.patch.object(um, "_read_device_id_from_usb", side_effect=reconnect):
+            with self.assertRaises(OSError):
+                self.resolve(first, "sdb1")
+        clone = self.mount(3, 9)
+        self.assertNotEqual(self.resolve(clone, "sdc1"), 9)
 
     def check_ten_cameras(self, marker):
         mounts = [self.mount(n, marker) for n in range(10)]

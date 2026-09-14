@@ -536,29 +536,50 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
         present = _connected_devices.get(database)
         if present is not None and devname not in present:
             raise OSError(f"Устройство {devname} отключено")
+        # Отмечаем попытку до чтения USB, чтобы отключение отменяло даже зависшее чтение.
+        reservation = (None, object())
+        _connected_device_ids[owner] = reservation
+    try:
         id_from_usb = _read_device_id_from_usb(mountpoint)
-        duplicate = id_from_usb is not None and any(
-            key[0] == database and key != owner and device_id == id_from_usb
-            and (present is None or key[1] in present)
-            for key, device_id in _connected_device_ids.items())
+        with _device_id_lock:
+            present = _connected_devices.get(database)
+            if ((present is not None and devname not in present)
+                    or _connected_device_ids.get(owner) is not reservation):
+                raise OSError(f"Устройство {devname} отключено")
+            duplicate = id_from_usb is not None and any(
+                key[0] == database and key != owner and claim[0] == id_from_usb
+                and (present is None or key[1] in present)
+                for key, claim in _connected_device_ids.items())
+            if id_from_usb is None or duplicate:
+                device_id = _create_device(conn, serial, label, devname)
+            else:
+                device_id = id_from_usb
+            now = datetime.now().isoformat()
+            if not conn.execute("SELECT 1 FROM devices WHERE id = ?",
+                                (device_id,)).fetchone():
+                _register_id_from_usb(conn, device_id, serial, label or devname, now)
+            conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
+                         (now, label or devname, device_id))
+            conn.commit()
+            reservation = (device_id, reservation[1])
+            _connected_device_ids[owner] = reservation
         if id_from_usb is None or duplicate:
-            device_id = _create_device(conn, serial, label, devname)
             _write_device_id_to_usb(mountpoint, device_id)
             if _read_device_id_from_usb(mountpoint) != device_id:
                 raise OSError(f"Не удалось сохранить {DEVICE_ID_FILE} на {devname}")
             if duplicate:
                 print(f"Повторный ID {id_from_usb} на {devname}: назначен {device_id}", flush=True)
-        else:
-            device_id = id_from_usb
-        now = datetime.now().isoformat()
-        if not conn.execute("SELECT 1 FROM devices WHERE id = ?",
-                            (device_id,)).fetchone():
-            _register_id_from_usb(conn, device_id, serial, label or devname, now)
-        conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
-                     (now, label or devname, device_id))
-        conn.commit()
-        _connected_device_ids[owner] = device_id
+        with _device_id_lock:
+            present = _connected_devices.get(database)
+            if ((present is not None and devname not in present)
+                    or _connected_device_ids.get(owner) is not reservation):
+                raise OSError(f"Устройство {devname} отключено")
         return device_id
+    except Exception:
+        with _device_id_lock:
+            if _connected_device_ids.get(owner) is reservation:
+                _connected_device_ids.pop(owner, None)
+        raise
 
 
 def _update_connected_devices(devices):
