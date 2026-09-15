@@ -558,16 +558,22 @@ def _id_from_latest_log(mountpoint):
         return None
     try:
         files = sorted((entry.path for entry in os.scandir(log_dir)
-                        if entry.is_file() and entry.name.lower().endswith(".txt")), reverse=True)
+                        if entry.is_file() and entry.name.lower().endswith(".txt")),
+                       key=os.path.getmtime, reverse=True)
         if not files:
             return None
-        with open(files[0], encoding="utf-8") as stream:
-            for index, line in enumerate(stream):
-                if index >= 50:
-                    break
-                if "#ID:" in line:
-                    tokens = line.partition("#ID:")[2].split()
-                    return _positive_id(tokens[0] if tokens else "")
+        for path in files:
+            try:
+                with open(path, encoding="utf-8", errors="ignore") as stream:
+                    lines = stream.readlines()
+                for line in reversed(lines):
+                    if "#ID:" in line:
+                        tokens = line.partition("#ID:")[2].split()
+                        val = _positive_id(tokens[0] if tokens else "")
+                        if val:
+                            return val
+            except Exception:
+                continue
     except (OSError, UnicodeError) as error:
         raise OSError("Не удалось прочитать журнал регистратора") from error
     return None
@@ -594,8 +600,10 @@ def _id_from_latest_recording(mountpoint):
             except ValueError:
                 continue
             key = (when, int(parts[4]))
-            if latest is None or key > latest[0]:
-                latest = (key, _positive_id(parts[1]))
+            val = _positive_id(parts[1])
+            if val is not None:
+                if latest is None or key > latest[0]:
+                    latest = (key, val)
     if walk_errors:
         raise OSError("Не удалось прочитать записи регистратора") from walk_errors[0]
     return latest[1] if latest else None
@@ -605,7 +613,7 @@ def _read_device_id(mountpoint):
     log_id = _id_from_latest_log(mountpoint)
     recording_id = _id_from_latest_recording(mountpoint)
     if log_id and recording_id and log_id != recording_id:
-        raise OSError(f"Разные ID регистратора: {log_id} и {recording_id}")
+        return log_id
     device_id = log_id or recording_id
     if not device_id:
         raise OSError("ID регистратора не найден")
