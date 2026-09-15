@@ -90,26 +90,34 @@ class CameraSimulationTest(unittest.TestCase):
 
             def await_terminal_events(count):
                 terminal = []
+                observed = []
                 deadline = time.monotonic() + 15
                 while len(terminal) < count:
                     remaining = deadline - time.monotonic()
                     self.assertGreater(remaining, 0, f"Не получены итоговые события: {terminal}")
                     event = progress.get(timeout=remaining)
+                    observed.append(event)
                     if gui is not None:
                         gui.progress_queue.put(event)
                         gui._poll_queue()
                     if event[2] in {"done", "error"}:
                         terminal.append(event)
-                return terminal
+                return terminal, observed
 
             try:
-                terminal = await_terminal_events(10)
+                terminal, observed = await_terminal_events(10)
                 results = [completed.get(timeout=10) for _ in range(10)]
                 done = [event for event in terminal if event[2] == "done"]
                 errors = [event for event in terminal if event[2] == "error"]
                 self.assertEqual(len(done), 10)
                 self.assertEqual(errors, [])
                 self.assertEqual({result[0] for result in results}, {1234560 + n for n in range(10)})
+                self.assertEqual({(event[0], event[1]) for event in done},
+                                 {(1234560 + n, str(1234560 + n)) for n in range(10)})
+                self.assertEqual({event[6] for event in observed if event[2] == "identifying"},
+                                 {f"sd{n}" for n in range(10)})
+                self.assertTrue(all(event[1] == "" for event in observed
+                                    if event[2] == "identifying"))
                 self.assertTrue(all(not (source / ".astra_id").exists() for source in sources))
                 for n, source in enumerate(sources):
                     name = f"A11_{1234560 + n}_222222_20260915120000_0001.mp4"
@@ -118,6 +126,10 @@ class CameraSimulationTest(unittest.TestCase):
                     self.assertFalse((source / "DCIM" / name).exists())
                 if gui is not None:
                     self.assertEqual(len(gui.port_assignment), 10)
+                    self.assertTrue(all(data["device"] == str(device_id)
+                                        for device_id, data in gui.workers_data.items()))
+                    self.assertTrue(all(isinstance(device_id, int)
+                                        for device_id in gui.workers_data))
                     states = [data["state_raw"] for data in gui.workers_data.values()]
                     self.assertEqual(states.count("done"), 10)
                     self.assertEqual(states.count("error"), 0)

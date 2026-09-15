@@ -1039,19 +1039,23 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     # not safe for concurrent writes.
     conn = _connect()
     try:
+        if progress_queue is not None:
+            progress_queue.put_nowait((f"identity:{devname}", "", "identifying", 0, 0,
+                                       "Определение ID", devname))
         try:
             device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
         except (OSError, sqlite3.Error) as error:
             msg = f"Ошибка регистрации {devname}: {error}"
             print(msg, flush=True)
             if progress_queue is not None:
-                progress_queue.put_nowait((f"identity:{devname}", devname, "error", 0, 0, msg, devname))
+                progress_queue.put_nowait((f"identity:{devname}", "", "error", 0, 0,
+                                           f"Ошибка определения ID: {error}", devname))
             if should_unmount:
                 _unmount(mountpoint)
             return None, 0, 0
-        # display_id names the backup folder and must stay stable across
-        # renames; friendly is the human-facing label shown in messages/GUI.
+        # Имя папки задаётся ID устройства; главное окно получает только число.
         display_id = f"Device{device_id}"
+        main_label = str(device_id)
         friendly = _friendly_device_label(device_id, _get_device_name(conn, device_id))
         started_at = datetime.now()
 
@@ -1061,7 +1065,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         def _emit(state, current=0, total=0, msg=""):
             if progress_queue is not None:
                 try:
-                    progress_queue.put_nowait((device_id, friendly, state, current, total, msg, devname))
+                    progress_queue.put_nowait((device_id, main_label, state, current, total, msg, devname))
                 except Exception:
                     pass
 
@@ -1083,7 +1087,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         dest = os.path.join(dest_base, display_id)
         os.makedirs(dest, exist_ok=True)
 
-        _emit("scanning", 0, 0, f"Scanning {friendly}...")
+        _emit("scanning", 0, 0, f"Сканирование ID {main_label}")
 
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[cyan]Scanning {friendly}...")
@@ -1094,7 +1098,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         if total_files == 0:
             msg = f"Empty: {friendly}"
-            _emit("done", 0, 0, msg)
+            _emit("done", 0, 0, f"Готово: ID {main_label}")
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
             else:
@@ -1103,7 +1107,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 _unmount(mountpoint)
             return device_id, 0, 0
 
-        _emit("copying", 0, total_bytes, f"Copying {friendly}...")
+        _emit("copying", 0, total_bytes, f"Копирование ID {main_label}")
 
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[green]{friendly} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
@@ -1125,10 +1129,10 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         finished_at = datetime.now()
         if failed:
             msg = f"Ошибки: {friendly} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
-            _emit("error", copied_bytes, total_bytes, msg)
+            _emit("error", copied_bytes, total_bytes, f"Не скопировано: {failed} файл(ов)")
         else:
             msg = f"Done: {friendly} ({copied_files} files, {_format_size(copied_bytes)})"
-            _emit("done", copied_bytes, total_bytes, f"Done: {friendly}")
+            _emit("done", copied_bytes, total_bytes, f"Готово: ID {main_label}")
 
         if USE_RICH and progress_obj:
             color = "red" if failed else "green"

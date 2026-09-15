@@ -1240,9 +1240,15 @@ class App:
                 else:
                     pct = 0
 
+                if isinstance(device_id, int):
+                    pending_id = f"identity:{devname}"
+                    self.workers_data.pop(pending_id, None)
+                    if pending_id in self.port_assignment:
+                        self.port_assignment[device_id] = self.port_assignment.pop(pending_id)
+
                 self.workers_data[device_id] = {
                     "device": display_id,
-                    "state": {"scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
+                    "state": {"identifying": "Определение ID", "scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
                     "state_raw": state,
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",

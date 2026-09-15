@@ -96,7 +96,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
         states = []
         while not pq.empty():
             states.append(pq.get_nowait()[2])
-        self.assertEqual(states[0], "scanning")
+        self.assertEqual(states[:2], ["identifying", "scanning"])
         self.assertEqual(states[-1], "done")
         self.assertIn("copying", states)
 
@@ -147,12 +147,13 @@ class CopyTaskEndToEndTest(unittest.TestCase):
             states = []
             while not pq.empty():
                 states.append(pq.get_nowait()[2])
-            self.assertEqual(states, ["error"])
+            self.assertEqual(states, ["identifying", "error"])
 
     def test_should_unmount_triggers_unmount(self):
         with tempfile.TemporaryDirectory() as src, \
              tempfile.TemporaryDirectory() as dest, \
              tempfile.TemporaryDirectory() as data_dir:
+            self._id_log(src)
             db_path = os.path.join(data_dir, "d.db")
             with mock.patch.object(um, "DB_PATH", db_path), \
                  mock.patch.object(um, "_get_drive_label_linux", return_value="L"), \

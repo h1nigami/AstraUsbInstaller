@@ -123,7 +123,8 @@ class SharedCameraIdentityTest(unittest.TestCase):
             self.assertEqual(stream.read(), b"first")
         with open(os.path.join(second, "DCIM", file_name), "rb") as stream:
             self.assertEqual(stream.read(), b"second")
-        self.assertEqual(progress.get_nowait()[2], "error")
+        self.assertEqual([progress.get_nowait()[2] for _ in range(progress.qsize())],
+                         ["identifying", "error"])
 
 
 if __name__ == "__main__":
