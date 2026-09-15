@@ -70,6 +70,17 @@ class DeviceIdentityReaderTest(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
                 um._read_device_id(mount)
 
+    def test_latest_log_without_id_does_not_reuse_older_id(self):
+        with tempfile.TemporaryDirectory() as mount:
+            log_dir = os.path.join(mount, "LOG")
+            os.makedirs(log_dir)
+            with open(os.path.join(log_dir, "20260914.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:1111111\n")
+            with open(os.path.join(log_dir, "20260915.txt"), "w", encoding="utf-8") as out:
+                out.write("Запуск регистратора\n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
+
     def test_unreadable_log_does_not_fall_back_to_recording(self):
         with tempfile.TemporaryDirectory() as mount:
             os.makedirs(os.path.join(mount, "LOG"))

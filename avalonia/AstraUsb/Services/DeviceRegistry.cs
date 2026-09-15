@@ -77,14 +77,19 @@ public sealed class DeviceRegistry : IDisposable
     }
 
     /// <summary>Регистрирует номер, заданный оператором в регистраторе.</summary>
-    public long ResolveDeviceId(string? mountPoint, string? serial, string? label, string? devName)
+    public long ResolveDeviceId(string? mountPoint, string? serial, string? label, string? devName,
+        Func<bool>? connected = null)
     {
         var now = Timestamp();
         var id = DeviceIdentifier.Read(mountPoint
             ?? throw new InvalidDataException("Носитель регистратора не указан"));
+        if (!Directory.Exists(mountPoint) || connected?.Invoke() == false)
+            throw new IOException("Регистратор отключён во время определения ID");
+        if (DeviceIdentifier.Read(mountPoint) != id)
+            throw new IOException("Носитель сменился во время определения ID");
         if (DeviceExists(id))
         {
-            if (IdSourceOf(id) != "device")
+            if (Scalar("SELECT id_source FROM devices WHERE id = $id", ("$id", id)) as string != "device")
                 throw new InvalidDataException($"ID {id} занят прежней записью");
         }
         else
@@ -96,9 +101,6 @@ public sealed class DeviceRegistry : IDisposable
             ("$now", now), ("$label", label ?? devName ?? ""), ("$id", id));
         return id;
     }
-
-    private string? IdSourceOf(long id) =>
-        Scalar("SELECT id_source FROM devices WHERE id = $id", ("$id", id)) as string;
 
     private void RegisterDeviceId(long deviceId, string? serial, string label, string now)
     {
@@ -180,8 +182,8 @@ public sealed class DeviceRegistry : IDisposable
 
     /// <summary>Определяет ID по данным регистратора, не меняя носитель.</summary>
     public long ResolveByCard(string? mountPoint, int stationNumber,
-        string? label, string? devName)
-        => ResolveDeviceId(mountPoint, null, label, devName);
+        string? label, string? devName, Func<bool>? connected = null)
+        => ResolveDeviceId(mountPoint, null, label, devName, connected);
 
     /// <summary>Номер камеры из прошивки, если он известен.</summary>
     public string? FirmwareIdOf(long deviceId) =>

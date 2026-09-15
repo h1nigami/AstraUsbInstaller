@@ -39,6 +39,14 @@ public sealed class DeviceIdentifierTests : IDisposable
     }
 
     [Fact]
+    public void Latest_log_without_id_cannot_reuse_older_number()
+    {
+        Log("#ID:1111111\n", "20260914.txt");
+        Log("Запуск регистратора\n");
+        Assert.Throws<InvalidDataException>(() => DeviceIdentifier.Read(_card));
+    }
+
+    [Fact]
     public void Reads_id_from_latest_recording()
     {
         Recording("1111111", "20260914120000");

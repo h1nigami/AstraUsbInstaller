@@ -73,11 +73,10 @@ public static class RecordingName
         {
             return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
                 .Where(path => SourceCleaner.VideoExtensions.Contains(Path.GetExtension(path)))
-                .Select(path => (Path: path, Info: Parse(Path.GetFileName(path))))
-                .Where(pair => pair.Info is not null)
-                .OrderByDescending(pair => pair.Info!.ShotAt)
-                .ThenByDescending(pair => pair.Info!.Sequence)
-                .Select(pair => pair.Info)
+                .Select(path => Parse(Path.GetFileName(path)))
+                .Where(info => info is not null)
+                .OrderByDescending(info => info!.ShotAt)
+                .ThenByDescending(info => info!.Sequence)
                 .FirstOrDefault();
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)

@@ -105,11 +105,11 @@ public sealed class MainWindowViewModelTests : IDisposable
     [AvaloniaFact]
     public void Connected_device_shows_only_its_firmware_id()
     {
-        using var model = new MainWindowViewModel(() => []);
         var mount = Path.Combine(_dir, "firmware-card");
         var dcim = Directory.CreateDirectory(Path.Combine(mount, "DCIM")).FullName;
         File.WriteAllText(Path.Combine(dcim,
             "A11_1234567_222222_20260915120000_0001.mp4"), "video");
+        using var model = new MainWindowViewModel(() => [new UsbDevice("File-Stor Gadget", mount)]);
         var card = typeof(MainWindowViewModel).GetMethod("ReadCard", PrivateFields)!
             .Invoke(model, ["File-Stor Gadget", mount])!;
         var cardType = card.GetType();

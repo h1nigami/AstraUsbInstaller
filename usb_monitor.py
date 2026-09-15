@@ -501,16 +501,17 @@ def _id_from_latest_log(mountpoint):
     try:
         files = sorted((entry.path for entry in os.scandir(log_dir)
                         if entry.is_file() and entry.name.lower().endswith(".txt")), reverse=True)
-        for path in files:
-            with open(path, encoding="utf-8") as stream:
-                for index, line in enumerate(stream):
-                    if index >= 50:
-                        break
-                    if "#ID:" in line:
-                        tokens = line.partition("#ID:")[2].split()
-                        return _positive_id(tokens[0] if tokens else "")
+        if not files:
+            return None
+        with open(files[0], encoding="utf-8") as stream:
+            for index, line in enumerate(stream):
+                if index >= 50:
+                    break
+                if "#ID:" in line:
+                    tokens = line.partition("#ID:")[2].split()
+                    return _positive_id(tokens[0] if tokens else "")
     except (OSError, UnicodeError) as error:
-        raise OSError(f"Не удалось прочитать журнал: {error}") from error
+        raise OSError("Не удалось прочитать журнал регистратора") from error
     return None
 
 
@@ -538,7 +539,7 @@ def _id_from_latest_recording(mountpoint):
             if latest is None or key > latest[0]:
                 latest = (key, _positive_id(parts[1]))
     if walk_errors:
-        raise OSError(f"Не удалось прочитать записи: {walk_errors[0]}")
+        raise OSError("Не удалось прочитать записи регистратора") from walk_errors[0]
     return latest[1] if latest else None
 
 
@@ -574,7 +575,7 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
     with _device_id_lock:
         present = _connected_devices.get(database)
         if present is not None and devname not in present:
-            raise OSError(f"Устройство {devname} отключено")
+            raise OSError("Устройство отключено")
         # Отмечаем попытку до чтения USB, чтобы отключение отменяло даже зависшее чтение.
         reservation = (None, object())
         _connected_device_ids[owner] = reservation
@@ -584,12 +585,12 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             present = _connected_devices.get(database)
             if ((present is not None and devname not in present)
                     or _connected_device_ids.get(owner) is not reservation):
-                raise OSError(f"Устройство {devname} отключено")
+                raise OSError("Устройство отключено")
             duplicate = any(
                 key[0] == database and key != owner and claim[0] == device_id
                 for key, claim in _connected_device_ids.items())
             if duplicate:
-                raise OSError(f"Дубликат ID устройства {device_id}: {devname}")
+                raise OSError(f"Дубликат ID устройства {device_id}")
             now = datetime.now().isoformat()
             row = conn.execute("SELECT id_source FROM devices WHERE id = ?",
                                (device_id,)).fetchone()
@@ -606,7 +607,7 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             present = _connected_devices.get(database)
             if ((present is not None and devname not in present)
                     or _connected_device_ids.get(owner) is not reservation):
-                raise OSError(f"Устройство {devname} отключено")
+                raise OSError("Устройство отключено")
         return device_id
     except Exception:
         with _device_id_lock:
@@ -1069,6 +1070,20 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 except Exception:
                     pass
 
+        def _still_same_device():
+            try:
+                if _read_device_id(mountpoint) != device_id:
+                    raise OSError("Носитель сменился после определения ID")
+            except OSError as error:
+                _emit("error", 0, 0, str(error))
+                return False
+            return True
+
+        if not _still_same_device():
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
+
         if not dest_available():
             # The configured destination is not reachable (its disk is not
             # mounted). Creating the path anyway would silently back up into a
@@ -1085,7 +1100,6 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             return device_id, 0, 0
 
         dest = os.path.join(dest_base, display_id)
-        os.makedirs(dest, exist_ok=True)
 
         _emit("scanning", 0, 0, f"Сканирование ID {main_label}")
 
@@ -1095,6 +1109,13 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {friendly} ({label or 'no label'})...", flush=True)
 
         total_files, total_bytes = _scan_drive(mountpoint)
+
+        if not _still_same_device():
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
+
+        os.makedirs(dest, exist_ok=True)
 
         if total_files == 0:
             msg = f"Empty: {friendly}"

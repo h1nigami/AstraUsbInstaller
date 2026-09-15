@@ -27,22 +27,22 @@ public static class DeviceIdentifier
             var files = Directory.EnumerateFiles(directory)
                 .Where(path => Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(Path.GetFileName, StringComparer.Ordinal);
-            foreach (var file in files)
+            var file = files.FirstOrDefault();
+            if (file is null)
+                return null;
+            using var reader = new StreamReader(file, new UTF8Encoding(false, true),
+                detectEncodingFromByteOrderMarks: false);
+            for (var index = 0; index < 50; index++)
             {
-                using var reader = new StreamReader(file, new UTF8Encoding(false, true),
-                    detectEncodingFromByteOrderMarks: false);
-                for (var index = 0; index < 50; index++)
-                {
-                    var line = reader.ReadLine();
-                    if (line is null)
-                        break;
-                    var position = line.IndexOf("#ID:", StringComparison.Ordinal);
-                    if (position < 0)
-                        continue;
-                    var value = line[(position + 4)..].Split((char[]?)null,
-                        StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                    return ParseId(value);
-                }
+                var line = reader.ReadLine();
+                if (line is null)
+                    break;
+                var position = line.IndexOf("#ID:", StringComparison.Ordinal);
+                if (position < 0)
+                    continue;
+                var value = line[(position + 4)..].Split((char[]?)null,
+                    StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                return ParseId(value);
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or DecoderFallbackException)

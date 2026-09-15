@@ -913,7 +913,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
                 Dispatcher.UIThread.Post(() =>
                 {
-                    if (info is not null)
+                    if (info is not null && StillConnected(name))
                         _identified[mount] = info;
 
                     _identifying.Remove(mount);
@@ -939,7 +939,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             using var registry = new DeviceRegistry(AppPaths.Database);
             var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
-                deviceName, deviceName);
+                deviceName, deviceName, connected: () => StillConnected(deviceName));
 
             var staff = new StaffDirectory(AppPaths.Database);
             var person = staff.EmployeeOfDevice(id);
@@ -964,6 +964,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return null;
         }
     }
+
+    private bool StillConnected(string deviceName) =>
+        _listDevices().Any(device => device.Name == deviceName);
 
     /// <summary>
     /// Запускает выгрузку камеры, если она ещё не идёт. Плитка показывает ход:

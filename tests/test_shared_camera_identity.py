@@ -126,6 +126,62 @@ class SharedCameraIdentityTest(unittest.TestCase):
         self.assertEqual([progress.get_nowait()[2] for _ in range(progress.qsize())],
                          ["identifying", "error"])
 
+    def test_replaced_card_is_not_copied_under_previous_id(self):
+        source = self.mount("replace", 1234567, b"old")
+        dest = os.path.join(self.tmp.name, "archive")
+        os.makedirs(dest)
+        progress = queue.Queue()
+
+        def replace_source():
+            dcim = os.path.join(source, "DCIM")
+            os.unlink(os.path.join(dcim, "A11_1234567_222222_20260915120000_0001.mp4"))
+            with open(os.path.join(dcim,
+                                   "A11_7654321_222222_20260915120000_0001.mp4"), "wb") as out:
+                out.write(b"new")
+            return dest
+
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um, "_get_drive_label_linux", return_value="CAM"), \
+             mock.patch.object(um, "_get_device_serial_linux", return_value="SAME"), \
+             mock.patch.object(um, "get_dest_base", side_effect=replace_source), \
+             mock.patch.object(um, "dest_available", return_value=True), \
+             mock.patch.object(um, "_repair_archive_ownership"):
+            um.copy_task(source, source, "sdb1", None, None, progress_queue=progress)
+
+        self.assertFalse(os.path.exists(os.path.join(dest, "Device1234567")))
+        self.assertTrue(os.path.exists(os.path.join(
+            source, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4")))
+        self.assertEqual([progress.get_nowait()[2] for _ in range(progress.qsize())],
+                         ["identifying", "error"])
+
+    def test_replacement_during_scan_aborts_before_archive_creation(self):
+        source = self.mount("scan-replace", 1234567, b"old")
+        dest = os.path.join(self.tmp.name, "archive")
+        os.makedirs(dest)
+        original_scan = um._scan_drive
+
+        def replace_after_scan(path):
+            result = original_scan(path)
+            dcim = os.path.join(source, "DCIM")
+            os.unlink(os.path.join(dcim, "A11_1234567_222222_20260915120000_0001.mp4"))
+            with open(os.path.join(dcim,
+                                   "A11_7654321_222222_20260915120000_0001.mp4"), "wb") as out:
+                out.write(b"new")
+            return result
+
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um, "_get_drive_label_linux", return_value="CAM"), \
+             mock.patch.object(um, "_get_device_serial_linux", return_value="SAME"), \
+             mock.patch.object(um, "get_dest_base", return_value=dest), \
+             mock.patch.object(um, "dest_available", return_value=True), \
+             mock.patch.object(um, "_scan_drive", side_effect=replace_after_scan), \
+             mock.patch.object(um, "_repair_archive_ownership"):
+            um.copy_task(source, source, "sdb1", None, None)
+
+        self.assertFalse(os.path.exists(os.path.join(dest, "Device1234567")))
+        self.assertTrue(os.path.exists(os.path.join(
+            source, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4")))
+
 
 if __name__ == "__main__":
     unittest.main()

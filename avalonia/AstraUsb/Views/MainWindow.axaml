@@ -171,16 +171,14 @@
                         BorderBrush="{Binding Edge}">
                   <Grid RowDefinitions="22,Auto,*,Auto,3,7">
 
-                    <Grid Grid.Row="0">
-                      <Border Width="22" Height="22" CornerRadius="11"
+                    <Border Grid.Row="0" Width="22" Height="22" CornerRadius="11"
                               Background="{Binding Mark}">
                         <TextBlock Text="{Binding SlotLabel}" FontSize="11"
                                    FontFamily="{StaticResource FontHeading}"
                                    FontWeight="ExtraBold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Foreground="{Binding SlotInk}" />
-                      </Border>
-                    </Grid>
+                    </Border>
 
                     <TextBlock Grid.Row="1" Text="{Binding CameraLine}" FontSize="11"
                                FontWeight="SemiBold" TextTrimming="CharacterEllipsis"

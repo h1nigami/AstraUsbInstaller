@@ -59,6 +59,36 @@ public sealed class DeviceRegistryTests : IDisposable
     }
 
     [Fact]
+    public void Removed_device_is_not_registered_after_id_was_read()
+    {
+        using var registry = NewRegistry();
+        var card = Card("removed", 1234567);
+
+        Assert.Throws<IOException>(() =>
+            registry.ResolveByCard(card, 1, "CAM", "sdb1", connected: () => false));
+        Assert.Empty(registry.ListDevices());
+        Assert.False(File.Exists(Path.Combine(card, ".astra_id")));
+    }
+
+    [Fact]
+    public void Replaced_card_is_not_registered_under_previous_id()
+    {
+        using var registry = NewRegistry();
+        var card = Card("replaced", 1234567);
+        var dcim = Path.Combine(card, "DCIM");
+
+        Assert.Throws<IOException>(() => registry.ResolveByCard(card, 1, "CAM", "sdb1",
+            connected: () =>
+            {
+                File.Delete(Path.Combine(dcim, "A11_1234567_222222_20260915120000_0001.mp4"));
+                File.WriteAllText(Path.Combine(dcim,
+                    "A11_7654321_222222_20260915120000_0001.mp4"), "other card");
+                return true;
+            }));
+        Assert.Empty(registry.ListDevices());
+    }
+
+    [Fact]
     public void Reconnecting_same_id_reuses_device_row()
     {
         using var registry = NewRegistry();

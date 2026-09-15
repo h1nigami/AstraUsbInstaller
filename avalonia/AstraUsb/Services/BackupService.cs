@@ -42,13 +42,15 @@ public sealed class BackupService
     public async Task RunAsync(long deviceId, string mountPoint,
         IProgress<BackupProgress> progress, CancellationToken token = default)
     {
-        progress.Report(new BackupProgress(BackupStage.Scanning, 0, "считаем объём"));
-
         var started = DateTime.Now;
         var stamp = started.ToString("yyyyMMdd_HHmmss");
 
         try
         {
+            if (DeviceIdentifier.Read(mountPoint) != deviceId)
+                throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
+            progress.Report(new BackupProgress(BackupStage.Scanning, 0, "считаем объём"));
+
             // Том архива мог не смонтироваться. Записать в его прежний путь
             // означало бы создать пустой каталог на системном разделе и
             // отчитаться об успехе, потеряв записи.
@@ -63,6 +65,8 @@ public sealed class BackupService
 
             var destination = FolderFor(deviceId);
             var total = await Task.Run(() => Measure(mountPoint), token);
+            if (DeviceIdentifier.Read(mountPoint) != deviceId)
+                throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
             if (total.Files == 0)
             {
                 progress.Report(new BackupProgress(BackupStage.Done, 1, "нечего копировать"));
