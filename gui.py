@@ -722,6 +722,32 @@ class App:
             messagebox.showwarning("Перезапуск", "Закройте и запустите программу вручную.",
                                    parent=self.root)
 
+    def _change_backup_dest(self):
+        current = get_dest_base()
+        new_path = filedialog.askdirectory(
+            title="Выберите папку для резервных копий",
+            initialdir=current if os.path.isdir(current) else os.path.expanduser("~"),
+            parent=self.root,
+        )
+        if not new_path:
+            return
+        # Пробная запись + файл-маркер. Маркер пишется на реально подключённый
+        # диск; если позже диск окажется не смонтирован, копирование остановится
+        # с ошибкой вместо тихой записи в пустую папку на системном диске.
+        if not ensure_dest_marker(new_path):
+            messagebox.showerror(
+                "Ошибка",
+                f"Папка недоступна для записи:\n{new_path}\n\n"
+                f"Убедитесь, что диск подключён и смонтирован.")
+            return
+        cfg = _load_config()
+        for key in ("backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial"):
+            cfg.pop(key, None)
+        cfg.update(describe_dest_path(new_path))
+        _save_config(cfg)
+        self.backup_dest_var.set(new_path)
+        messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
+
     def _refresh_pw_status(self):
         pw = _get_exit_password()
         self.pw_status.set(f"Текущий пароль: {'*' * len(pw)} (длина {len(pw)} симв.)")
