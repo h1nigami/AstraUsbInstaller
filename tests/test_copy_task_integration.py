@@ -16,11 +16,19 @@ import usb_monitor as um
 
 
 class CopyTaskEndToEndTest(unittest.TestCase):
+    @staticmethod
+    def _id_log(src, device_id=1234567):
+        os.makedirs(os.path.join(src, "LOG"), exist_ok=True)
+        with open(os.path.join(src, "LOG", "boot.txt"), "wb") as out:
+            out.write(f"#ID:{device_id}\n".encode("ascii"))
+
     def _run(self, src, dest, progress_queue=None, label="MYUSB", serial="SERIAL123"):
-        with mock.patch.object(um, "_get_drive_label_linux", return_value=label), \
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um, "_get_drive_label_linux", return_value=label), \
              mock.patch.object(um, "_get_device_serial_linux", return_value=serial), \
              mock.patch.object(um, "_CONFIG_PATH", os.path.join(dest, "no_config.json")), \
-             mock.patch.object(um, "get_dest_base", return_value=dest):
+             mock.patch.object(um, "get_dest_base", return_value=dest), \
+             mock.patch.object(um, "_repair_archive_ownership"):
             return um.copy_task(src, src, "sda1", None, None, progress_queue=progress_queue)
 
     def test_copies_files_and_persists_device_and_backup_rows(self):
@@ -29,6 +37,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
              tempfile.TemporaryDirectory() as data_dir:
             with open(os.path.join(src, "photo.jpg"), "wb") as f:
                 f.write(b"abc")
+            self._id_log(src)
             db_path = os.path.join(data_dir, "d.db")
             with mock.patch.object(um, "DB_PATH", db_path):
                 um._init_db().close()
@@ -37,20 +46,22 @@ class CopyTaskEndToEndTest(unittest.TestCase):
                 conn = sqlite3.connect(db_path)
                 try:
                     row = conn.execute(
-                        "SELECT serial, label FROM devices WHERE id=?", (device_id,)).fetchone()
-                    self.assertEqual(row, ("SERIAL123", "MYUSB"))
+                        "SELECT serial, label, id_source FROM devices WHERE id=?", (device_id,)).fetchone()
+                    self.assertEqual(row, ("SERIAL123", "MYUSB", "device"))
                     backup = conn.execute(
                         "SELECT total_files, total_bytes FROM backups WHERE device_id=?",
                         (device_id,)).fetchone()
-                    self.assertEqual(backup, (1, 3))
+                    self.assertEqual(backup, (2, 15))
                 finally:
                     conn.close()
 
-            self.assertEqual(copied_files, 1)
-            self.assertEqual(copied_bytes, 3)
-            self.assertTrue(os.path.exists(os.path.join(dest, "Device%s" % device_id, "photo.jpg")))
+            self.assertEqual(device_id, 1234567)
+            self.assertEqual(copied_files, 2)
+            self.assertEqual(copied_bytes, 15)
+            self.assertTrue(os.path.exists(os.path.join(dest, "Device1234567", "photo.jpg")))
+            self.assertFalse(os.path.exists(os.path.join(src, ".astra_id")))
 
-    def test_empty_drive_skips_backup_row_but_still_registers_device(self):
+    def test_empty_drive_without_id_is_refused_without_backup_row(self):
         with tempfile.TemporaryDirectory() as src, \
              tempfile.TemporaryDirectory() as dest, \
              tempfile.TemporaryDirectory() as data_dir:
@@ -61,16 +72,12 @@ class CopyTaskEndToEndTest(unittest.TestCase):
 
                 conn = sqlite3.connect(db_path)
                 try:
-                    device_row = conn.execute(
-                        "SELECT id FROM devices WHERE id=?", (device_id,)).fetchone()
-                    self.assertIsNotNone(device_row)
-                    backup_row = conn.execute(
-                        "SELECT 1 FROM backups WHERE device_id=?", (device_id,)).fetchone()
-                    self.assertIsNone(backup_row, "empty drive must not create a backup record")
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0], 0)
+                    self.assertEqual(conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0], 0)
                 finally:
                     conn.close()
 
-            self.assertEqual((copied_files, copied_bytes), (0, 0))
+            self.assertEqual((device_id, copied_files, copied_bytes), (None, 0, 0))
 
     def test_emits_progress_states_in_order(self):
         import queue
@@ -80,6 +87,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
              tempfile.TemporaryDirectory() as data_dir:
             with open(os.path.join(src, "video.mp4"), "wb") as f:
                 f.write(b"x" * 10)
+            self._id_log(src)
             db_path = os.path.join(data_dir, "d.db")
             with mock.patch.object(um, "DB_PATH", db_path):
                 um._init_db().close()
@@ -110,9 +118,12 @@ class CopyTaskEndToEndTest(unittest.TestCase):
             video = os.path.join(src, "clip.mp4")
             with open(video, "wb") as f:
                 f.write(b"x" * 10)
+            self._id_log(src)
 
             db_path = os.path.join(data_dir, "d.db")
-            with mock.patch.object(um, "DB_PATH", db_path), \
+            self._id_log(src)
+            with mock.patch.object(um.platform, "system", return_value="Linux"), \
+                 mock.patch.object(um, "DB_PATH", db_path), \
                  mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
                  mock.patch.object(um, "_get_drive_label_linux", return_value="L"), \
                  mock.patch.object(um, "_get_device_serial_linux", return_value="S"):
