@@ -482,6 +482,75 @@ _connected_device_ids = {}
 _connected_devices = {}
 
 
+def _positive_id(value):
+    if not value or not value.isascii() or not value.isdigit():
+        return None
+    digits = value.lstrip("0")
+    if not digits or len(digits) > 19:
+        return None
+    number = int(digits)
+    return number if 0 < number <= 9223372036854775807 else None
+
+
+def _id_from_latest_log(mountpoint):
+    log_dir = os.path.join(mountpoint, "LOG")
+    if not os.path.isdir(log_dir):
+        return None
+    try:
+        files = sorted((entry.path for entry in os.scandir(log_dir)
+                        if entry.is_file() and entry.name.lower().endswith(".txt")), reverse=True)
+        for path in files:
+            with open(path, encoding="utf-8") as stream:
+                for index, line in enumerate(stream):
+                    if index >= 50:
+                        break
+                    if "#ID:" in line:
+                        tokens = line.partition("#ID:")[2].split()
+                        return _positive_id(tokens[0] if tokens else "")
+    except (OSError, UnicodeError) as error:
+        raise OSError(f"Не удалось прочитать журнал: {error}") from error
+    return None
+
+
+def _id_from_latest_recording(mountpoint):
+    dcim = os.path.join(mountpoint, "DCIM")
+    if not os.path.isdir(dcim):
+        return None
+    latest = None
+    walk_errors = []
+    for root, _, files in os.walk(dcim, onerror=walk_errors.append):
+        for name in files:
+            if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+                continue
+            parts = os.path.splitext(name)[0].split("_")
+            if (len(parts) < 5 or not parts[0].isascii() or not parts[0].isalnum()
+                    or not parts[1].isascii() or not parts[1].isdigit()
+                    or not parts[2].isascii() or not parts[2].isdigit()
+                    or not parts[4].isascii() or not parts[4].isdigit()):
+                continue
+            try:
+                when = datetime.strptime(parts[3], "%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+            key = (when, int(parts[4]))
+            if latest is None or key > latest[0]:
+                latest = (key, _positive_id(parts[1]))
+    if walk_errors:
+        raise OSError(f"Не удалось прочитать записи: {walk_errors[0]}")
+    return latest[1] if latest else None
+
+
+def _read_device_id(mountpoint):
+    log_id = _id_from_latest_log(mountpoint)
+    recording_id = _id_from_latest_recording(mountpoint)
+    if log_id and recording_id and log_id != recording_id:
+        raise OSError(f"Разные ID регистратора: {log_id} и {recording_id}")
+    device_id = log_id or recording_id
+    if not device_id:
+        raise OSError("ID регистратора не найден")
+    return device_id
+
+
 def _read_device_id_from_usb(mountpoint):
     if not mountpoint:
         return None

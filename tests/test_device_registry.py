@@ -62,6 +62,62 @@ class DeviceIdMarkerFileTest(unittest.TestCase):
         um._write_device_id_to_usb(None, 5)  # must not raise
 
 
+class DeviceIdentityReaderTest(unittest.TestCase):
+    def test_reads_device_id_from_log(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("2026/09/15-12:00:00 #ID:1234567 #Включение системы\n")
+            self.assertEqual(getattr(um, "_read_device_id", lambda _: None)(mount), 1234567)
+
+    def test_reads_device_id_from_latest_recording_without_log(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "DCIM"))
+            for name in ("A11_1111111_222222_20260914120000_0001.mp4",
+                         "A11_7654321_222222_20260915120000_0001.mp4"):
+                with open(os.path.join(mount, "DCIM", name), "wb"):
+                    pass
+            self.assertEqual(um._read_device_id(mount), 7654321)
+
+    def test_conflicting_log_and_recording_ids_are_rejected(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            os.makedirs(os.path.join(mount, "DCIM"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:1234567\n")
+            with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
+                pass
+            with self.assertRaisesRegex(OSError, "Разные ID"):
+                um._read_device_id(mount)
+
+    def test_empty_id_in_log_is_reported_as_missing(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID: \n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
+
+    def test_unreadable_log_does_not_fall_back_to_recording(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            os.makedirs(os.path.join(mount, "DCIM"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "wb") as out:
+                out.write(b"\xff")
+            with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
+                pass
+            with self.assertRaisesRegex(OSError, "Не удалось прочитать журнал"):
+                um._read_device_id(mount)
+
+    def test_very_long_decimal_id_is_rejected_without_parser_crash(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:" + "9" * 5000 + "\n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
+
+
 class ResolveDeviceIdTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
