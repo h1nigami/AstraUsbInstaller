@@ -113,12 +113,14 @@ class LsblkParseTest(unittest.TestCase):
 
 
 class ScanDriveTest(unittest.TestCase):
-    def test_scan_skips_astra_id_marker(self):
+    def test_scan_skips_old_service_id_files(self):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "a.txt"), "wb") as f:
                 f.write(b"x" * 100)
-            with open(os.path.join(d, um.DEVICE_ID_FILE), "w") as f:
+            with open(os.path.join(d, ".astra_id"), "w") as f:
                 f.write("5\n")
+            with open(os.path.join(d, ".bestcam_id"), "w") as f:
+                f.write("BCU-01-0001\n")
             total_files, total_bytes = um._scan_drive(d)
             self.assertEqual(total_files, 1)
             self.assertEqual(total_bytes, 100)
@@ -134,14 +136,18 @@ class CopyAndDeleteTest(unittest.TestCase):
             f1 = os.path.join(src, "video.mp4")
             with open(f1, "wb") as f:
                 f.write(b"data")
-            with open(os.path.join(src, um.DEVICE_ID_FILE), "w") as f:
+            with open(os.path.join(src, ".astra_id"), "w") as f:
                 f.write("1\n")
+            with open(os.path.join(src, ".bestcam_id"), "w") as f:
+                f.write("BCU-01-0001\n")
             copied_files, copied_bytes, backed_up, failed = self._copy(src, dst)
             self.assertEqual(copied_files, 1)
             self.assertEqual(copied_bytes, 4)
             self.assertEqual(failed, 0)
             self.assertIn(f1, backed_up)
             self.assertTrue(os.path.exists(os.path.join(dst, "video.mp4")))
+            self.assertFalse(os.path.exists(os.path.join(dst, ".astra_id")))
+            self.assertFalse(os.path.exists(os.path.join(dst, ".bestcam_id")))
 
     def test_identical_file_counts_as_backed_up(self):
         with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:

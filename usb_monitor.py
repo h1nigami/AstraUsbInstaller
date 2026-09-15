@@ -7,7 +7,6 @@ import platform
 import sys
 import sqlite3
 import threading
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -431,6 +430,7 @@ def _init_db():
             label       TEXT DEFAULT '',
             person      TEXT DEFAULT '',
             name        TEXT DEFAULT '',
+            id_source   TEXT DEFAULT '',
             first_seen  TEXT NOT NULL,
             last_seen   TEXT NOT NULL
         )
@@ -454,6 +454,8 @@ def _init_db():
         conn.execute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''")
     except Exception:
         pass
+    if "id_source" not in {row[1] for row in conn.execute("PRAGMA table_info(devices)")}:
+        conn.execute("ALTER TABLE devices ADD COLUMN id_source TEXT DEFAULT ''")
 
     # Устройства, потерянные прежней ошибкой регистрации: бэкапы на них есть,
     # а строки нет. Без неё устройство не видно в списке, ему нельзя задать имя,
@@ -475,67 +477,96 @@ def _init_db():
     return conn
 
 
-DEVICE_ID_FILE = ".astra_id"
+SERVICE_ID_FILES = {".astra_id", ".bestcam_id"}
 # ponytail: одна блокировка регистрации; разделить по БД при работе с несколькими станциями.
 _device_id_lock = threading.Lock()
 _connected_device_ids = {}
 _connected_devices = {}
 
 
-def _read_device_id_from_usb(mountpoint):
-    if not mountpoint:
+def _positive_id(value):
+    if not value or not value.isascii() or not value.isdigit():
         return None
-    path = os.path.join(mountpoint, DEVICE_ID_FILE)
-    try:
-        with open(path, encoding="utf-8") as stream:
-            value = stream.read().strip()
-    except FileNotFoundError:
+    digits = value.lstrip("0")
+    if not digits or len(digits) > 19:
         return None
-    except UnicodeError as error:
-        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
-    except OSError as error:
-        raise OSError(f"Не удалось прочитать Astra ID: {error}") from error
+    number = int(digits)
+    return number if 0 < number <= 9223372036854775807 else None
+
+
+def _id_from_latest_log(mountpoint):
+    log_dir = os.path.join(mountpoint, "LOG")
+    if not os.path.isdir(log_dir):
+        return None
     try:
-        device_id = int(value)
-    except ValueError as error:
-        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}") from error
-    if (not value.isascii() or not value.isdigit()
-            or not 0 < device_id <= 9223372036854775807):
-        raise OSError(f"Некорректный Astra ID в {DEVICE_ID_FILE}")
+        files = sorted((entry.path for entry in os.scandir(log_dir)
+                        if entry.is_file() and entry.name.lower().endswith(".txt")), reverse=True)
+        if not files:
+            return None
+        with open(files[0], encoding="utf-8") as stream:
+            for index, line in enumerate(stream):
+                if index >= 50:
+                    break
+                if "#ID:" in line:
+                    tokens = line.partition("#ID:")[2].split()
+                    return _positive_id(tokens[0] if tokens else "")
+    except (OSError, UnicodeError) as error:
+        raise OSError("Не удалось прочитать журнал регистратора") from error
+    return None
+
+
+def _id_from_latest_recording(mountpoint):
+    dcim = os.path.join(mountpoint, "DCIM")
+    if not os.path.isdir(dcim):
+        return None
+    latest = None
+    walk_errors = []
+    for root, _, files in os.walk(dcim, onerror=walk_errors.append):
+        for name in files:
+            if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+                continue
+            parts = os.path.splitext(name)[0].split("_")
+            if (len(parts) < 5 or not parts[0].isascii() or not parts[0].isalnum()
+                    or not parts[1].isascii() or not parts[1].isdigit()
+                    or not parts[2].isascii() or not parts[2].isdigit()
+                    or not parts[4].isascii() or not parts[4].isdigit()):
+                continue
+            try:
+                when = datetime.strptime(parts[3], "%Y%m%d%H%M%S")
+            except ValueError:
+                continue
+            key = (when, int(parts[4]))
+            if latest is None or key > latest[0]:
+                latest = (key, _positive_id(parts[1]))
+    if walk_errors:
+        raise OSError("Не удалось прочитать записи регистратора") from walk_errors[0]
+    return latest[1] if latest else None
+
+
+def _read_device_id(mountpoint):
+    log_id = _id_from_latest_log(mountpoint)
+    recording_id = _id_from_latest_recording(mountpoint)
+    if log_id and recording_id and log_id != recording_id:
+        raise OSError(f"Разные ID регистратора: {log_id} и {recording_id}")
+    device_id = log_id or recording_id
+    if not device_id:
+        raise OSError("ID регистратора не найден")
     return device_id
 
 
-def _write_device_id_to_usb(mountpoint, device_id):
-    if not mountpoint:
-        return
-    path = os.path.join(mountpoint, DEVICE_ID_FILE)
-    try:
-        with open(path, "w") as f:
-            f.write(f"{device_id}\n")
-    except Exception:
-        pass
-
-
-def _register_id_from_usb(conn, device_id, serial, label, now):
-    """Register a device under the id its own medium carries in .astra_id.
-
-    devices.serial is UNIQUE, and USB gadgets hand out one and the same serial
-    to every unit. A plain INSERT OR IGNORE therefore silently created nothing
-    for the second such device: it stayed out of the device list, and its
-    backups pointed at a row that did not exist. Fall back to a serial made
-    unique by the device id — the id itself is the primary key, so it cannot
-    collide.
-    """
-    for candidate in (serial or "", f"{serial or 'NOSERIAL'}#{device_id}"):
+def _register_id_from_device(conn, device_id, serial, label, now):
+    """Регистрирует ID, дополняя общий USB-серийник при конфликте."""
+    for candidate in (serial or f"DEVICE_ID_{device_id}", f"{serial or 'DEVICE_ID'}#{device_id}"):
         try:
             conn.execute(
-                "INSERT INTO devices (id, serial, label, first_seen, last_seen)"
-                " VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO devices (id, serial, label, first_seen, last_seen, id_source)"
+                " VALUES (?, ?, ?, ?, ?, 'device')",
                 (device_id, candidate, label, now, now),
             )
             return
         except sqlite3.IntegrityError:
             continue
+    raise sqlite3.IntegrityError(f"Не удалось зарегистрировать ID {device_id}")
 
 
 def _resolve_device_id(conn, mountpoint, serial, label, devname):
@@ -544,41 +575,39 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
     with _device_id_lock:
         present = _connected_devices.get(database)
         if present is not None and devname not in present:
-            raise OSError(f"Устройство {devname} отключено")
+            raise OSError("Устройство отключено")
         # Отмечаем попытку до чтения USB, чтобы отключение отменяло даже зависшее чтение.
         reservation = (None, object())
         _connected_device_ids[owner] = reservation
     try:
-        id_from_usb = _read_device_id_from_usb(mountpoint)
+        device_id = _read_device_id(mountpoint)
         with _device_id_lock:
             present = _connected_devices.get(database)
             if ((present is not None and devname not in present)
                     or _connected_device_ids.get(owner) is not reservation):
-                raise OSError(f"Устройство {devname} отключено")
-            duplicate = id_from_usb is not None and any(
-                key[0] == database and key != owner and claim[0] == id_from_usb
+                raise OSError("Устройство отключено")
+            duplicate = any(
+                key[0] == database and key != owner and claim[0] == device_id
                 for key, claim in _connected_device_ids.items())
             if duplicate:
-                raise OSError(f"Дубликат Astra ID {id_from_usb}: {devname}")
-            device_id = _create_device(conn, serial, label, devname) if id_from_usb is None else id_from_usb
+                raise OSError(f"Дубликат ID устройства {device_id}")
             now = datetime.now().isoformat()
-            if not conn.execute("SELECT 1 FROM devices WHERE id = ?",
-                                (device_id,)).fetchone():
-                _register_id_from_usb(conn, device_id, serial, label or devname, now)
+            row = conn.execute("SELECT id_source FROM devices WHERE id = ?",
+                               (device_id,)).fetchone()
+            if row and row[0] != "device":
+                raise OSError(f"ID {device_id} занят прежней записью")
+            if not row:
+                _register_id_from_device(conn, device_id, serial, label or devname, now)
             conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
                          (now, label or devname, device_id))
             conn.commit()
             reservation = (device_id, reservation[1])
             _connected_device_ids[owner] = reservation
-        if id_from_usb is None:
-            _write_device_id_to_usb(mountpoint, device_id)
-            if _read_device_id_from_usb(mountpoint) != device_id:
-                raise OSError(f"Не удалось сохранить {DEVICE_ID_FILE} на {devname}")
         with _device_id_lock:
             present = _connected_devices.get(database)
             if ((present is not None and devname not in present)
                     or _connected_device_ids.get(owner) is not reservation):
-                raise OSError(f"Устройство {devname} отключено")
+                raise OSError("Устройство отключено")
         return device_id
     except Exception:
         with _device_id_lock:
@@ -635,21 +664,6 @@ def _repair_archive_ownership(root, device_dir=None):
             ["chown", "-R", f"--reference={root}", "--", path],
             check=False, capture_output=True,
         )
-
-
-def _create_device(conn, serial, label, devname):
-    now = datetime.now().isoformat()
-    serial = serial or f"NOSERIAL_{uuid.uuid4().hex}"
-    sql = "INSERT INTO devices (serial, label, first_seen, last_seen) VALUES (?, ?, ?, ?)"
-    try:
-        cur = conn.execute(sql, (serial, label or devname or "USB", now, now))
-    except sqlite3.IntegrityError:
-        # Сохраняем совместимость с UNIQUE в старых БД, не объединяя камеры.
-        cur = conn.execute(sql, (f"{serial}#{uuid.uuid4().hex}", label or devname or "USB", now, now))
-    conn.commit()
-    did = cur.lastrowid
-    print(f"  New device registered: {did} ({label or devname or serial})", flush=True)
-    return did
 
 
 def _get_device_serial_linux(devname):
@@ -719,7 +733,7 @@ def _scan_drive(drive_path):
     total_bytes = 0
     for root, dirs, files in os.walk(drive_path):
         for file in files:
-            if file == DEVICE_ID_FILE:
+            if file in SERVICE_ID_FILES:
                 continue  # internal marker, never copied — keep totals honest
             total_files += 1
             try:
@@ -974,11 +988,11 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
             # Destination vanished mid-copy (e.g. the disk was pulled) —
             # everything in this directory counts as failed, nothing here may
             # be auto-deleted from the source.
-            failed += sum(1 for f in files if f != DEVICE_ID_FILE)
+            failed += sum(1 for f in files if f not in SERVICE_ID_FILES)
             print(f"  Copy failed into {dest_dir}: {e}", flush=True)
             continue
         for file_name in files:
-            if file_name == DEVICE_ID_FILE:
+            if file_name in SERVICE_ID_FILES:
                 continue
             src_file = os.path.join(root, file_name)
             dst_file = os.path.join(dest_dir, file_name)
@@ -1026,19 +1040,23 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     # not safe for concurrent writes.
     conn = _connect()
     try:
+        if progress_queue is not None:
+            progress_queue.put_nowait((f"identity:{devname}", "", "identifying", 0, 0,
+                                       "Определение ID", devname))
         try:
             device_id = _resolve_device_id(conn, mountpoint, serial, label or "", devname)
         except (OSError, sqlite3.Error) as error:
             msg = f"Ошибка регистрации {devname}: {error}"
             print(msg, flush=True)
             if progress_queue is not None:
-                progress_queue.put_nowait((f"identity:{devname}", devname, "error", 0, 0, msg, devname))
+                progress_queue.put_nowait((f"identity:{devname}", "", "error", 0, 0,
+                                           f"Ошибка определения ID: {error}", devname))
             if should_unmount:
                 _unmount(mountpoint)
             return None, 0, 0
-        # display_id names the backup folder and must stay stable across
-        # renames; friendly is the human-facing label shown in messages/GUI.
+        # Имя папки задаётся ID устройства; главное окно получает только число.
         display_id = f"Device{device_id}"
+        main_label = str(device_id)
         friendly = _friendly_device_label(device_id, _get_device_name(conn, device_id))
         started_at = datetime.now()
 
@@ -1048,9 +1066,23 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         def _emit(state, current=0, total=0, msg=""):
             if progress_queue is not None:
                 try:
-                    progress_queue.put_nowait((device_id, friendly, state, current, total, msg, devname))
+                    progress_queue.put_nowait((device_id, main_label, state, current, total, msg, devname))
                 except Exception:
                     pass
+
+        def _still_same_device():
+            try:
+                if _read_device_id(mountpoint) != device_id:
+                    raise OSError("Носитель сменился после определения ID")
+            except OSError as error:
+                _emit("error", 0, 0, str(error))
+                return False
+            return True
+
+        if not _still_same_device():
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
 
         if not dest_available():
             # The configured destination is not reachable (its disk is not
@@ -1068,9 +1100,8 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             return device_id, 0, 0
 
         dest = os.path.join(dest_base, display_id)
-        os.makedirs(dest, exist_ok=True)
 
-        _emit("scanning", 0, 0, f"Scanning {friendly}...")
+        _emit("scanning", 0, 0, f"Сканирование ID {main_label}")
 
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[cyan]Scanning {friendly}...")
@@ -1079,9 +1110,16 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         total_files, total_bytes = _scan_drive(mountpoint)
 
+        if not _still_same_device():
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
+
+        os.makedirs(dest, exist_ok=True)
+
         if total_files == 0:
             msg = f"Empty: {friendly}"
-            _emit("done", 0, 0, msg)
+            _emit("done", 0, 0, f"Готово: ID {main_label}")
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
             else:
@@ -1090,7 +1128,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 _unmount(mountpoint)
             return device_id, 0, 0
 
-        _emit("copying", 0, total_bytes, f"Copying {friendly}...")
+        _emit("copying", 0, total_bytes, f"Копирование ID {main_label}")
 
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[green]{friendly} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
@@ -1112,10 +1150,10 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         finished_at = datetime.now()
         if failed:
             msg = f"Ошибки: {friendly} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
-            _emit("error", copied_bytes, total_bytes, msg)
+            _emit("error", copied_bytes, total_bytes, f"Не скопировано: {failed} файл(ов)")
         else:
             msg = f"Done: {friendly} ({copied_files} files, {_format_size(copied_bytes)})"
-            _emit("done", copied_bytes, total_bytes, f"Done: {friendly}")
+            _emit("done", copied_bytes, total_bytes, f"Готово: ID {main_label}")
 
         if USE_RICH and progress_obj:
             color = "red" if failed else "green"

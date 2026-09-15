@@ -54,7 +54,10 @@ public sealed class OperatorFormsTests : IDisposable
     public async Task Camera_name_and_assignment_keep_their_confirmation_after_reload()
     {
         using var registry = new DeviceRegistry(Db);
-        var camera = registry.ResolveByCard(null, 1, "CAM", "CAM");
+        var dcim = Path.Combine(_dir, "card", "DCIM");
+        Directory.CreateDirectory(dcim);
+        File.WriteAllText(Path.Combine(dcim, "A11_1234567_222222_20260915120000_0001.mp4"), "video");
+        var camera = registry.ResolveByCard(Path.GetDirectoryName(dcim), 1, "CAM", "CAM");
         var staff = new StaffDirectory(Db);
         staff.AddEmployee("Иван", "111");
         var model = new DevicesViewModel(Db);

@@ -14,7 +14,10 @@ public sealed class DevicesViewModelTests
         {
             var db = Path.Combine(directory, "devices.db");
             using var registry = new DeviceRegistry(db);
-            var camera = registry.ResolveByCard(null, 1, "CAM", "CAM");
+            var card = Path.Combine(directory, "card", "DCIM");
+            Directory.CreateDirectory(card);
+            File.WriteAllText(Path.Combine(card, "A11_1234567_222222_20260915120000_0001.mp4"), "video");
+            var camera = registry.ResolveByCard(Path.GetDirectoryName(card), 1, "CAM", "CAM");
             var staff = new StaffDirectory(db);
             staff.AddEmployee("Иванов Иван", "111111");
             var owner = staff.AddEmployee("Иванов Иван", "222222");

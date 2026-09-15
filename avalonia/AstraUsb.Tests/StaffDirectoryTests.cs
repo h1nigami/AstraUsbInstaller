@@ -23,6 +23,15 @@ public sealed class StaffDirectoryTests : IDisposable
 
     private StaffDirectory NewDirectory() => new(_db);
 
+    private string Card(string name, long id)
+    {
+        var dcim = Path.Combine(_dir, name, "DCIM");
+        Directory.CreateDirectory(dcim);
+        File.WriteAllText(Path.Combine(dcim,
+            $"A11_{id}_222222_20260915120000_0001.mp4"), "video");
+        return Path.GetDirectoryName(dcim)!;
+    }
+
     [Fact]
     public void Departments_form_a_tree()
     {
@@ -105,8 +114,7 @@ public sealed class StaffDirectoryTests : IDisposable
     public void Device_can_be_assigned_to_an_employee()
     {
         using var registry = new DeviceRegistry(_db);
-        var mount = Path.Combine(_dir, "card");
-        Directory.CreateDirectory(mount);
+        var mount = Card("card", 1234567);
         var deviceId = registry.ResolveDeviceId(mount, "SER-1", "cam", "sdb1");
 
         var staff = NewDirectory();
@@ -122,8 +130,7 @@ public sealed class StaffDirectoryTests : IDisposable
         // База, накопленная прежней версией: человек записан строкой у устройства.
         using (var registry = new DeviceRegistry(_db))
         {
-            var mount = Path.Combine(_dir, "legacy");
-            Directory.CreateDirectory(mount);
+            var mount = Card("legacy", 1234568);
             var deviceId = registry.ResolveDeviceId(mount, "SER-9", "cam", "sdc1");
 
             using var db = new SqliteConnection($"Data Source={_db}");
@@ -144,8 +151,7 @@ public sealed class StaffDirectoryTests : IDisposable
     {
         using (var registry = new DeviceRegistry(_db))
         {
-            var mount = Path.Combine(_dir, "legacy2");
-            Directory.CreateDirectory(mount);
+            var mount = Card("legacy2", 1234569);
             var deviceId = registry.ResolveDeviceId(mount, "SER-8", "cam", "sdd1");
 
             using var db = new SqliteConnection($"Data Source={_db}");

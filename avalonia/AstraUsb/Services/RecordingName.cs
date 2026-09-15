@@ -33,7 +33,7 @@ public sealed record RecordingInfo(
 public static class RecordingName
 {
     private static readonly Regex Pattern = new(
-        @"^(?<model>[A-Za-z0-9]+)_(?<device>\d+)_(?<person>\d+)_(?<stamp>\d{14})_(?<seq>\d+)",
+        @"^(?<model>[A-Za-z0-9]+)_(?<device>[0-9]+)_(?<person>[0-9]+)_(?<stamp>[0-9]{14})_(?<seq>[0-9]+)",
         RegexOptions.Compiled);
 
     public static RecordingInfo? Parse(string? fileName)
@@ -72,16 +72,16 @@ public static class RecordingName
         try
         {
             return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-                .Select(path => (Path: path, Info: Parse(Path.GetFileName(path))))
-                .Where(pair => pair.Info is not null)
-                .OrderByDescending(pair => pair.Info!.ShotAt)
-                .Select(pair => pair.Info)
+                .Where(path => SourceCleaner.VideoExtensions.Contains(Path.GetExtension(path)))
+                .Select(path => Parse(Path.GetFileName(path)))
+                .Where(info => info is not null)
+                .OrderByDescending(info => info!.ShotAt)
+                .ThenByDescending(info => info!.Sequence)
                 .FirstOrDefault();
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Карту вынули посреди обхода, номера возьмутся другим путём.
-            return null;
+            throw new IOException("Не удалось прочитать записи регистратора", error);
         }
     }
 }

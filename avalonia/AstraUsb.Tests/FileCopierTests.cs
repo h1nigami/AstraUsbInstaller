@@ -89,13 +89,15 @@ public sealed class FileCopierTests : IDisposable
     [Fact]
     public void Marker_file_is_never_copied()
     {
-        Write(DeviceRegistry.DeviceIdFile, "42");
+        Write(Markers.LegacyId, "42");
+        Write(Markers.CardId, "BCU-01-0001");
         Write("photo.jpg", "картинка");
 
         var result = FileCopier.Copy(_src, _dst, "20260902_120000");
 
         Assert.Equal(1, result.CopiedFiles);
-        Assert.False(File.Exists(Path.Combine(_dst, DeviceRegistry.DeviceIdFile)));
+        Assert.False(File.Exists(Path.Combine(_dst, Markers.LegacyId)));
+        Assert.False(File.Exists(Path.Combine(_dst, Markers.CardId)));
     }
 
     [Fact]

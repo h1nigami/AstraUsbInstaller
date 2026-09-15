@@ -1,4 +1,4 @@
-"""Проверки регистрации устройств, маркера .astra_id и схемы SQLite."""
+"""Проверки ID регистратора и схемы SQLite."""
 
 import os
 import sys
@@ -29,37 +29,76 @@ class InitDbTest(unittest.TestCase):
                 self.assertIn("person", cols)
                 self.assertIn("name", cols)
                 self.assertIn("serial", cols)
+                self.assertIn("id_source", cols)
             finally:
                 conn2.close()
 
 
-class DeviceIdMarkerFileTest(unittest.TestCase):
-    def test_write_then_read_roundtrip(self):
-        with tempfile.TemporaryDirectory() as mp:
-            um._write_device_id_to_usb(mp, 42)
-            self.assertEqual(um._read_device_id_from_usb(mp), 42)
+class DeviceIdentityReaderTest(unittest.TestCase):
+    def test_reads_device_id_from_log(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("2026/09/15-12:00:00 #ID:1234567 #Включение системы\n")
+            self.assertEqual(getattr(um, "_read_device_id", lambda _: None)(mount), 1234567)
 
-    def test_read_missing_file_returns_none(self):
-        with tempfile.TemporaryDirectory() as mp:
-            self.assertIsNone(um._read_device_id_from_usb(mp))
+    def test_reads_device_id_from_latest_recording_without_log(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "DCIM"))
+            for name in ("A11_1111111_222222_20260914120000_0001.mp4",
+                         "A11_7654321_222222_20260915120000_0001.mp4"):
+                with open(os.path.join(mount, "DCIM", name), "wb"):
+                    pass
+            self.assertEqual(um._read_device_id(mount), 7654321)
 
-    def test_invalid_utf8_is_reported_as_oserror(self):
-        with tempfile.TemporaryDirectory() as mp:
-            with open(os.path.join(mp, um.DEVICE_ID_FILE), "wb") as stream:
-                stream.write(b"\xff")
-            with self.assertRaisesRegex(OSError, "Некорректный Astra ID"):
-                um._read_device_id_from_usb(mp)
+    def test_conflicting_log_and_recording_ids_are_rejected(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            os.makedirs(os.path.join(mount, "DCIM"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:1234567\n")
+            with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
+                pass
+            with self.assertRaisesRegex(OSError, "Разные ID"):
+                um._read_device_id(mount)
 
-    def test_non_decimal_unicode_digit_is_reported_as_oserror(self):
-        with tempfile.TemporaryDirectory() as mp:
-            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w", encoding="utf-8") as stream:
-                stream.write("²")
-            with self.assertRaisesRegex(OSError, "Некорректный Astra ID"):
-                um._read_device_id_from_usb(mp)
+    def test_empty_id_in_log_is_reported_as_missing(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID: \n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
 
-    def test_none_mountpoint_is_safe_noop(self):
-        self.assertIsNone(um._read_device_id_from_usb(None))
-        um._write_device_id_to_usb(None, 5)  # must not raise
+    def test_latest_log_without_id_does_not_reuse_older_id(self):
+        with tempfile.TemporaryDirectory() as mount:
+            log_dir = os.path.join(mount, "LOG")
+            os.makedirs(log_dir)
+            with open(os.path.join(log_dir, "20260914.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:1111111\n")
+            with open(os.path.join(log_dir, "20260915.txt"), "w", encoding="utf-8") as out:
+                out.write("Запуск регистратора\n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
+
+    def test_unreadable_log_does_not_fall_back_to_recording(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            os.makedirs(os.path.join(mount, "DCIM"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "wb") as out:
+                out.write(b"\xff")
+            with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
+                pass
+            with self.assertRaisesRegex(OSError, "Не удалось прочитать журнал"):
+                um._read_device_id(mount)
+
+    def test_very_long_decimal_id_is_rejected_without_parser_crash(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:" + "9" * 5000 + "\n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
 
 
 class ResolveDeviceIdTest(unittest.TestCase):
@@ -76,61 +115,95 @@ class ResolveDeviceIdTest(unittest.TestCase):
         self._patcher.stop()
         self.tmpdir.cleanup()
 
-    def test_new_device_creates_record_and_writes_marker(self):
+    @staticmethod
+    def _recording(mount, device_id):
+        os.makedirs(os.path.join(mount, "DCIM"), exist_ok=True)
+        with open(os.path.join(mount, "DCIM", f"A11_{device_id}_222222_20260915120000_0001.mp4"), "wb"):
+            pass
+
+    def test_new_device_creates_record_without_marker(self):
         with tempfile.TemporaryDirectory() as mp:
+            self._recording(mp, 1234567)
             dev_id = um._resolve_device_id(self.conn, mp, "SER1", "LABEL1", "sda1")
-            self.assertEqual(um._read_device_id_from_usb(mp), dev_id)
+            self.assertEqual(dev_id, 1234567)
+            self.assertFalse(os.path.exists(os.path.join(mp, ".astra_id")))
             row = self.conn.execute(
-                "SELECT serial, label FROM devices WHERE id=?", (dev_id,)).fetchone()
-            self.assertEqual(row, ("SER1", "LABEL1"))
+                "SELECT serial, label, id_source FROM devices WHERE id=?", (dev_id,)).fetchone()
+            self.assertEqual(row, ("SER1", "LABEL1", "device"))
 
-    def test_corrupt_existing_marker_is_rejected(self):
+    def test_corrupt_existing_marker_is_ignored_and_preserved(self):
         with tempfile.TemporaryDirectory() as mp:
-            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w", encoding="utf-8") as stream:
+            self._recording(mp, 1234567)
+            marker = os.path.join(mp, ".astra_id")
+            with open(marker, "w", encoding="utf-8") as stream:
                 stream.write("broken")
-            with self.assertRaisesRegex(OSError, "Некорректный Astra ID"):
-                um._resolve_device_id(self.conn, mp, "SER", "CAM", "sdb1")
+            self.assertEqual(um._resolve_device_id(self.conn, mp, "SER", "CAM", "sdb1"), 1234567)
+            with open(marker, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "broken")
 
-    def test_existing_marker_is_the_only_identity(self):
+    def test_old_marker_without_device_id_does_not_register(self):
         with tempfile.TemporaryDirectory() as mp:
-            um._write_device_id_to_usb(mp, 999)
-            self.assertEqual(
-                um._resolve_device_id(self.conn, mp, "CONFLICTING_SERIAL", "CAM", "sdb1"),
-                999,
-            )
+            with open(os.path.join(mp, ".astra_id"), "w", encoding="utf-8") as out:
+                out.write("999\n")
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._resolve_device_id(self.conn, mp, "CONFLICTING_SERIAL", "CAM", "sdb1")
+            self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0], 0)
 
-    def test_same_serial_without_marker_gets_next_local_ids(self):
+    def test_device_id_wins_over_old_astra_marker(self):
+        with tempfile.TemporaryDirectory() as mp:
+            os.makedirs(os.path.join(mp, "DCIM"))
+            with open(os.path.join(mp, "DCIM", "A11_1234567_222222_20260915120000_0001.mp4"), "wb"):
+                pass
+            old_marker = os.path.join(mp, ".astra_id")
+            with open(old_marker, "w", encoding="utf-8") as out:
+                out.write("999\n")
+            self.assertEqual(um._resolve_device_id(self.conn, mp, "SHARED", "CAM", "sdb1"), 1234567)
+            with open(old_marker, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "999\n")
+
+    def test_old_database_row_with_same_number_is_not_reused(self):
+        self.conn.execute(
+            "INSERT INTO devices (id, serial, label, first_seen, last_seen)"
+            " VALUES (1234567, 'OLD', 'OLD', '2026-09-14T10:00:00', '2026-09-14T10:00:00')")
+        self.conn.commit()
+        with tempfile.TemporaryDirectory() as mp:
+            self._recording(mp, 1234567)
+            with self.assertRaisesRegex(OSError, "занят прежней записью"):
+                um._resolve_device_id(self.conn, mp, "SHARED", "CAM", "sdb1")
+            self.assertEqual(self.conn.execute("SELECT serial FROM devices WHERE id=1234567")
+                             .fetchone()[0], "OLD")
+
+    def test_same_serial_with_different_device_ids_gets_separate_rows(self):
         with tempfile.TemporaryDirectory() as mp1:
+            self._recording(mp1, 1234567)
             first_id = um._resolve_device_id(self.conn, mp1, "SERIALSAME", "L1", "sda1")
         with tempfile.TemporaryDirectory() as mp2:
+            self._recording(mp2, 7654321)
             second_id = um._resolve_device_id(self.conn, mp2, "SERIALSAME", "L1", "sda2")
-            self.assertEqual(um._read_device_id_from_usb(mp2), second_id)
-        self.assertEqual((first_id, second_id), (1, 2))
+        self.assertEqual((first_id, second_id), (1234567, 7654321))
+        serials = [row[0] for row in self.conn.execute(
+            "SELECT serial FROM devices WHERE id IN (?, ?)", (first_id, second_id))]
+        self.assertEqual(len(set(serials)), 2)
 
-    def test_no_marker_no_serial_creates_distinct_devices_without_crashing(self):
-        # Regression: devices.serial is UNIQUE NOT NULL, so two drives that
-        # both expose no discoverable serial must not collide on "" and
-        # raise IntegrityError out of the backup worker.
+    def test_missing_usb_serial_does_not_merge_different_ids(self):
         with tempfile.TemporaryDirectory() as mp1:
+            self._recording(mp1, 1234567)
             id1 = um._resolve_device_id(self.conn, mp1, None, "L", "sda1")
         with tempfile.TemporaryDirectory() as mp2:
+            self._recording(mp2, 7654321)
             id2 = um._resolve_device_id(self.conn, mp2, None, "L", "sda1")
-        self.assertNotEqual(id1, id2)
+        self.assertEqual((id1, id2), (1234567, 7654321))
         serials = [r[0] for r in self.conn.execute(
             "SELECT serial FROM devices WHERE id IN (?, ?)", (id1, id2))]
         self.assertEqual(len(set(serials)), 2, "synthetic serials must not collide")
 
     def test_rename_survives_reconnect_and_label_refresh(self):
-        # A user-assigned "name" is a separate column from "label" (which is
-        # refreshed from the filesystem on every reconnect) and from "id"
-        # (the stable .astra_id). Renaming must not disturb either, and a
-        # later reconnect must not silently wipe the custom name.
         with tempfile.TemporaryDirectory() as mp:
+            self._recording(mp, 1234567)
             dev_id = um._resolve_device_id(self.conn, mp, "SERNAME", "LABEL1", "sda1")
             self.conn.execute("UPDATE devices SET name = ? WHERE id = ?", ("Kiosk-1", dev_id))
             self.conn.commit()
 
-            # Reconnect: label refreshes, id (.astra_id) stays the same.
             dev_id2 = um._resolve_device_id(self.conn, mp, "SERNAME", "NEWLABEL", "sda1")
             self.assertEqual(dev_id2, dev_id)
 
@@ -138,13 +211,6 @@ class ResolveDeviceIdTest(unittest.TestCase):
                 "SELECT label, name FROM devices WHERE id=?", (dev_id,)).fetchone()
             self.assertEqual(row[0], "NEWLABEL")
             self.assertEqual(row[1], "Kiosk-1")
-
-    def test_create_device_falls_back_to_devname_when_no_label(self):
-        dev_id = um._create_device(self.conn, "", "", "sdz1")
-        row = self.conn.execute(
-            "SELECT label FROM devices WHERE id=?", (dev_id,)).fetchone()
-        self.assertEqual(row[0], "sdz1")
-
 
 class FriendlyLabelTest(unittest.TestCase):
     def test_custom_name_is_shown_after_astra_id(self):
@@ -156,8 +222,7 @@ class FriendlyLabelTest(unittest.TestCase):
 
 
 class SharedSerialTest(unittest.TestCase):
-    """USB-эмуляторы отдают один серийник на все экземпляры. Носитель при этом
-    приносит свой номер в .astra_id, и устройство обязано попасть в список."""
+    """USB-эмуляторы отдают один серийник на все экземпляры."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -168,20 +233,18 @@ class SharedSerialTest(unittest.TestCase):
         self.conn.close()
         self.tmp.cleanup()
 
-    def _mount(self, name, astra_id=None):
+    def _mount(self, name, device_id):
         mp = os.path.join(self.tmp.name, name)
         os.makedirs(mp, exist_ok=True)
-        if astra_id is not None:
-            with open(os.path.join(mp, um.DEVICE_ID_FILE), "w") as f:
-                f.write(f"{astra_id}\n")
+        ResolveDeviceIdTest._recording(mp, device_id)
         return mp
 
     def test_device_with_taken_serial_still_gets_a_row(self):
         serial = "Linux_File-Stor_Gadget_123456789ABC-0:0"
-        first = um._resolve_device_id(self.conn, self._mount("a"), serial, "sdb1", "sdb1")
+        first = um._resolve_device_id(self.conn, self._mount("a", 1234567), serial, "sdb1", "sdb1")
 
         second = um._resolve_device_id(
-            self.conn, self._mount("b", astra_id=3666666), serial, "sdc1", "sdc1")
+            self.conn, self._mount("b", 3666666), serial, "sdc1", "sdc1")
 
         self.assertEqual(second, 3666666)
         self.assertNotEqual(first, second)
