@@ -15,6 +15,7 @@ public sealed class ArchiveSearchTests : IDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-archive-").FullName;
     private readonly string _db;
     private readonly string _store;
+    private long _nextCameraId = 1;
 
     public ArchiveSearchTests()
     {
@@ -46,13 +47,22 @@ public sealed class ArchiveSearchTests : IDisposable
     private long Camera(string cameraName, string person, string personnelNo, long? department)
     {
         using var registry = new DeviceRegistry(_db);
-        var id = registry.ResolveByCard(null, 1, cameraName, cameraName);
+        var id = registry.ResolveByCard(Card(_nextCameraId++), 1, cameraName, cameraName);
         registry.Rename(id, cameraName);
 
         var staff = new StaffDirectory(_db);
         var employee = staff.AddEmployee(person, personnelNo, departmentId: department);
         staff.AssignDevice(id, employee);
         return id;
+    }
+
+    private string Card(long id)
+    {
+        var dcim = Path.Combine(_dir, $"card-{id}", "DCIM");
+        Directory.CreateDirectory(dcim);
+        File.WriteAllText(Path.Combine(dcim,
+            $"A11_{id}_222222_20260915120000_0001.mp4"), "video");
+        return Path.GetDirectoryName(dcim)!;
     }
 
     [Fact]
@@ -243,7 +253,7 @@ public sealed class ArchiveSearchTests : IDisposable
     {
         using (var registry = new DeviceRegistry(_db))
         {
-            var id = registry.ResolveByCard(null, 1, "BESTCAM", "sdb1");
+            var id = registry.ResolveByCard(Card(1), 1, "BESTCAM", "sdb1");
             Collected(id, "VID_0001.MP4");
         }
 

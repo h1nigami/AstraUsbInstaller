@@ -1,7 +1,7 @@
 namespace AstraUsb.Services;
 
 /// <summary>
-/// Служебные файлы, которые станция кладёт на носители.
+/// Служебные файлы, включая маркеры прежних версий.
 ///
 /// Собраны в одном месте, потому что каждый из них должен быть исключён из
 /// сканирования и копирования: иначе метка уезжает в архив вместе с записями
@@ -9,11 +9,11 @@ namespace AstraUsb.Services;
 /// </summary>
 public static class Markers
 {
-    /// <summary>Номер камеры на её карте.</summary>
-    public const string CardId = CardIdentity.FileName;
+    /// <summary>Маркер прежней C#-версии.</summary>
+    public const string CardId = ".bestcam_id";
 
-    /// <summary>Номер носителя, который ставила Python-версия.</summary>
-    public const string LegacyId = DeviceRegistry.DeviceIdFile;
+    /// <summary>Маркер прежней Python-версии.</summary>
+    public const string LegacyId = ".astra_id";
 
     /// <summary>
     /// Метка тома архива. По ней видно, что диск смонтирован: без неё запись

@@ -4,195 +4,134 @@ using Xunit;
 
 namespace AstraUsb.Tests;
 
-/// <summary>
-/// Те же сценарии, на которых Python-версия ловила ошибки идентификации.
-/// Перенос обязан вести себя так же: базы у точек уже накоплены.
-/// </summary>
 public sealed class DeviceRegistryTests : IDisposable
 {
-    private readonly string _dir = Directory.CreateTempSubdirectory("astra-tests-").FullName;
+    private readonly string _dir = Directory.CreateTempSubdirectory("astra-registry-").FullName;
+    private string DbPath => Path.Combine(_dir, "devices.db");
+    private DeviceRegistry NewRegistry() => new(DbPath);
 
-    private DeviceRegistry NewRegistry() => new(Path.Combine(_dir, "devices.db"));
-
-    private string Mount(string name, long? astraId = null)
+    private string Card(string name, long? id, string? oldMarker = null)
     {
-        var path = Path.Combine(_dir, name);
-        Directory.CreateDirectory(path);
-        if (astraId is { } id)
-            File.WriteAllText(Path.Combine(path, DeviceRegistry.DeviceIdFile), $"{id}\n");
-        return path;
-    }
-
-    [Fact]
-    public void Marker_survives_a_write_and_read()
-    {
-        var mount = Mount("a");
-        DeviceRegistry.WriteDeviceIdToUsb(mount, 42);
-        Assert.Equal(42, DeviceRegistry.ReadDeviceIdFromUsb(mount));
-    }
-
-    [Fact]
-    public void Missing_marker_reads_as_no_id()
-    {
-        Assert.Null(DeviceRegistry.ReadDeviceIdFromUsb(Mount("empty")));
-        Assert.Null(DeviceRegistry.ReadDeviceIdFromUsb(null));
-    }
-
-    [Fact]
-    public void Garbage_in_marker_is_rejected()
-    {
-        var mount = Mount("junk");
-        File.WriteAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile), "не число\n");
-        Assert.Throws<InvalidDataException>(() => DeviceRegistry.ReadDeviceIdFromUsb(mount));
-    }
-
-    [Fact]
-    public void Corrupt_astra_marker_stops_device_resolution()
-    {
-        using var registry = NewRegistry();
-        var mount = Mount("corrupt");
-        File.WriteAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile), "broken\n");
-
-        Assert.Throws<InvalidDataException>(() =>
-            registry.ResolveDeviceId(mount, "SER", "CAM", "sdb1"));
-    }
-
-    [Fact]
-    public void New_device_gets_a_row_and_a_marker()
-    {
-        using var registry = NewRegistry();
-        var mount = Mount("fresh");
-
-        var id = registry.ResolveDeviceId(mount, "SER1", "LABEL1", "sda1");
-
-        Assert.True(registry.DeviceExists(id));
-        Assert.Equal(id, DeviceRegistry.ReadDeviceIdFromUsb(mount));
-    }
-
-    [Fact]
-    public void An_unwritable_marker_stops_resolution()
-    {
-        using var registry = NewRegistry();
-        var mount = Mount("blocked");
-        Directory.CreateDirectory(Path.Combine(mount, DeviceRegistry.DeviceIdFile));
-
-        Assert.Throws<IOException>(() => registry.ResolveDeviceId(mount, "SER", "CAM", "sdb1"));
-    }
-
-    [Theory]
-    [InlineData("")]
-    [InlineData("0")]
-    [InlineData("-1")]
-    [InlineData("9223372036854775808")]
-    public void Invalid_existing_markers_are_preserved(string text)
-    {
-        using var registry = NewRegistry();
-        var mount = Mount("invalid");
-        var marker = Path.Combine(mount, DeviceRegistry.DeviceIdFile);
-        File.WriteAllText(marker, text);
-
-        Assert.Throws<InvalidDataException>(() => registry.ResolveByCard(mount, 1, "CAM", "sdb1"));
-        Assert.Equal(text, File.ReadAllText(marker));
-        Assert.Empty(registry.ListDevices());
-    }
-
-    [Fact]
-    public void Same_serial_without_markers_gets_next_local_ids()
-    {
-        using var registry = NewRegistry();
-
-        var first = registry.ResolveDeviceId(Mount("one"), "SHARED", "L", "sda1");
-        var second = registry.ResolveDeviceId(Mount("two"), "SHARED", "L", "sdb1");
-
-        Assert.Equal((1L, 2L), (first, second));
-    }
-
-    [Fact]
-    public void Marker_wins_over_the_serial()
-    {
-        using var registry = NewRegistry();
-        registry.ResolveDeviceId(Mount("first"), "SER-A", "L", "sda1");
-
-        var id = registry.ResolveDeviceId(Mount("carried", astraId: 999), "SER-A", "L", "sdb1");
-
-        Assert.Equal(999, id);
-    }
-
-    /// <summary>
-    /// USB-эмуляторы отдают один серийник всем экземплярам. Устройство, чей
-    /// номер принесён на носителе, обязано попасть в список даже тогда.
-    /// </summary>
-    [Fact]
-    public void Device_with_a_taken_serial_still_gets_a_row()
-    {
-        using var registry = NewRegistry();
-        const string shared = "Linux_File-Stor_Gadget_123456789ABC-0:0";
-
-        var first = registry.ResolveDeviceId(Mount("a"), shared, "sdb1", "sdb1");
-        var second = registry.ResolveDeviceId(Mount("b", astraId: 3666666), shared, "sdc1", "sdc1");
-
-        Assert.Equal(3666666, second);
-        Assert.NotEqual(first, second);
-        Assert.True(registry.DeviceExists(second),
-            "устройство с занятым серийником должно попадать в список");
-    }
-
-    [Fact]
-    public void Devices_without_a_serial_do_not_collide()
-    {
-        using var registry = NewRegistry();
-
-        var first = registry.ResolveDeviceId(Mount("n1"), null, "L", "sda1");
-        var second = registry.ResolveDeviceId(Mount("n2"), null, "L", "sdb1");
-
-        Assert.NotEqual(first, second);
-        Assert.True(registry.DeviceExists(first));
-        Assert.True(registry.DeviceExists(second));
-    }
-
-    [Fact]
-    public void Devices_that_only_exist_in_backups_are_recovered()
-    {
-        var dbPath = Path.Combine(_dir, "devices.db");
-        using (var registry = new DeviceRegistry(dbPath))
+        var card = Path.Combine(_dir, name);
+        Directory.CreateDirectory(card);
+        if (id is { } number)
         {
-            // Python-версия работала без проверки внешних ключей, поэтому в
-            // базах на точках и завелись бэкапы без устройства. Здесь мы
-            // воспроизводим именно такую унаследованную базу.
-            using var db = new SqliteConnection($"Data Source={dbPath};Foreign Keys=False");
+            var dcim = Path.Combine(card, "DCIM");
+            Directory.CreateDirectory(dcim);
+            File.WriteAllText(Path.Combine(dcim,
+                $"A11_{number}_222222_20260915120000_0001.mp4"), "video");
+        }
+        if (oldMarker is not null)
+            File.WriteAllText(Path.Combine(card, ".astra_id"), oldMarker);
+        return card;
+    }
+
+    private object? Scalar(string sql)
+    {
+        using var db = new SqliteConnection($"Data Source={DbPath}");
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = sql;
+        return command.ExecuteScalar();
+    }
+
+    [Fact]
+    public void Device_id_wins_over_old_astra_marker()
+    {
+        using var registry = NewRegistry();
+        var card = Card("device", 1234567, "999\n");
+
+        Assert.Equal(1234567, registry.ResolveByCard(card, 1, "CAM", "sdb1"));
+        Assert.Equal("999\n", File.ReadAllText(Path.Combine(card, ".astra_id")));
+        Assert.Equal("device", Scalar("SELECT id_source FROM devices WHERE id = 1234567"));
+    }
+
+    [Fact]
+    public void Missing_id_does_not_create_a_row_or_marker()
+    {
+        using var registry = NewRegistry();
+        var card = Card("blank", null);
+
+        Assert.Throws<InvalidDataException>(() => registry.ResolveByCard(card, 1, "CAM", "sdb1"));
+        Assert.Empty(registry.ListDevices());
+        Assert.False(File.Exists(Path.Combine(card, ".astra_id")));
+        Assert.False(File.Exists(Path.Combine(card, ".bestcam_id")));
+    }
+
+    [Fact]
+    public void Reconnecting_same_id_reuses_device_row()
+    {
+        using var registry = NewRegistry();
+        var first = Card("first", 1234567);
+        var second = Card("second", 1234567);
+
+        Assert.Equal(1234567, registry.ResolveDeviceId(first, "SER", "CAM", "sdb1"));
+        Assert.Equal(1234567, registry.ResolveDeviceId(second, "OTHER", "CAM", "sdc1"));
+        Assert.Single(registry.ListDevices());
+    }
+
+    [Fact]
+    public void Shared_usb_serial_does_not_merge_different_ids()
+    {
+        using var registry = NewRegistry();
+        var first = Card("one", 1234567);
+        var second = Card("two", 7654321);
+
+        Assert.Equal(1234567, registry.ResolveDeviceId(first, "SHARED", "CAM", "sdb1"));
+        Assert.Equal(7654321, registry.ResolveDeviceId(second, "SHARED", "CAM", "sdc1"));
+        Assert.Equal(2, registry.ListDevices().Count);
+    }
+
+    [Fact]
+    public void Old_database_row_with_same_number_is_not_reused()
+    {
+        using var registry = NewRegistry();
+        using (var db = new SqliteConnection($"Data Source={DbPath}"))
+        {
             db.Open();
-            using var cmd = db.CreateCommand();
-            cmd.CommandText = """
-                INSERT INTO backups (device_id, dest_path, total_files, total_bytes,
-                                     started_at, finished_at)
-                VALUES (777, '/dest/Device777', 3, 100, '2026-09-01T10:00:00', '2026-09-01T10:05:00')
+            using var command = db.CreateCommand();
+            command.CommandText = """
+                INSERT INTO devices (id, serial, first_seen, last_seen)
+                VALUES (1234567, 'OLD', '2026-09-01T10:00:00', '2026-09-01T10:00:00')
                 """;
-            cmd.ExecuteNonQuery();
+            command.ExecuteNonQuery();
         }
 
-        using var reopened = new DeviceRegistry(dbPath);
-
-        Assert.True(reopened.DeviceExists(777),
-            "устройство, от которого остались только бэкапы, должно восстанавливаться");
+        Assert.Throws<InvalidDataException>(() =>
+            registry.ResolveByCard(Card("new", 1234567), 1, "CAM", "sdb1"));
+        Assert.Equal("", Scalar("SELECT id_source FROM devices WHERE id = 1234567"));
     }
 
     [Fact]
-    public void Friendly_label_prefers_the_name_and_falls_back_to_the_number()
+    public void Missing_device_row_is_recovered_from_old_backup()
+    {
+        using (var registry = NewRegistry())
+        using (var db = new SqliteConnection($"Data Source={DbPath};Foreign Keys=False"))
+        {
+            db.Open();
+            using var command = db.CreateCommand();
+            command.CommandText = """
+                INSERT INTO backups (device_id, dest_path, started_at, finished_at)
+                VALUES (777, '/dest/Device777', '2026-09-01T10:00:00', '2026-09-01T10:05:00')
+                """;
+            command.ExecuteNonQuery();
+        }
+        using var reopened = NewRegistry();
+        Assert.True(reopened.DeviceExists(777));
+        Assert.Equal("", Scalar("SELECT id_source FROM devices WHERE id = 777"));
+    }
+
+    [Fact]
+    public void Friendly_label_remains_for_search_and_devices_tab()
     {
         Assert.Equal("Astra ID 3 · Проходная", DeviceRegistry.FriendlyLabel(3, "Проходная"));
         Assert.Equal("Astra ID 3", DeviceRegistry.FriendlyLabel(3, ""));
-        Assert.Equal("Astra ID 3", DeviceRegistry.FriendlyLabel(3, null));
     }
 
     public void Dispose()
     {
-        try
-        {
-            Directory.Delete(_dir, recursive: true);
-        }
-        catch (IOException)
-        {
-            // Файл базы может ещё держаться, для временной папки это неважно.
-        }
+        SqliteConnection.ClearAllPools();
+        try { Directory.Delete(_dir, recursive: true); }
+        catch (IOException) { }
     }
 }

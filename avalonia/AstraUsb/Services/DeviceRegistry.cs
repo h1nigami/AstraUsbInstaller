@@ -3,15 +3,11 @@ using Microsoft.Data.Sqlite;
 namespace AstraUsb.Services;
 
 /// <summary>
-/// Учёт устройств и сеансов копирования. Схема и правила идентификации
-/// перенесены из Python-версии (usb_monitor.py) без изменений: база у точек
-/// уже накоплена, и новая версия обязана читать её как есть.
+/// Учёт устройств и сеансов копирования в общей базе Python и Avalonia.
+/// Новые строки используют ID регистратора; старые остаются доступными.
 /// </summary>
 public sealed class DeviceRegistry : IDisposable
 {
-    /// <summary>Файл-маркер на носителе, хранящий его номер.</summary>
-    public const string DeviceIdFile = ".astra_id";
-
     /// <summary>Папка бэкапа всегда называется так и при переименовании не меняется.</summary>
     public const string DeviceDirPrefix = "Device";
 
@@ -57,8 +53,10 @@ public sealed class DeviceRegistry : IDisposable
         // Миграции старых баз: колонки добавлялись со временем.
         TryExecute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''");
         TryExecute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''");
+        if (Scalar("SELECT 1 FROM pragma_table_info('devices') WHERE name = 'id_source'") is null)
+            Execute("ALTER TABLE devices ADD COLUMN id_source TEXT DEFAULT ''");
 
-        // Старый номер сохраняется для переноса существующей записи в Astra ID.
+        // Колонка остаётся для чтения старых записей и карточек сотрудников.
         TryExecute("ALTER TABLE devices ADD COLUMN firmware_id TEXT");
         TryExecute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_firmware"
                    + " ON devices (firmware_id) WHERE firmware_id IS NOT NULL");
@@ -78,42 +76,37 @@ public sealed class DeviceRegistry : IDisposable
             """);
     }
 
-    /// <summary>
-    /// Определяет номер устройства по маркеру на носителе. Носитель без
-    /// маркера всегда получает новый номер локальной базы.
-    /// </summary>
+    /// <summary>Регистрирует номер, заданный оператором в регистраторе.</summary>
     public long ResolveDeviceId(string? mountPoint, string? serial, string? label, string? devName)
     {
         var now = Timestamp();
-        var idFromUsb = ReadDeviceIdFromUsb(mountPoint);
-
-        if (idFromUsb is { } known)
+        var id = DeviceIdentifier.Read(mountPoint
+            ?? throw new InvalidDataException("Носитель регистратора не указан"));
+        if (DeviceExists(id))
         {
-            if (!DeviceExists(known))
-                RegisterIdFromUsb(known, serial, label ?? devName ?? "", now);
-
-            Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
-                ("$now", now), ("$label", label ?? devName ?? ""), ("$id", known));
-            return known;
+            if (IdSourceOf(id) != "device")
+                throw new InvalidDataException($"ID {id} занят прежней записью");
+        }
+        else
+        {
+            RegisterDeviceId(id, serial, label ?? devName ?? "", now);
         }
 
-        var created = CreateDevice(serial, label, devName, now);
-        RequireAstraId(mountPoint, created);
-        return created;
+        Execute("UPDATE devices SET last_seen = $now, label = $label WHERE id = $id",
+            ("$now", now), ("$label", label ?? devName ?? ""), ("$id", id));
+        return id;
     }
 
-    /// <summary>
-    /// Заводит устройство под номером, который принёс носитель.
-    /// Серийник может быть уже занят: USB-эмуляторы отдают один и тот же на все
-    /// экземпляры. Тогда берём серийник, уникализированный номером устройства:
-    /// номер и так первичный ключ, столкнуться он не может.
-    /// </summary>
-    private void RegisterIdFromUsb(long deviceId, string? serial, string label, string now)
+    private string? IdSourceOf(long id) =>
+        Scalar("SELECT id_source FROM devices WHERE id = $id", ("$id", id)) as string;
+
+    private void RegisterDeviceId(long deviceId, string? serial, string label, string now)
     {
+        var baseSerial = string.IsNullOrEmpty(serial) ? $"DEVICE_ID_{deviceId}" : serial;
         string[] candidates =
         [
-            serial ?? "",
-            $"{(string.IsNullOrEmpty(serial) ? "NOSERIAL" : serial)}#{deviceId}",
+            baseSerial,
+            $"{baseSerial}#{deviceId}",
         ];
 
         foreach (var candidate in candidates)
@@ -121,47 +114,18 @@ public sealed class DeviceRegistry : IDisposable
             try
             {
                 Execute("""
-                    INSERT INTO devices (id, serial, label, first_seen, last_seen)
-                    VALUES ($id, $serial, $label, $now, $now)
+                    INSERT INTO devices (id, serial, label, first_seen, last_seen, id_source)
+                    VALUES ($id, $serial, $label, $now, $now, 'device')
                     """,
                     ("$id", deviceId), ("$serial", candidate), ("$label", label), ("$now", now));
                 return;
             }
-            catch (SqliteException)
-            {
-                // Серийник занят другим устройством, пробуем следующий вариант.
-            }
-        }
-    }
-
-    private long CreateDevice(string? serial, string? label, string? devName, string now)
-    {
-        // Сохраняем совместимость с UNIQUE NOT NULL в старых базах, даже если
-        // разные носители отдают одинаковый серийник.
-        var baseSerial = string.IsNullOrEmpty(serial)
-            ? $"NOSERIAL_{(string.IsNullOrEmpty(devName) ? "usb" : devName)}_{now}"
-            : serial;
-        var effective = baseSerial;
-
-        for (var suffix = 2; ; suffix++)
-        {
-            try
-            {
-                Execute("""
-                    INSERT INTO devices (serial, label, first_seen, last_seen)
-                    VALUES ($serial, $label, $now, $now)
-                    """,
-                    ("$serial", effective),
-                    ("$label", label ?? devName ?? "USB"),
-                    ("$now", now));
-
-                return (long)(Scalar("SELECT last_insert_rowid()") ?? 0L);
-            }
             catch (SqliteException error) when (error.SqliteExtendedErrorCode == 2067)
             {
-                effective = $"{baseSerial}#{suffix}";
+                // Общий USB-серийник не объединяет разные регистраторы.
             }
         }
+        throw new InvalidDataException($"Не удалось зарегистрировать ID {deviceId}");
     }
 
     public bool DeviceExists(long id) =>
@@ -178,44 +142,6 @@ public sealed class DeviceRegistry : IDisposable
     {
         var astraId = $"Astra ID {deviceId}";
         return string.IsNullOrEmpty(name) ? astraId : $"{astraId} · {name}";
-    }
-
-    public static long? ReadDeviceIdFromUsb(string? mountPoint)
-    {
-        if (string.IsNullOrEmpty(mountPoint))
-            return null;
-        var path = Path.Combine(mountPoint, DeviceIdFile);
-        if (!File.Exists(path))
-            return null;
-
-        var text = File.ReadAllText(path).Trim();
-        if (!long.TryParse(text, out var id) || id <= 0)
-            throw new InvalidDataException($"Некорректный {DeviceIdFile}");
-        return id;
-    }
-
-    public static void WriteDeviceIdToUsb(string? mountPoint, long deviceId)
-    {
-        if (string.IsNullOrEmpty(mountPoint))
-            return;
-        try
-        {
-            File.WriteAllText(Path.Combine(mountPoint, DeviceIdFile), $"{deviceId}\n");
-        }
-        catch (Exception)
-        {
-            // RequireAstraId проверяет результат записи перед копированием.
-        }
-    }
-
-    private static void RequireAstraId(string? mountPoint, long id)
-    {
-        if (string.IsNullOrEmpty(mountPoint))
-            return;
-
-        WriteDeviceIdToUsb(mountPoint, id);
-        if (ReadDeviceIdFromUsb(mountPoint) != id)
-            throw new IOException($"Не удалось сохранить {DeviceIdFile}");
     }
 
     /// <summary>Тот же формат, что пишет Python-версия: ISO с разделителем T.</summary>
@@ -252,26 +178,10 @@ public sealed class DeviceRegistry : IDisposable
         return result is DBNull ? null : result;
     }
 
-    /// <summary>
-    /// Совместимый вход для карт Avalonia. Старый маркер может один раз
-    /// перенести существующую уникальную запись в Astra ID.
-    /// </summary>
+    /// <summary>Определяет ID по данным регистратора, не меняя носитель.</summary>
     public long ResolveByCard(string? mountPoint, int stationNumber,
         string? label, string? devName)
-    {
-        if (ReadDeviceIdFromUsb(mountPoint) is not null)
-            return ResolveDeviceId(mountPoint, null, label, devName);
-
-        var legacy = CardIdentity.Read(mountPoint);
-        if (!string.IsNullOrEmpty(legacy) && FindUniqueFirmwareId(legacy) is { } existing)
-            RequireAstraId(mountPoint, existing);
-
-        return ResolveDeviceId(mountPoint, null, label, devName);
-    }
-
-    private long? FindUniqueFirmwareId(string firmwareId) =>
-        Scalar("SELECT MIN(id) FROM devices WHERE firmware_id = $fw HAVING COUNT(*) = 1",
-            ("$fw", firmwareId)) as long?;
+        => ResolveDeviceId(mountPoint, null, label, devName);
 
     /// <summary>Номер камеры из прошивки, если он известен.</summary>
     public string? FirmwareIdOf(long deviceId) =>

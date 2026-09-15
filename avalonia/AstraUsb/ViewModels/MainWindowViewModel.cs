@@ -333,7 +333,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 for (var i = 0; i < Ports.Count; i++)
                 {
                     var port = Ports[i];
-                    port.CameraId = state == PortState.Idle ? "" : $"BCU-00-{i + 1:0000}";
+                    port.CameraId = state == PortState.Idle ? "" : $"{1234567 + i}";
                     port.Employee = state == PortState.Idle ? "" : "Показ состояний";
                     port.Department = state == PortState.Idle ? "" : "приёмка";
                     port.PersonnelNo = state == PortState.Idle ? "" : "000000";
@@ -735,8 +735,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var port = Ports[i];
             var mount = MountPointFor(device);
             port.MountPoint = mount;
-            var cameraId = device.Name;
-            var detail = mount is null ? "готовим носитель" : "опознаём камеру";
+            var cameraId = "";
+            var detail = mount is null ? "Подготовка носителя" : "Определение ID";
             var personnel = "";
             var employee = "";
             var department = "";
@@ -750,7 +750,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 department = card.Department;
                 var failure = card.DeviceId <= 0 ? detail
                     : HasAnotherOwner(card.DeviceId, mount)
-                        ? $"Дубликат Astra ID {card.DeviceId}"
+                        ? $"Дубликат ID устройства {card.DeviceId}"
                     : null;
                 if (failure is not null)
                 {
@@ -902,9 +902,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_identified.TryGetValue(mount, out var cached))
             return cached;
 
-        // Опознание читает карту и базу, а при первом подключении ещё и пишет
-        // на карту номер. В потоке интерфейса это заметная пауза ровно в тот
-        // момент, когда оператор смотрит на доску, поэтому уходит в сторону.
+        // Чтение носителя и базы не блокирует интерфейс при подключении.
         if (_identifying.Add(mount))
         {
             var name = device.Name;
@@ -934,11 +932,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         try
         {
-            // Файл на карте и есть единственный источник истины. Нет файла,
-            // станция выдаёт номер и обязательно записывает его. Номер
-            // сотрудника из имён записей только показывается: на заводских
-            // настройках он одинаков у всех камер, поэтому закрепляет камеру
-            // за человеком оператор на вкладке «Устройства».
+            // ID берётся из данных регистратора, без записи на карту.
+            // Номер сотрудника остаётся дополнительной информацией.
             var recording = RecordingName.FromCard(mount);
             var personnel = recording?.HasPersonnelNo == true ? recording.PersonnelNo : "";
 
@@ -946,14 +941,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var id = registry.ResolveByCard(mount, _stationSettings.StationNumber,
                 deviceName, deviceName);
 
-            var name = registry.GetDeviceName(id);
-
             var staff = new StaffDirectory(AppPaths.Database);
             var person = staff.EmployeeOfDevice(id);
 
             var info = new CardInfo(
                 id,
-                DeviceRegistry.FriendlyLabel(id, name),
+                id.ToString(),
                 $"Папка {DeviceRegistry.DeviceDirPrefix}{id}",
                 personnel,
                 person?.FullName ?? "",
@@ -963,9 +956,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
         catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
         {
-            return new CardInfo(0, deviceName, error is InvalidDataException
-                ? $"Некорректный {DeviceRegistry.DeviceIdFile}"
-                : $"Не удалось прочитать или сохранить {DeviceRegistry.DeviceIdFile}", "", "", "");
+            return new CardInfo(0, "", error.Message, "", "", "");
         }
         catch (Exception)
         {

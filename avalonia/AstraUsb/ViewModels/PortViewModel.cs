@@ -56,6 +56,7 @@ public sealed partial class PortViewModel : ObservableObject
     /// <summary>Состояние словом, как в прототипе станции.</summary>
     public string StateText => State switch
     {
+        PortState.Detected when string.IsNullOrEmpty(CameraId) => "Определение ID",
         PortState.Detected or PortState.Scanning => "Сканирование",
         PortState.Copying => "Копирование",
         PortState.Done => "Готово",
@@ -67,6 +68,7 @@ public sealed partial class PortViewModel : ObservableObject
     /// <summary>Подпись под состоянием: что оператору делать или не делать.</summary>
     public string StateHint => State switch
     {
+        PortState.Detected when string.IsNullOrEmpty(CameraId) => "",
         PortState.Detected or PortState.Scanning => "Чтение списка файлов",
         PortState.Copying => "Не извлекайте регистратор",
         PortState.Done => "Можно забирать регистратор",
@@ -75,7 +77,7 @@ public sealed partial class PortViewModel : ObservableObject
         _ => IsFree ? "Вставьте регистратор" : "Нет передачи данных",
     };
 
-    public string CameraLine => string.IsNullOrEmpty(CameraId) ? "Отсек свободен" : CameraId;
+    public string CameraLine => IsFree ? "Отсек свободен" : CameraId;
 
     public string PersonnelLine => string.IsNullOrEmpty(PersonnelNo) ? "" : $"№ {PersonnelNo}";
 
@@ -179,7 +181,7 @@ public sealed partial class PortViewModel : ObservableObject
     {
         foreach (var name in new[]
                  {
-                     nameof(StateText), nameof(StateHint), nameof(PercentText), nameof(BarFill),
+                     nameof(StateText), nameof(StateHint), nameof(CameraLine), nameof(PercentText), nameof(BarFill),
                      nameof(Fill), nameof(Edge), nameof(Mark), nameof(Ink), nameof(InkMuted),
                      nameof(Track), nameof(SlotInk), nameof(IsFree), nameof(IsBusy),
                      nameof(IsChargeOnly),
@@ -198,6 +200,7 @@ public sealed partial class PortViewModel : ObservableObject
     partial void OnCameraIdChanged(string value)
     {
         OnPropertyChanged(nameof(CameraLine));
+        OnPropertyChanged(nameof(StateText));
         OnPropertyChanged(nameof(StateHint));
         OnPropertyChanged(nameof(IsFree));
         OnPropertyChanged(nameof(IsBusy));

@@ -103,7 +103,52 @@ public sealed class MainWindowViewModelTests : IDisposable
             .Invoke(model, [storage]);
 
     [AvaloniaFact]
-    public async Task A_duplicate_astra_id_never_starts_a_second_backup()
+    public void Connected_device_shows_only_its_firmware_id()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Path.Combine(_dir, "firmware-card");
+        var dcim = Directory.CreateDirectory(Path.Combine(mount, "DCIM")).FullName;
+        File.WriteAllText(Path.Combine(dcim,
+            "A11_1234567_222222_20260915120000_0001.mp4"), "video");
+        var card = typeof(MainWindowViewModel).GetMethod("ReadCard", PrivateFields)!
+            .Invoke(model, ["File-Stor Gadget", mount])!;
+        var cardType = card.GetType();
+        Assert.Equal(1234567L, cardType.GetProperty("DeviceId")!.GetValue(card));
+        Assert.Equal("1234567", cardType.GetProperty("CameraId")!.GetValue(card));
+        Assert.Equal("Папка Device1234567", cardType.GetProperty("Origin")!.GetValue(card));
+        Assert.False(File.Exists(Path.Combine(mount, ".astra_id")));
+        Assert.False(File.Exists(Path.Combine(mount, ".bestcam_id")));
+        Field<System.Collections.IDictionary>(model, "_identified")[mount] = card;
+        typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+
+        ApplyDevices(model, new UsbDevice("File-Stor Gadget", mount));
+
+        Assert.Equal("1234567", model.Ports[0].CameraId);
+        using var registry = new DeviceRegistry(AppPaths.Database);
+        Assert.True(registry.DeviceExists(1234567));
+    }
+
+    [AvaloniaFact]
+    public async Task Before_id_is_read_the_port_does_not_show_usb_name()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Directory.CreateDirectory(Path.Combine(_dir, "identifying-card")).FullName;
+
+        ApplyDevices(model, new UsbDevice("File-Stor Gadget", mount));
+
+        Assert.Equal("", model.Ports[0].CameraId);
+        Assert.Equal("Определение ID", model.Ports[0].Detail);
+        Assert.Equal("Определение ID", model.Ports[0].StateText);
+        Assert.Equal("", model.Ports[0].CameraLine);
+        var identifying = Field<HashSet<string>>(model, "_identifying");
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (identifying.Count > 0 && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.Empty(identifying);
+    }
+
+    [AvaloniaFact]
+    public async Task A_duplicate_device_id_never_starts_a_second_backup()
     {
         using var model = new MainWindowViewModel(() => []);
         var first = Directory.CreateDirectory(Path.Combine(_dir, "first")).FullName;
@@ -113,7 +158,7 @@ public sealed class MainWindowViewModelTests : IDisposable
             .GetField("_identified", fields)!.GetValue(model)!;
         var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
         foreach (var mount in new[] { first, second })
-            identified[mount] = Activator.CreateInstance(cardType, [7L, "Astra ID 7", "", "", "", ""]);
+            identified[mount] = Activator.CreateInstance(cardType, [7L, "7", "", "", "", ""]);
 
         typeof(MainWindowViewModel).GetMethod("Apply", fields)!.Invoke(model,
             [new UsbDevice[] { new("first", first), new("second", second) }, StorageState.Unknown("archive")]);
@@ -124,7 +169,9 @@ public sealed class MainWindowViewModelTests : IDisposable
         {
             Assert.NotEqual(PortState.Failed, model.Ports[0].State);
             Assert.Equal(PortState.Failed, model.Ports[1].State);
-            Assert.Contains("Дубликат Astra ID 7", model.Ports[1].Detail);
+            Assert.Contains("Дубликат ID устройства 7", model.Ports[1].Detail);
+            Assert.Equal("7", model.Ports[0].CameraId);
+            Assert.Equal("7", model.Ports[1].CameraId);
             Assert.False(cancels.ContainsKey(second));
         }
         finally
@@ -147,7 +194,7 @@ public sealed class MainWindowViewModelTests : IDisposable
             .GetField("_identified", fields)!.GetValue(model)!;
         var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
         foreach (var mount in new[] { first, second })
-            identified[mount] = Activator.CreateInstance(cardType, [7L, "Astra ID 7", "", "", "", ""]);
+            identified[mount] = Activator.CreateInstance(cardType, [7L, "7", "", "", "", ""]);
         var finished = (Dictionary<string, BackupStage>)typeof(MainWindowViewModel)
             .GetField("_finished", fields)!.GetValue(model)!;
         finished[first] = BackupStage.Done;
@@ -161,16 +208,16 @@ public sealed class MainWindowViewModelTests : IDisposable
             [new UsbDevice[] { new("second", second), new("first", first) }, StorageState.Unknown("archive")]);
 
         Assert.Equal(PortState.Failed, model.Ports[0].State);
-        Assert.Contains("Дубликат Astra ID 7", model.Ports[0].Detail);
+        Assert.Contains("Дубликат ID устройства 7", model.Ports[0].Detail);
         Assert.Equal(PortState.Done, model.Ports[1].State);
     }
 
     [AvaloniaFact]
-    public void A_corrupt_astra_marker_is_shown_as_an_error_without_backup()
+    public void Missing_device_id_is_shown_without_name_or_backup()
     {
         using var model = new MainWindowViewModel(() => []);
         var mount = Directory.CreateDirectory(Path.Combine(_dir, "corrupt")).FullName;
-        File.WriteAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile), "broken");
+        File.WriteAllText(Path.Combine(mount, ".astra_id"), "broken");
         var fields = BindingFlags.Instance | BindingFlags.NonPublic;
         var card = typeof(MainWindowViewModel).GetMethod("ReadCard", fields)!
             .Invoke(model, ["camera", mount]);
@@ -183,10 +230,11 @@ public sealed class MainWindowViewModelTests : IDisposable
             [new UsbDevice[] { new("camera", mount) }, StorageState.Unknown("archive")]);
 
         Assert.Equal(PortState.Failed, model.Ports[0].State);
-        Assert.Contains("Некорректный .astra_id", model.Ports[0].Detail);
+        Assert.Contains("ID регистратора не найден", model.Ports[0].Detail);
+        Assert.Equal("", model.Ports[0].CameraId);
         Assert.Empty((System.Collections.IDictionary)typeof(MainWindowViewModel)
             .GetField("_cancels", fields)!.GetValue(model)!);
-        Assert.Equal("broken", File.ReadAllText(Path.Combine(mount, DeviceRegistry.DeviceIdFile)));
+        Assert.Equal("broken", File.ReadAllText(Path.Combine(mount, ".astra_id")));
     }
 
     [AvaloniaTheory]
@@ -357,7 +405,7 @@ public sealed class MainWindowViewModelTests : IDisposable
     {
         var cardType = typeof(MainWindowViewModel).Assembly.GetType("AstraUsb.ViewModels.CardInfo")!;
         Field<System.Collections.IDictionary>(model, "_identified")[mount] =
-            Activator.CreateInstance(cardType, [id, $"Astra ID {id}", "", "", "", ""]);
+            Activator.CreateInstance(cardType, [id, id.ToString(), "", "", "", ""]);
     }
 
     private static void ApplyDevices(MainWindowViewModel model, params UsbDevice[] found) =>

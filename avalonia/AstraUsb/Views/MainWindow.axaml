@@ -171,8 +171,8 @@
                         BorderBrush="{Binding Edge}">
                   <Grid RowDefinitions="22,Auto,*,Auto,3,7">
 
-                    <Grid Grid.Row="0" ColumnDefinitions="22,*">
-                      <Border Grid.Column="0" Width="22" Height="22" CornerRadius="11"
+                    <Grid Grid.Row="0">
+                      <Border Width="22" Height="22" CornerRadius="11"
                               Background="{Binding Mark}">
                         <TextBlock Text="{Binding SlotLabel}" FontSize="11"
                                    FontFamily="{StaticResource FontHeading}"
@@ -180,10 +180,6 @@
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Foreground="{Binding SlotInk}" />
                       </Border>
-                      <TextBlock Grid.Column="1" Margin="7,0,0,0" FontSize="11"
-                                 FontWeight="SemiBold" VerticalAlignment="Center"
-                                 TextTrimming="CharacterEllipsis"
-                                 Text="{Binding EmployeeLine}" Foreground="{Binding Ink}" />
                     </Grid>
 
                     <TextBlock Grid.Row="1" Text="{Binding CameraLine}" FontSize="11"
@@ -233,17 +229,10 @@
                                    Foreground="{Binding SlotInk}" />
                       </Border>
 
-                      <StackPanel Grid.Column="1" Margin="8,0" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding CameraLine}" FontSize="11"
-                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                   Foreground="{Binding InkMuted}" />
-                        <TextBlock Text="{Binding EmployeeLine}" FontSize="12"
-                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                                   Foreground="{Binding Ink}" />
-                        <TextBlock Text="{Binding DepartmentLine}" FontSize="11"
-                                   TextTrimming="CharacterEllipsis"
-                                   Foreground="{Binding InkMuted}" />
-                      </StackPanel>
+                      <TextBlock Grid.Column="1" Margin="8,0" VerticalAlignment="Center"
+                                 Text="{Binding CameraLine}" FontSize="11"
+                                 FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                                 Foreground="{Binding InkMuted}" />
 
                       <TextBlock Grid.Column="2" Text="{Binding StateText}"
                                  FontFamily="{StaticResource FontHeading}"
@@ -310,10 +299,6 @@
                                    FontWeight="ExtraBold" HorizontalAlignment="Center"
                                    TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding Ink}" />
-                        <TextBlock Text="{Binding EmployeeLine}" FontSize="11"
-                                   HorizontalAlignment="Center"
-                                   TextTrimming="CharacterEllipsis"
-                                   Foreground="{Binding InkMuted}" />
                         <TextBlock Text="{Binding CameraLine}" FontSize="11"
                                    FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding InkMuted}" />
