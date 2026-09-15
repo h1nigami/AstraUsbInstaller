@@ -79,6 +79,64 @@ def is_copying(path=None, max_age=60):
         return False
 
 
+def factory_reset(db_path=None, dest_base=None):
+    """Удалить устройства, историю выгрузок и файлы архива.
+
+    Возвращает счётчики {"devices", "backups", "entries"}. Во время
+    копирования отказывает с OSError: снос данных под идущей выгрузкой
+    оставил бы архив и базу в рассогласованном состоянии.
+    """
+    if is_copying():
+        raise OSError("Сброс невозможен: идёт сканирование или копирование")
+    db_path = db_path or DB_PATH
+    try:
+        dest = dest_base or get_dest_base()
+    except Exception:
+        dest = None
+    devices = backups = 0
+    try:
+        conn = sqlite3.connect(db_path)
+    except Exception:
+        conn = None
+    if conn is not None:
+        try:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if "devices" in tables:
+                devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+                conn.execute("DELETE FROM devices")
+            if "backups" in tables:
+                backups = conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0]
+                conn.execute("DELETE FROM backups")
+            conn.commit()
+            conn.execute("VACUUM")
+        finally:
+            conn.close()
+    entries = 0
+    if dest:
+        try:
+            names = os.listdir(dest)
+        except OSError:
+            names = []
+        for name in names:
+            path = os.path.join(dest, name)
+            try:
+                if os.path.isdir(path) and not os.path.islink(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+                entries += 1
+            except OSError:
+                continue
+    with _device_id_lock:
+        _connected_device_ids.clear()
+    try:
+        os.remove(COPYING_MARKER)
+    except OSError:
+        pass
+    return {"devices": devices, "backups": backups, "entries": entries}
+
+
 def _load_config():
     try:
         with open(_CONFIG_PATH) as f:

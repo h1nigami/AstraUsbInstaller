@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import platform
 import queue
@@ -11,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, format_filter_dt, read_version, touch_copying_marker
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -537,6 +538,15 @@ class App:
 
         self._refresh_pw_status()
 
+        reset_frame = ttk.LabelFrame(left, text="Заводской сброс", padding=10)
+        reset_frame.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(reset_frame, text="Удаляет устройства, историю, архив, пароль и настройки.").pack(anchor="w")
+        self._reset_status_var = tk.StringVar(value="")
+        ttk.Label(reset_frame, textvariable=self._reset_status_var,
+                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(4, 8))
+        ttk.Button(reset_frame, text="Сбросить до заводских", command=self._confirm_factory_reset).pack(anchor="w")
+
         lock_frame = ttk.LabelFrame(right, text="Автоблокировка разделов", padding=10)
         lock_frame.pack(fill="x", padx=10, pady=5)
 
@@ -663,31 +673,54 @@ class App:
 
         threading.Thread(target=_do, daemon=True).start()
 
-    def _change_backup_dest(self):
-        current = get_dest_base()
-        new_path = filedialog.askdirectory(
-            title="Выберите папку для резервных копий",
-            initialdir=current if os.path.isdir(current) else os.path.expanduser("~"),
-            parent=self.root,
-        )
-        if not new_path:
+    def _confirm_factory_reset(self):
+        if _is_busy(self.workers_data):
+            messagebox.showwarning(
+                "Занято",
+                "Дождитесь конца сканирования или копирования и повторите сброс.",
+                parent=self.root)
             return
-        # Пробная запись + файл-маркер. Маркер пишется на реально подключённый
-        # диск; если позже диск окажется не смонтирован, копирование остановится
-        # с ошибкой вместо тихой записи в пустую папку на системном диске.
-        if not ensure_dest_marker(new_path):
-            messagebox.showerror(
-                "Ошибка",
-                f"Папка недоступна для записи:\n{new_path}\n\n"
-                f"Убедитесь, что диск подключён и смонтирован.")
+        if not messagebox.askyesno(
+                "Заводской сброс",
+                "Удалить все устройства, историю выгрузок, файлы архива, пароль и настройки?\n\n"
+                "Действие необратимо. После сброса программа перезапустится.",
+                parent=self.root):
             return
-        cfg = _load_config()
-        for key in ("backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial"):
-            cfg.pop(key, None)
-        cfg.update(describe_dest_path(new_path))
-        _save_config(cfg)
-        self.backup_dest_var.set(new_path)
-        messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
+        self._reset_status_var.set("Сброс...")
+
+        def _do():
+            try:
+                result = factory_reset()
+                try:
+                    os.remove(CONFIG_PATH)
+                except OSError:
+                    pass
+            except OSError as e:
+                self.root.after(0, lambda: self._finish_factory_reset(None, str(e)))
+            else:
+                self.root.after(0, lambda: self._finish_factory_reset(result, None))
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _finish_factory_reset(self, result, error):
+        if error is not None:
+            self._reset_status_var.set("")
+            messagebox.showerror("Ошибка", error, parent=self.root)
+            return
+        self._reset_status_var.set(
+            f"Удалено: устройств {result['devices']}, "
+            f"выгрузок {result['backups']}, записей архива {result['entries']}")
+        messagebox.showinfo("Готово", "Настройки сброшены. Программа перезапускается.",
+                            parent=self.root)
+        self._restart_app()
+
+    def _restart_app(self):
+        try:
+            main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
+            os.execv(sys.executable, [sys.executable, main_py])
+        except Exception:
+            messagebox.showwarning("Перезапуск", "Закройте и запустите программу вручную.",
+                                   parent=self.root)
 
     def _refresh_pw_status(self):
         pw = _get_exit_password()
