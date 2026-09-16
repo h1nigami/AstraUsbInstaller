@@ -58,6 +58,38 @@ class GuiConfigTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
+class UpdateCheckTest(unittest.TestCase):
+    class _Result:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def test_successful_start(self):
+        calls = []
+
+        def fake_runner(cmd, timeout):
+            calls.append(cmd)
+            return self._Result(0)
+
+        self.assertEqual(gui_mod._start_update_service(fake_runner),
+                         "Проверка обновления запущена")
+        self.assertEqual(calls[0][:3], ["systemctl", "start", "astra-usb-update.service"])
+
+    def test_failed_start_reports_error(self):
+        def fake_runner(cmd, timeout):
+            return self._Result(1)
+
+        self.assertEqual(gui_mod._start_update_service(fake_runner),
+                         "Не удалось запустить проверку обновлений")
+
+    def test_missing_systemd_reports_gracefully(self):
+        def fake_runner(cmd, timeout):
+            raise FileNotFoundError("systemctl")
+
+        self.assertEqual(gui_mod._start_update_service(fake_runner),
+                         "Проверка недоступна: нет systemd")
+
+
+@unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
 class BusyMarkerTest(unittest.TestCase):
     """_is_busy drives the updater's busy marker — it must key off the raw
     state, not the localized label, so renaming a label can't silently

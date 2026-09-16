@@ -41,13 +41,13 @@ Four top-level modules:
 - `_parse_lsblk_tree()` — pure helper over parsed `lsblk -J` output (unit-tested); partitions of a USB disk are listed exactly once, a whole-disk filesystem yields the disk itself.
 - SQLite в `data/devices.db`: `devices` хранит ID регистратора, `id_source`, серийник, метку и человека; `backups` хранит статистику сеансов. Время `started_at` и `finished_at` записывается через `datetime.isoformat()` с разделителем `T`.
 - `format_filter_dt()` — builds search range bounds with the same `T` separator as stored `started_at` so lexicographic SQL comparisons are correct (a space would sort before `T` and wrongly exclude same-day backups).
-- Очередь GUI получает `(device_id, display_id, state, current, total, msg, devname)`. После определения `display_id` содержит только число; до него состояние `identifying` показывается без имени. `"_removed_"` и `"_status_"` обозначают отключение и общий статус.
-- `read_version()` — parses the `VERSION` file (`<tag> <YYYY-MM-DD>`, written by the release workflow / `install_native.sh`, never by hand) into `(tag, date)`, or `None` if it's missing or malformed. Read by the GUI (Настройки tab) and by `updater.py`.
+- Очередь GUI получает `(device_id, display_id, state, current, total, msg, devname)`. После определения `display_id` — это `_short_device_label` (имя, если задано, иначе число, без префиксов) и перечитывается при каждом событии, чтобы переименование посреди копирования не затиралось; до определения состояние `identifying` показывается без имени. `"_removed_"` и `"_status_"` обозначают отключение и общий статус.
+- `read_version()` — parses the `VERSION` file (`<tag> <YYYY-MM-DD>`, written by the release workflow / `install_native.sh`, never by hand) into `(tag, date)`, or `None` if it's missing or malformed. Read by the GUI (header subtitle) and by `updater.py`.
 - `touch_copying_marker()` / `is_copying()` — `data/.copying` is the interface between the GUI and `updater.py`: the GUI stamps its mtime whenever a device is scanning or copying, and `updater.py` treats the point as busy while the marker is younger than 60s. A stale or missing marker means idle, so a crashed GUI doesn't block updates forever.
 
 ## ID регистратора и папки архива
 
-- Python и Avalonia называют архивную папку `Device{id}` и показывают на главном экране только числовой ID. Его уникальность при последовательном подключении обеспечивает оператор. Пользовательское имя доступно во вкладке «Устройства» и поиске, но не меняет папку.
+- Python и Avalonia называют архивную папку `Device{id}` и показывают на главном экране имя (если задано) либо числовой ID. Его уникальность при последовательном подключении обеспечивает оператор. Пользовательское имя доступно во вкладке «Устройства» и поиске, но не меняет папку.
 - Старые `.astra_id`, `.bestcam_id`, строки базы и папки остаются без изменений. Маркеры не участвуют в идентификации и не копируются; автоматического переноса архивов нет.
 - На Linux обе службы рекурсивно передают прямые папки с положительным числовым именем `DeviceN` владельцу и группе корня архива. При запуске исправляются существующие папки, после копирования текущая папка устройства. Содержимое выбранных `DeviceN` также меняет владельца, а каталоги вне них не затрагиваются.
 
@@ -57,7 +57,7 @@ Four top-level modules:
 - Tab access protection: tabs at indices 1–3 require a password; `_prompt_unlock()` is modal, sized to 1/4 screen. Unlocked tabs re-lock after `lock_timeout_minutes` of inactivity (`_check_lock_timeout`).
 - Search tab runs queries in a background thread (`_search_worker`, generation-guarded), walks the matched backup folders on disk, and can export the matched files (`_export_worker`). Results are capped at 500.
 - Exit is password-protected: the header has a visible "⏻ Выход" button (only way out in fullscreen kiosk mode, since the window has no close button); it calls `_on_close()`, a modal password dialog that on success runs `stop_event.set()` + `root.destroy()`. Same dialog is bound to `WM_DELETE_WINDOW`.
-- Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run; change via Настройки tab (`_change_password`). The Настройки tab also configures the backup destination, lock timeout, and auto-cleanup of old videos.
+- Password stored in `data/config.json`; default `exit`; also reads `APP_EXIT_PASSWORD` env var on first run; change via Настройки tab (`_change_password`). The Настройки tab also configures the backup destination, lock timeout, and auto-cleanup of old videos, plus a manual update check button (`_force_update_check` → `_start_update_service`, which only kicks the external oneshot `astra-usb-update.service` and never installs from inside the GUI).
 
 **`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`.
 

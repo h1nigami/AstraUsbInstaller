@@ -221,6 +221,15 @@ class FriendlyLabelTest(unittest.TestCase):
         self.assertEqual(um._friendly_device_label(3, None), "Astra ID 3")
 
 
+class ShortLabelTest(unittest.TestCase):
+    def test_name_without_decorations(self):
+        self.assertEqual(um._short_device_label(3, "Проходная"), "Проходная")
+
+    def test_without_name_shows_bare_id(self):
+        self.assertEqual(um._short_device_label(3, ""), "3")
+        self.assertEqual(um._short_device_label(3, None), "3")
+
+
 class SharedSerialTest(unittest.TestCase):
     """USB-эмуляторы отдают один серийник на все экземпляры."""
 

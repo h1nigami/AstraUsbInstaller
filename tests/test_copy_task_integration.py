@@ -100,6 +100,68 @@ class CopyTaskEndToEndTest(unittest.TestCase):
         self.assertEqual(states[-1], "done")
         self.assertIn("copying", states)
 
+    def test_queue_carries_name_when_set_otherwise_id(self):
+        import queue
+        with tempfile.TemporaryDirectory() as src, \
+             tempfile.TemporaryDirectory() as dest, \
+             tempfile.TemporaryDirectory() as data_dir:
+            with open(os.path.join(src, "video.mp4"), "wb") as f:
+                f.write(b"x" * 10)
+            self._id_log(src)
+            db_path = os.path.join(data_dir, "d.db")
+            with mock.patch.object(um, "DB_PATH", db_path):
+                um._init_db().close()
+                pq1 = queue.Queue()
+                device_id, _, _ = self._run(src, dest, progress_queue=pq1)
+                labels1 = [m[1] for m in list(pq1.queue) if m[0] == device_id]
+                self.assertTrue(labels1)
+                for label in labels1:
+                    self.assertEqual(label, str(device_id))
+
+                conn = sqlite3.connect(db_path)
+                try:
+                    conn.execute("UPDATE devices SET name = ? WHERE id = ?", ("Kiosk-1", device_id))
+                    conn.commit()
+                finally:
+                    conn.close()
+
+                with open(os.path.join(src, "clip2.mp4"), "wb") as f:
+                    f.write(b"y" * 10)
+                pq2 = queue.Queue()
+                device_id2, _, _ = self._run(src, dest, progress_queue=pq2)
+                self.assertEqual(device_id2, device_id)
+                labels2 = [m[1] for m in list(pq2.queue) if m[0] == device_id]
+                self.assertTrue(labels2)
+                for label in labels2:
+                    self.assertEqual(label, "Kiosk-1")
+
+    def test_queue_reflects_rename_during_copy(self):
+        """Переименование посреди копирования не должно затираться следующим
+        событием прогресса: подпись перечитывается при каждом _emit."""
+        import queue
+        calls = {"n": 0}
+
+        def _fake_name(conn, device_id):
+            calls["n"] += 1
+            return "" if calls["n"] == 1 else "Kiosk-1"
+
+        with tempfile.TemporaryDirectory() as src, \
+             tempfile.TemporaryDirectory() as dest, \
+             tempfile.TemporaryDirectory() as data_dir:
+            with open(os.path.join(src, "video.mp4"), "wb") as f:
+                f.write(b"x" * 10)
+            self._id_log(src)
+            db_path = os.path.join(data_dir, "d.db")
+            with mock.patch.object(um, "DB_PATH", db_path), \
+                 mock.patch.object(um, "_get_device_name", side_effect=_fake_name):
+                um._init_db().close()
+                pq = queue.Queue()
+                device_id, _, _ = self._run(src, dest, progress_queue=pq)
+                labels = [m[1] for m in list(pq.queue) if m[0] == device_id]
+                self.assertTrue(labels)
+                for label in labels:
+                    self.assertEqual(label, "Kiosk-1")
+
     def test_refuses_when_configured_dest_has_no_marker(self):
         """Regression: destination disk unmounted -> its path is a plain shadow
         directory without the marker. copy_task must fail loudly (error state),

@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -65,6 +65,26 @@ def _is_busy(workers_data):
     marker.
     """
     return any(d.get("state_raw") in ("scanning", "copying") for d in workers_data.values())
+
+
+UPDATE_SERVICE = "astra-usb-update.service"
+
+
+def _start_update_service(runner=subprocess.run):
+    """Пнуть внешний юнит проверки обновлений (oneshot, вне сервиса GUI).
+
+    Саму установку GUI не выполняет: установщик в конце перезапускает сервис
+    приложения и убил бы себя посреди подмены файлов. Возвращает текст статуса.
+    """
+    try:
+        result = runner(["systemctl", "start", UPDATE_SERVICE], timeout=60)
+    except FileNotFoundError:
+        return "Проверка недоступна: нет systemd"
+    except Exception as e:
+        return f"Не удалось запустить проверку: {e}"
+    if result.returncode != 0:
+        return "Не удалось запустить проверку обновлений"
+    return "Проверка обновления запущена"
 
 
 class App:
@@ -132,6 +152,12 @@ class App:
               foreground=[("selected", "#ffffff")])
         s.configure("TFrame", background=C["bg_app"])
         s.configure("TLabel", background=C["bg_app"], foreground=C["fg_main"], font=("Segoe UI", 11))
+        # Виджеты внутри карточек (TLabelframe на bg_panel): глобальные
+        # TFrame/TLabel на bg_app давали тёмные полосы и пятна на карточках.
+        s.configure("Panel.TFrame", background=C["bg_panel"])
+        s.configure("Panel.TLabel", background=C["bg_panel"], foreground=C["fg_main"], font=("Segoe UI", 11))
+        s.configure("TCheckbutton", background=C["bg_panel"], foreground=C["fg_main"], font=("Segoe UI", 11))
+        s.map("TCheckbutton", background=[("active", C["bg_panel"])])
         s.configure("TLabelframe", background=C["bg_panel"], foreground=C["brand"],
                     bordercolor=C["border"], font=("Segoe UI", 12, "bold"))
         s.configure("TLabelframe.Label", background=C["bg_panel"], foreground=C["brand"])
@@ -151,6 +177,18 @@ class App:
                     bordercolor=C["border"], insertcolor=C["fg_main"], padding=4)
         s.configure("TCombobox", fieldbackground=C["bg_surface"], background=C["bg_surface"],
                     foreground=C["fg_main"], arrowcolor=C["fg_main"], padding=4)
+        # Readonly-комбобоксы (все фильтры и даты) clam иначе рисует светлыми
+        # цветами темы: белые буквы на белом. Прибиваем состояния к тёмным.
+        s.map("TCombobox",
+              fieldbackground=[("readonly", C["bg_surface"]), ("disabled", C["bg_surface"])],
+              background=[("readonly", C["bg_surface"])],
+              foreground=[("readonly", C["fg_main"]), ("disabled", C["fg_muted"])],
+              arrowcolor=[("readonly", C["fg_main"]), ("disabled", C["fg_muted"])],
+              selectbackground=[("readonly", C["accent"])],
+              selectforeground=[("readonly", "#ffffff")])
+        # Крупные комбобоксы даты/времени в поиске: на маленьком экране
+        # станции мелкие виджеты плохо нажимаются.
+        s.configure("Big.TCombobox", font=("Segoe UI", 14), padding=[6, 8])
 
     def _build_header(self):
         C = self.C
@@ -173,7 +211,7 @@ class App:
         box.pack(side="left", padx=10)
         tk.Label(box, text="BestCam", font=("Segoe UI", 20, "bold"),
                  fg=C["brand"], bg=C["bg_panel"]).pack(anchor="w")
-        tk.Label(box, text="USB Backup Manager", font=("Segoe UI", 12),
+        tk.Label(box, text=f"USB Backup Manager · {self._version_text()}", font=("Segoe UI", 12),
                  fg=C["fg_muted"], bg=C["bg_panel"]).pack(anchor="w")
 
         # Кнопка выхода (защищена паролем). В полноэкранном режиме у окна нет
@@ -250,12 +288,41 @@ class App:
         dlg.wait_window()
         return result["ok"]
 
+    def _animate_tab_switch(self):
+        # Мягкий fade поверх содержимого новой вкладки (~120 мс).
+        # Tk не умеет прозрачность виджетов, поэтому шагаем фоном
+        # оверлея от панели к фону вкладки и убираем его.
+        try:
+            frame = self.nb.nametowidget(self.nb.select())
+        except Exception:
+            return
+        try:
+            overlay = tk.Frame(frame, bg=self.C["bg_panel"])
+            overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        except tk.TclError:
+            return
+        colors = ["#1a2436", "#141d2e", self.C["bg_app"]]
+
+        def _step(i):
+            try:
+                if i < len(colors):
+                    overlay.configure(bg=colors[i])
+                    self.root.after(40, lambda: _step(i + 1))
+                else:
+                    overlay.destroy()
+            except tk.TclError:
+                pass
+
+        _step(0)
+
     def _on_tab_changed(self, _event):
         if self._unlock_in_progress:
             return
         idx = self.nb.index(self.nb.select())
         if idx == self.public_tab_index or self.tabs_unlocked:
             self._last_activity = time.time()
+            if idx != self._last_tab:
+                self._animate_tab_switch()
             self._last_tab = idx
             return
         self._unlock_in_progress = True
@@ -297,70 +364,71 @@ class App:
         hours = [f"{h:02d}" for h in range(0, 24)]
         minutes = [f"{m:02d}" for m in range(0, 60)]
 
-        # Row 0: date range
+        # Row 0-1: date range, "from" and "to" on separate rows: enlarged
+        # touch-friendly combos don't fit side by side on 1024px screens.
         ttk.Label(top, text="От:").grid(row=0, column=0, padx=2, sticky="w")
         dt_from_frame = ttk.Frame(top)
-        dt_from_frame.grid(row=0, column=1, padx=2, sticky="w")
-        self._from_day = ttk.Combobox(dt_from_frame, values=days, width=3, state="readonly")
+        dt_from_frame.grid(row=0, column=1, columnspan=3, padx=2, sticky="w")
+        self._from_day = ttk.Combobox(dt_from_frame, values=days, width=5, state="readonly", style="Big.TCombobox")
         self._from_day.pack(side="left")
         ttk.Label(dt_from_frame, text=".").pack(side="left")
-        self._from_mon = ttk.Combobox(dt_from_frame, values=months, width=3, state="readonly")
+        self._from_mon = ttk.Combobox(dt_from_frame, values=months, width=5, state="readonly", style="Big.TCombobox")
         self._from_mon.pack(side="left")
         ttk.Label(dt_from_frame, text=".").pack(side="left")
-        self._from_year = ttk.Combobox(dt_from_frame, values=years, width=5, state="readonly")
+        self._from_year = ttk.Combobox(dt_from_frame, values=years, width=7, state="readonly", style="Big.TCombobox")
         self._from_year.pack(side="left")
         ttk.Label(dt_from_frame, text="  ").pack(side="left")
-        self._from_hour = ttk.Combobox(dt_from_frame, values=hours, width=3, state="readonly")
+        self._from_hour = ttk.Combobox(dt_from_frame, values=hours, width=5, state="readonly", style="Big.TCombobox")
         self._from_hour.pack(side="left")
         ttk.Label(dt_from_frame, text=":").pack(side="left")
-        self._from_min = ttk.Combobox(dt_from_frame, values=minutes, width=3, state="readonly")
+        self._from_min = ttk.Combobox(dt_from_frame, values=minutes, width=5, state="readonly", style="Big.TCombobox")
         self._from_min.pack(side="left")
 
-        ttk.Label(top, text="До:").grid(row=0, column=2, padx=(10, 2), sticky="w")
+        ttk.Label(top, text="До:").grid(row=1, column=0, padx=2, pady=(5, 0), sticky="w")
         dt_to_frame = ttk.Frame(top)
-        dt_to_frame.grid(row=0, column=3, padx=2, sticky="w")
-        self._to_day = ttk.Combobox(dt_to_frame, values=days, width=3, state="readonly")
+        dt_to_frame.grid(row=1, column=1, columnspan=3, padx=2, pady=(5, 0), sticky="w")
+        self._to_day = ttk.Combobox(dt_to_frame, values=days, width=5, state="readonly", style="Big.TCombobox")
         self._to_day.pack(side="left")
         ttk.Label(dt_to_frame, text=".").pack(side="left")
-        self._to_mon = ttk.Combobox(dt_to_frame, values=months, width=3, state="readonly")
+        self._to_mon = ttk.Combobox(dt_to_frame, values=months, width=5, state="readonly", style="Big.TCombobox")
         self._to_mon.pack(side="left")
         ttk.Label(dt_to_frame, text=".").pack(side="left")
-        self._to_year = ttk.Combobox(dt_to_frame, values=years, width=5, state="readonly")
+        self._to_year = ttk.Combobox(dt_to_frame, values=years, width=7, state="readonly", style="Big.TCombobox")
         self._to_year.pack(side="left")
         ttk.Label(dt_to_frame, text="  ").pack(side="left")
-        self._to_hour = ttk.Combobox(dt_to_frame, values=hours, width=3, state="readonly")
+        self._to_hour = ttk.Combobox(dt_to_frame, values=hours, width=5, state="readonly", style="Big.TCombobox")
         self._to_hour.pack(side="left")
         ttk.Label(dt_to_frame, text=":").pack(side="left")
-        self._to_min = ttk.Combobox(dt_to_frame, values=minutes, width=3, state="readonly")
+        self._to_min = ttk.Combobox(dt_to_frame, values=minutes, width=5, state="readonly", style="Big.TCombobox")
         self._to_min.pack(side="left")
 
-        # Row 1: device / person / file type / filename
-        ttk.Label(top, text="Устройство:").grid(row=1, column=0, padx=2, pady=(5, 0), sticky="w")
+        # Row 2: device / person / file type / filename
+        ttk.Label(top, text="Устройство:").grid(row=2, column=0, padx=2, pady=(5, 0), sticky="w")
         self.search_device = ttk.Combobox(top, width=14, state="readonly")
-        self.search_device.grid(row=1, column=1, padx=2, pady=(5, 0), sticky="w")
+        self.search_device.grid(row=2, column=1, padx=2, pady=(5, 0), sticky="w")
 
-        ttk.Label(top, text="Человек:").grid(row=1, column=2, padx=(10, 2), pady=(5, 0), sticky="w")
+        ttk.Label(top, text="Человек:").grid(row=2, column=2, padx=(10, 2), pady=(5, 0), sticky="w")
         self.search_person = ttk.Combobox(top, width=14, state="readonly")
-        self.search_person.grid(row=1, column=3, padx=2, pady=(5, 0), sticky="w")
+        self.search_person.grid(row=2, column=3, padx=2, pady=(5, 0), sticky="w")
 
-        # Row 2: file type / filename / buttons
-        ttk.Label(top, text="Тип файла:").grid(row=2, column=0, padx=2, pady=(5, 0), sticky="w")
+        # Row 3: file type / filename / buttons
+        ttk.Label(top, text="Тип файла:").grid(row=3, column=0, padx=2, pady=(5, 0), sticky="w")
         self.search_filetype = ttk.Combobox(
             top, width=14, state="readonly",
             values=["Все", "Фото", "Видео", "Документы"],
         )
         self.search_filetype.set("Все")
-        self.search_filetype.grid(row=2, column=1, padx=2, pady=(5, 0), sticky="w")
+        self.search_filetype.grid(row=3, column=1, padx=2, pady=(5, 0), sticky="w")
 
-        ttk.Label(top, text="Имя файла:").grid(row=2, column=2, padx=(10, 2), pady=(5, 0), sticky="w")
+        ttk.Label(top, text="Имя файла:").grid(row=3, column=2, padx=(10, 2), pady=(5, 0), sticky="w")
         self.search_filename_var = tk.StringVar()
         ttk.Entry(top, textvariable=self.search_filename_var, width=20).grid(
-            row=2, column=3, padx=2, pady=(5, 0), sticky="w")
+            row=3, column=3, padx=2, pady=(5, 0), sticky="w")
 
         # Кнопки отдельной строкой, а не пятой колонкой: на экране 1024 пикселя
         # пятая колонка не помещалась и «Сброс» с «Выгрузить» уезжали за край.
         btn_frame = ttk.Frame(top)
-        btn_frame.grid(row=3, column=0, columnspan=4, padx=2, pady=(8, 0), sticky="w")
+        btn_frame.grid(row=4, column=0, columnspan=4, padx=2, pady=(8, 0), sticky="w")
         ttk.Button(btn_frame, text="Найти", command=self._do_search).pack(side="left", padx=2)
         ttk.Button(btn_frame, text="Сброс", command=self._reset_search).pack(side="left", padx=2)
         self._export_btn = ttk.Button(btn_frame, text="Выгрузить (0)", command=self._export_found_files, state="disabled")
@@ -446,8 +514,8 @@ class App:
         edit_frame = ttk.Frame(f)
         edit_frame.pack(side="bottom", fill="x", padx=5, pady=(0, 5))
         self.dev_tree.pack(fill="both", expand=True, padx=5, pady=5)
-        # Два ряда, а не один: в ширину 1024 весь набор полей и кнопок не
-        # помещался, и «Очистить видео» с «Обновить список» уезжали за край.
+        # Два ряда, а не один: в ширину 800 весь набор полей и кнопок не
+        # помещался, и «Назначить» уезжала за край.
         row1 = ttk.Frame(edit_frame)
         row1.pack(fill="x")
         ttk.Label(row1, text="Номер устройства:").pack(side="left", padx=2)
@@ -457,13 +525,13 @@ class App:
         self.edit_name = ttk.Entry(row1, width=20)
         self.edit_name.pack(side="left", padx=2)
         ttk.Button(row1, text="Переименовать", command=self._rename_device).pack(side="left", padx=4)
-        ttk.Label(row1, text="Человек:").pack(side="left", padx=2)
-        self.edit_person = ttk.Entry(row1, width=20)
-        self.edit_person.pack(side="left", padx=2)
-        ttk.Button(row1, text="Назначить", command=self._assign_person).pack(side="left", padx=4)
 
         row2 = ttk.Frame(edit_frame)
         row2.pack(fill="x", pady=(6, 0))
+        ttk.Label(row2, text="Человек:").pack(side="left", padx=2)
+        self.edit_person = ttk.Entry(row2, width=20)
+        self.edit_person.pack(side="left", padx=2)
+        ttk.Button(row2, text="Назначить", command=self._assign_person).pack(side="left", padx=4)
         ttk.Button(row2, text="Очистить видео", command=self._clean_device_videos, style="Danger.TButton").pack(side="left", padx=2)
         ttk.Button(row2, text="Обновить список", command=self._refresh_devices).pack(side="left", padx=4)
 
@@ -520,19 +588,19 @@ class App:
         folder_frame = ttk.LabelFrame(left, text="Папка для резервных копий", padding=10)
         folder_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(folder_frame, text="Текущая папка:").pack(anchor="w")
+        ttk.Label(folder_frame, text="Текущая папка:", style="Panel.TLabel").pack(anchor="w")
         self.backup_dest_var = tk.StringVar(value=get_dest_base())
         ttk.Label(folder_frame, textvariable=self.backup_dest_var,
                   foreground=self.C["brand"], wraplength=420,
-                  font=("Segoe UI", 11)).pack(anchor="w", pady=(2, 8))
+                  font=("Segoe UI", 11), style="Panel.TLabel").pack(anchor="w", pady=(2, 8))
         ttk.Button(folder_frame, text="Выбрать папку", command=self._change_backup_dest).pack(anchor="w")
 
         frame = ttk.LabelFrame(left, text="Защита выхода", padding=10)
         frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(frame, text="Выход из программы защищён паролем.").pack(anchor="w")
+        ttk.Label(frame, text="Выход из программы защищён паролем.", style="Panel.TLabel").pack(anchor="w")
         self.pw_status = tk.StringVar()
-        ttk.Label(frame, textvariable=self.pw_status, foreground="gray").pack(anchor="w", pady=(0, 10))
+        ttk.Label(frame, textvariable=self.pw_status, foreground="gray", style="Panel.TLabel").pack(anchor="w", pady=(0, 10))
 
         ttk.Button(frame, text="Сменить пароль", command=self._change_password).pack(anchor="w")
 
@@ -541,23 +609,23 @@ class App:
         reset_frame = ttk.LabelFrame(left, text="Заводской сброс", padding=10)
         reset_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(reset_frame, text="Удаляет устройства, историю, архив, пароль и настройки.").pack(anchor="w")
+        ttk.Label(reset_frame, text="Удаляет устройства, историю, архив, пароль и настройки.", style="Panel.TLabel").pack(anchor="w")
         self._reset_status_var = tk.StringVar(value="")
         ttk.Label(reset_frame, textvariable=self._reset_status_var,
-                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(4, 8))
+                  foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(4, 8))
         ttk.Button(reset_frame, text="Сбросить до заводских", command=self._confirm_factory_reset).pack(anchor="w")
 
         lock_frame = ttk.LabelFrame(right, text="Автоблокировка разделов", padding=10)
         lock_frame.pack(fill="x", padx=10, pady=5)
 
-        ttk.Label(lock_frame, text="Время до блокировки (минут, 0 — отключено):").pack(anchor="w")
+        ttk.Label(lock_frame, text="Время до блокировки (минут, 0 — отключено):", style="Panel.TLabel").pack(anchor="w")
         self._timeout_var = tk.StringVar(value=str(int(self._lock_timeout / 60)))
-        timeout_row = ttk.Frame(lock_frame)
+        timeout_row = ttk.Frame(lock_frame, style="Panel.TFrame")
         timeout_row.pack(anchor="w", pady=(4, 0))
         ttk.Entry(timeout_row, textvariable=self._timeout_var, width=6).pack(side="left")
         ttk.Button(timeout_row, text="Сохранить", command=self._save_lock_timeout).pack(side="left", padx=6)
         self._timeout_status = tk.StringVar()
-        ttk.Label(lock_frame, textvariable=self._timeout_status, foreground="gray").pack(anchor="w", pady=(4, 0))
+        ttk.Label(lock_frame, textvariable=self._timeout_status, foreground="gray", style="Panel.TLabel").pack(anchor="w", pady=(4, 0))
         self._refresh_timeout_status()
 
         cleanup_frame = ttk.LabelFrame(right, text="Автоочистка старых видео", padding=10)
@@ -570,27 +638,44 @@ class App:
             variable=self._cleanup_enabled_var,
         ).pack(anchor="w")
 
-        days_row = ttk.Frame(cleanup_frame)
+        days_row = ttk.Frame(cleanup_frame, style="Panel.TFrame")
         days_row.pack(anchor="w", pady=(6, 0))
-        ttk.Label(days_row, text="Удалять видео старше (дней):").pack(side="left")
+        ttk.Label(days_row, text="Удалять видео старше (дней):", style="Panel.TLabel").pack(side="left")
         self._cleanup_days_var = tk.StringVar(value=str(self._cleanup_days))
         ttk.Entry(days_row, textvariable=self._cleanup_days_var, width=6).pack(side="left", padx=6)
 
-        btn_row = ttk.Frame(cleanup_frame)
+        btn_row = ttk.Frame(cleanup_frame, style="Panel.TFrame")
         btn_row.pack(anchor="w", pady=(8, 0))
         ttk.Button(btn_row, text="Сохранить", command=self._save_cleanup_settings).pack(side="left")
         ttk.Button(btn_row, text="Запустить очистку сейчас", command=self._run_cleanup_now).pack(side="left", padx=8)
 
         self._cleanup_status_var = tk.StringVar(value="")
         ttk.Label(cleanup_frame, textvariable=self._cleanup_status_var,
-                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(6, 0))
+                  foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
 
         about = ttk.LabelFrame(left, text="О программе", padding=10)
         about.pack(fill="x", padx=10, pady=5)
-        ttk.Label(about, text="BestCam USB Backup Manager").pack(anchor="w")
-        ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"]).pack(anchor="w")
-        ttk.Label(about, text=self._version_text(),
-                  foreground=self.C["fg_muted"]).pack(anchor="w", pady=(6, 0))
+        ttk.Label(about, text="BestCam USB Backup Manager", style="Panel.TLabel").pack(anchor="w")
+        ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w")
+        self._update_status_var = tk.StringVar(value="")
+        ttk.Label(about, textvariable=self._update_status_var,
+                  foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Button(about, text="Проверить обновления", command=self._force_update_check).pack(anchor="w", pady=(4, 0))
+
+    def _force_update_check(self):
+        if _is_busy(self.workers_data):
+            self._update_status_var.set("Дождитесь конца сканирования или копирования")
+            return
+        self._update_status_var.set("Запуск проверки...")
+
+        def _do():
+            msg = _start_update_service()
+            try:
+                self._update_status_var.set(msg)
+            except Exception:
+                pass
+
+        threading.Thread(target=_do, daemon=True).start()
 
     def _version_text(self):
         v = read_version()
@@ -848,16 +933,19 @@ class App:
         finally:
             conn.close()
         name = (row[0] if row else "") or ""
-        return _friendly_device_label(dev_id, name)
+        return _short_device_label(dev_id, name)
 
     def _refresh_search_filters(self):
         conn = self._get_db()
         try:
             devices = conn.execute("SELECT id, name FROM devices ORDER BY id").fetchall()
             people = conn.execute("SELECT DISTINCT person FROM devices WHERE person != '' ORDER BY person").fetchall()
-            self._device_filter_ids = {
-                _friendly_device_label(r[0], r[1]): r[0] for r in devices
-            }
+            self._device_filter_ids = {}
+            for dev_id, name in devices:
+                short = _short_device_label(dev_id, name)
+                if short in self._device_filter_ids:
+                    short = _friendly_device_label(dev_id, name)
+                self._device_filter_ids[short] = dev_id
             dev_list = [""] + list(self._device_filter_ids.keys())
             per_list = [""] + [r[0] for r in people]
             self.search_device["values"] = dev_list
@@ -946,7 +1034,7 @@ class App:
                             "filename": fname,
                             "ext": ext,
                             "size": fsize,
-                            "device": _friendly_device_label(dev_id, dev_name),
+                            "device": _short_device_label(dev_id, dev_name),
                             "person": person or "",
                             "datetime": dt_str,
                         })
@@ -1178,6 +1266,10 @@ class App:
             conn.execute("UPDATE devices SET name = ? WHERE id = ?", (name, int(dev_id)))
             conn.commit()
             messagebox.showinfo("Готово", f"Устройство {dev_id} переименовано в {name or '(без имени)'}")
+            for did, data in self.workers_data.items():
+                if did == int(dev_id):
+                    data["device"] = name or str(dev_id)
+            self._refresh_workers()
             self._refresh_devices()
             self._refresh_search_filters()
         except Exception as e:

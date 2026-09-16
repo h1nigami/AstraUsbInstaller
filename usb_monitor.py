@@ -705,6 +705,11 @@ def _friendly_device_label(device_id, name):
     return f"{astra_id} · {name}" if name else astra_id
 
 
+def _short_device_label(device_id, name):
+    """Голая подпись: имя, если задано, иначе числовой ID. Без префиксов."""
+    return name or str(device_id)
+
+
 def _repair_archive_ownership(root, device_dir=None):
     if platform.system() == "Windows" or not root:
         return
@@ -1120,19 +1125,27 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             if should_unmount:
                 _unmount(mountpoint)
             return None, 0, 0
-        # Имя папки задаётся ID устройства; главное окно получает только число.
+        # Имя папки задаётся ID устройства; главное окно показывает имя, если задано.
+        # Имя перечитывается при каждом событии: переименование посреди
+        # копирования не должно затираться следующим сообщением прогресса.
         display_id = f"Device{device_id}"
-        main_label = str(device_id)
-        friendly = _friendly_device_label(device_id, _get_device_name(conn, device_id))
+        _device_name = _get_device_name(conn, device_id)
+        friendly = _friendly_device_label(device_id, _device_name)
         started_at = datetime.now()
 
         ts = started_at.strftime("%Y%m%d_%H%M%S")
         dest_base = get_dest_base()
 
+        def _label():
+            try:
+                return _short_device_label(device_id, _get_device_name(conn, device_id))
+            except Exception:
+                return str(device_id)
+
         def _emit(state, current=0, total=0, msg=""):
             if progress_queue is not None:
                 try:
-                    progress_queue.put_nowait((device_id, main_label, state, current, total, msg, devname))
+                    progress_queue.put_nowait((device_id, _label(), state, current, total, msg, devname))
                 except Exception:
                     pass
 
@@ -1167,7 +1180,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         dest = os.path.join(dest_base, display_id)
 
-        _emit("scanning", 0, 0, f"Сканирование ID {main_label}")
+        _emit("scanning", 0, 0, f"Сканирование ID {_label()}")
 
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[cyan]Scanning {friendly}...")
@@ -1185,7 +1198,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         if total_files == 0:
             msg = f"Empty: {friendly}"
-            _emit("done", 0, 0, f"Готово: ID {main_label}")
+            _emit("done", 0, 0, f"Готово: ID {_label()}")
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
             else:
@@ -1194,7 +1207,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 _unmount(mountpoint)
             return device_id, 0, 0
 
-        _emit("copying", 0, total_bytes, f"Копирование ID {main_label}")
+        _emit("copying", 0, total_bytes, f"Копирование ID {_label()}")
 
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[green]{friendly} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
@@ -1219,7 +1232,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             _emit("error", copied_bytes, total_bytes, f"Не скопировано: {failed} файл(ов)")
         else:
             msg = f"Done: {friendly} ({copied_files} files, {_format_size(copied_bytes)})"
-            _emit("done", copied_bytes, total_bytes, f"Готово: ID {main_label}")
+            _emit("done", copied_bytes, total_bytes, f"Готово: ID {_label()}")
 
         if USE_RICH and progress_obj:
             color = "red" if failed else "green"
