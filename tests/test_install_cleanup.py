@@ -61,12 +61,16 @@ def working_bash():
 BASH = working_bash()
 
 
-def extract_function():
+def extract_named_function(name):
     """Тело функции из установщика — без остального скрипта: он ставит
     систему целиком и в тесте выполняться не должен."""
     text = pathlib.Path(INSTALLER).read_text(encoding="utf-8")
-    match = re.search(r"^%s\(\) \{$.*?^\}$" % FUNC, text, re.M | re.S)
+    match = re.search(r"^%s\(\) \{$.*?^\}$" % name, text, re.M | re.S)
     return match.group(0) if match else ""
+
+
+def extract_function():
+    return extract_named_function(FUNC)
 
 
 @unittest.skipUnless(BASH, "нужен работающий bash")
@@ -156,6 +160,62 @@ class RemoveStationTest(unittest.TestCase):
 
         self.assertTrue(os.path.exists(self.rule), "чужого правила udev тут нет — не трогаем")
         self.assertNotIn("disable", self.calls())
+
+
+@unittest.skipUnless(BASH, "нужен работающий bash")
+class DesktopShortcutTest(unittest.TestCase):
+    FUNC = "install_desktop_shortcut"
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def run_shortcut(self, extra_env=None):
+        script = os.path.join(self.root, "shortcut.sh")
+        with open(script, "w", newline="\n", encoding="utf-8") as f:
+            f.write('set -e\nPATH="$PWD/bin:$PATH"\n'
+                    + extract_named_function(self.FUNC) + f"\n{self.FUNC}\n")
+        env = {**os.environ, "ASTRA_ROOT": self.root, "SUDO": "",
+               "HOME": self.root, "SUDO_USER": ""}
+        env.update(extra_env or {})
+        result = subprocess.run(
+            [BASH, "shortcut.sh"], cwd=self.root, capture_output=True,
+            text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def desktops(self):
+        found = []
+        for dirpath, _dirnames, filenames in os.walk(self.root):
+            if "BestCam-USB.desktop" in filenames:
+                found.append(os.path.join(dirpath, "BestCam-USB.desktop"))
+        return found
+
+    def test_creates_trusted_launcher_on_desktop(self):
+        desktop = os.path.join(self.root, "Desktop")
+        os.makedirs(desktop)
+        self.run_shortcut({"ASTRA_DESKTOP_DIR": desktop})
+
+        shortcuts = self.desktops()
+        self.assertEqual(shortcuts, [os.path.join(desktop, "BestCam-USB.desktop")])
+        text = pathlib.Path(shortcuts[0]).read_text(encoding="utf-8")
+        self.assertIn("[Desktop Entry]", text)
+        self.assertIn("pkexec", text)
+        self.assertIn("astra-usb-monitor", text)
+        self.assertIn("Icon=/opt/astra-usb-monitor/data/LOGO-1.png", text)
+        self.assertTrue(os.access(shortcuts[0], os.X_OK),
+                        "ярлык должен быть исполняемым")
+
+    def test_uses_sudo_user_home(self):
+        home = os.path.join(self.root, "home", "operator", "Desktop")
+        os.makedirs(home)
+        self.run_shortcut({"SUDO_USER": "operator"})
+
+        self.assertEqual(self.desktops(), [os.path.join(home, "BestCam-USB.desktop")])
+
+    def test_no_desktop_changes_nothing(self):
+        self.run_shortcut()
+        self.assertEqual(self.desktops(), [])
 
 
 if __name__ == "__main__":

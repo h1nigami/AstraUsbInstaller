@@ -7,7 +7,9 @@
 #      auto-mount'ит новые USB-носители сам, чтобы не было позднего второго
 #      RW-mount поверх нашего.
 #   3. Копирует приложение в /opt/astra-usb-monitor.
-#   4. Ставит один systemd-сервис (start_native.sh), который ждёт X-сервер,
+#   4. Кладёт на рабочий стол ярлык «BestCam USB» (поднять сервис после
+#      парольного выхода: systemctl start уже запущенный сервис не трогает).
+#   5. Ставит один systemd-сервис (start_native.sh), который ждёт X-сервер,
 #      находит cookie сессии через /proc и поднимает GUI, как только
 #      графическая сессия готова. Мониторинг USB работает внутри GUI
 #      (gui.py сам запускает monitor_usb фоновым потоком). Парольный
@@ -230,6 +232,61 @@ $SUDO systemctl daemon-reload
 $SUDO systemctl enable "$SERVICE_NAME.service"
 $SUDO systemctl restart "$SERVICE_NAME.service"
 
+# --- 6б. Ярлык на рабочем столе ------------------------------------------------
+# Ярлык «BestCam USB»: поднимает сервис после парольного выхода из GUI
+# (systemctl start уже запущенный сервис не трогает; restart тут нельзя —
+# убил бы копирование). Ничего не делает, если каталога рабочего стола нет.
+# ASTRA_ROOT — префикс путей, ASTRA_DESKTOP_DIR — готовый каталог стола:
+# в бою пустые/не заданы, в тестах ведут во временный каталог.
+install_desktop_shortcut() {
+    local root="${ASTRA_ROOT:-}"
+    local desktop_dir="${ASTRA_DESKTOP_DIR:-}"
+    if [ -z "$desktop_dir" ]; then
+        local target_user="${SUDO_USER:-$(whoami)}"
+        local user_home
+        if [ "$target_user" = "root" ]; then
+            user_home="$root/root"
+        else
+            user_home="$root/home/$target_user"
+        fi
+        local candidate
+        for candidate in "$user_home/Desktop" "$user_home/Рабочий стол"; do
+            if [ -d "$candidate" ]; then
+                desktop_dir="$candidate"
+                break
+            fi
+        done
+        if [ -z "$desktop_dir" ] && command -v xdg-user-dir >/dev/null 2>&1; then
+            desktop_dir="$(HOME="$user_home" xdg-user-dir DESKTOP 2>/dev/null || true)"
+            [ "$desktop_dir" = "$user_home" ] && desktop_dir=""
+        fi
+    fi
+    [ -n "$desktop_dir" ] && [ -d "$desktop_dir" ] || return 0
+
+    local shortcut="$desktop_dir/BestCam-USB.desktop"
+    # Имена зашиты буквально, а не из переменных скрипта: функция обязана
+    # работать и отдельно от него (так её гоняют тесты).
+    $SUDO tee "$shortcut" > /dev/null << EOF
+[Desktop Entry]
+Type=Application
+Name=BestCam USB
+Comment=Поднять интерфейс BestCam USB Backup Manager
+Exec=pkexec systemctl start astra-usb-monitor
+TryExec=pkexec
+Icon=/opt/astra-usb-monitor/data/LOGO-1.png
+Terminal=false
+Categories=Utility;
+EOF
+    $SUDO chmod +x "$shortcut"
+    if command -v gio >/dev/null 2>&1; then
+        # «Доверенный» запуск без лишнего вопроса при первом клике.
+        if [ -n "$SUDO" ]; then
+            $SUDO -u "${SUDO_USER:-root}" gio set "$shortcut" metadata::trusted true 2>/dev/null || true
+        fi
+    fi
+    echo "  ярлык на рабочем столе: $shortcut"
+}
+
 # --- 6. Автообновление --------------------------------------------------------
 echo "--- Настройка автообновления с GitHub..."
 $SUDO tee "/etc/systemd/system/astra-usb-update.service" > /dev/null << EOF
@@ -257,6 +314,10 @@ WantedBy=timers.target
 EOF
 $SUDO systemctl daemon-reload
 $SUDO systemctl enable --now astra-usb-update.timer
+
+# --- 7. Ярлык на рабочем столе ------------------------------------------------
+echo "--- Ярлык на рабочем столе..."
+install_desktop_shortcut
 
 # Не рапортуем «Готово», не убедившись, что сервис действительно жив.
 sleep 3
