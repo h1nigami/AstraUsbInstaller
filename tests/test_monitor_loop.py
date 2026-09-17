@@ -120,5 +120,58 @@ class MonitorLoopTest(unittest.TestCase):
                     t.join(timeout=5)
 
 
+class OfflineHoldTest(unittest.TestCase):
+    def test_new_devices_held_then_released(self):
+        """В режиме ожидания офлайн-обновления новые флешки не уходят в
+        бэкап (watcher забирает их сам); после снятия hold — обрабатываются."""
+        seen_devices = []
+        state = {"parts": {}}
+
+        def fake_copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
+            seen_devices.append(devname)
+            return (0, 0, 0)
+
+        def fake_get_partitions():
+            return dict(state["parts"])
+
+        pq = queue.Queue()
+        stop_event = threading.Event()
+        interval = 0.05
+
+        with tempfile.TemporaryDirectory() as mount_base, \
+             tempfile.TemporaryDirectory() as data_dir:
+            db_path = os.path.join(data_dir, "d.db")
+            with mock.patch.object(um.platform, "system", return_value="Linux"), \
+                 mock.patch.object(um, "MOUNT_BASE", mount_base), \
+                 mock.patch.object(um, "DB_PATH", db_path), \
+                 mock.patch.object(um, "_repair_archive_ownership"), \
+                 mock.patch.object(um, "_get_linux_partitions", side_effect=fake_get_partitions), \
+                 mock.patch.object(um, "copy_task_linux", fake_copy_task_linux):
+                um.set_offline_hold(True)
+                try:
+                    t = threading.Thread(
+                        target=um.monitor_usb, args=(interval, stop_event, pq), daemon=True)
+                    t.start()
+                    try:
+                        time.sleep(0.2)
+                        state["parts"] = {"sda1": None}
+                        time.sleep(0.3)
+                        self.assertNotIn("sda1", seen_devices,
+                                         "held device must not be submitted")
+
+                        um.set_offline_hold(False)
+                        deadline = time.time() + 5
+                        while "sda1" not in seen_devices and time.time() < deadline:
+                            time.sleep(0.02)
+                        self.assertIn("sda1", seen_devices,
+                                      "released device must be submitted")
+                    finally:
+                        stop_event.set()
+                        t.join(timeout=5)
+                        self.assertFalse(t.is_alive())
+                finally:
+                    um.set_offline_hold(False)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

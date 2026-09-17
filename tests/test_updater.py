@@ -380,3 +380,128 @@ class ApplyTest(unittest.TestCase):
                 self.assertEqual(stream.read(), "old")
             with open(database) as stream:
                 self.assertEqual(stream.read(), "history")
+
+
+def _write_offline(stick_dir, tag, payload=None, checksum=True, name=None):
+    payload = payload if payload is not None else _make_tarball()
+    name = name or f"astra-usb-monitor-{tag}.tar.gz"
+    tarball = os.path.join(stick_dir, name)
+    with open(tarball, "wb") as stream:
+        stream.write(payload)
+    if checksum:
+        digest = hashlib.sha256(payload).hexdigest()
+        with open(tarball + ".sha256", "w") as stream:
+            stream.write(f"{digest}  {name}\n")
+    return tarball
+
+
+class OfflinePackageTest(unittest.TestCase):
+    def test_find_ignores_non_archive_names(self):
+        with tempfile.TemporaryDirectory() as stick:
+            for name in ("readme.txt", "astra-usb-monitor-v2.0.tar.gz",
+                         "astra-usb-monitor-v1.3.zip", "update.tar.gz"):
+                with open(os.path.join(stick, name), "w") as stream:
+                    stream.write("x")
+            self.assertEqual(updater.find_offline_archives(stick), [])
+
+    def test_find_picks_newest_first(self):
+        with tempfile.TemporaryDirectory() as stick:
+            for tag in ("v1.9", "v1.13", "v1.10"):
+                _write_offline(stick, tag)
+            found = updater.find_offline_archives(stick)
+            self.assertEqual([tag for tag, _path in found],
+                             ["v1.13", "v1.10", "v1.9"])
+
+    def test_find_missing_dir_is_empty(self):
+        self.assertEqual(updater.find_offline_archives("/nonexistent-dir-xyz"), [])
+
+    def test_check_valid_package(self):
+        with tempfile.TemporaryDirectory() as stick:
+            tarball = _write_offline(stick, "v1.13")
+            self.assertEqual(updater.check_offline_package(tarball), ("v1.13", None))
+
+    def test_check_missing_checksum(self):
+        with tempfile.TemporaryDirectory() as stick:
+            tarball = _write_offline(stick, "v1.13", checksum=False)
+            tag, error = updater.check_offline_package(tarball)
+            self.assertIsNone(tag)
+            self.assertIn(".sha256", error)
+
+    def test_check_tampered_archive(self):
+        with tempfile.TemporaryDirectory() as stick:
+            tarball = _write_offline(stick, "v1.13")
+            with open(tarball, "ab") as stream:
+                stream.write(b"tampered")
+            tag, error = updater.check_offline_package(tarball)
+            self.assertIsNone(tag)
+            self.assertTrue(error)
+
+
+class OfflineSpoolTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.spool = os.path.join(self.tmp.name, "spool")
+        self.failed_tag_path = os.path.join(self.tmp.name, "app.failed")
+        self.failed_patcher = mock.patch.object(
+            updater, "FAILED_TAG_FILE", self.failed_tag_path)
+        self.failed_patcher.start()
+        self.addCleanup(self.failed_patcher.stop)
+
+    def _stage(self, tag="v1.13", current=("v1.12", "2026-09-15")):
+        stick = os.path.join(self.tmp.name, "stick")
+        os.makedirs(stick, exist_ok=True)
+        tarball = _write_offline(stick, tag)
+        staged, error = updater.stage_offline_package(tarball, self.spool)
+        self.assertEqual((staged, error), (tag, None))
+        return staged
+
+    def test_main_applies_staged_package_and_clears_spool(self):
+        self._stage()
+        applied = {}
+
+        def fake_apply(src_dir, tag):
+            applied["tag"] = tag
+            applied["has_installer"] = os.path.isfile(
+                os.path.join(src_dir, "install_native.sh"))
+            return 0
+
+        with mock.patch.object(updater, "_apply", side_effect=fake_apply), \
+             mock.patch.object(updater.usb_monitor, "read_version",
+                               return_value=("v1.12", "2026-09-15")), \
+             mock.patch.object(updater.usb_monitor, "is_copying", return_value=False):
+            self.assertEqual(updater.main(spool_dir=self.spool), 0)
+        self.assertEqual(applied["tag"], "v1.13")
+        self.assertTrue(applied["has_installer"])
+        self.assertFalse(os.path.exists(self.spool))
+
+    def test_main_skips_same_version(self):
+        self._stage(tag="v1.12")
+        with mock.patch.object(updater, "_apply") as apply_mock, \
+             mock.patch.object(updater.usb_monitor, "read_version",
+                               return_value=("v1.12", "2026-09-15")), \
+             mock.patch.object(updater.usb_monitor, "is_copying", return_value=False):
+            self.assertEqual(updater.main(spool_dir=self.spool), 0)
+        apply_mock.assert_not_called()
+        self.assertFalse(os.path.exists(self.spool))
+
+    def test_main_defers_while_busy_and_keeps_spool(self):
+        self._stage()
+        with mock.patch.object(updater, "_apply") as apply_mock, \
+             mock.patch.object(updater.usb_monitor, "read_version",
+                               return_value=("v1.12", "2026-09-15")), \
+             mock.patch.object(updater.usb_monitor, "is_copying", return_value=True):
+            self.assertEqual(updater.main(spool_dir=self.spool), 0)
+        apply_mock.assert_not_called()
+        self.assertTrue(os.path.isfile(os.path.join(self.spool, "release.tar.gz")))
+
+    def test_main_skips_failed_tag(self):
+        self._stage()
+        updater._write_failed_tag("v1.13", self.failed_tag_path)
+        with mock.patch.object(updater, "_apply") as apply_mock, \
+             mock.patch.object(updater.usb_monitor, "read_version",
+                               return_value=("v1.12", "2026-09-15")), \
+             mock.patch.object(updater.usb_monitor, "is_copying", return_value=False):
+            self.assertEqual(updater.main(spool_dir=self.spool), 0)
+        apply_mock.assert_not_called()
+        self.assertFalse(os.path.exists(self.spool))

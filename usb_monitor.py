@@ -540,6 +540,15 @@ SERVICE_ID_FILES = {".astra_id", ".bestcam_id"}
 _device_id_lock = threading.Lock()
 _connected_device_ids = {}
 _connected_devices = {}
+# Режим ожидания офлайн-обновления: новые флешки забирает watcher GUI
+# (ищет архив релиза), монитор их не монтирует и не бэкапит.
+_offline_hold = False
+
+
+def set_offline_hold(active):
+    """Включить/выключить приём новых устройств монитором."""
+    global _offline_hold
+    _offline_hold = bool(active)
 
 
 def _positive_id(value):
@@ -1420,6 +1429,9 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
             new_devices = sorted(current_keys - known_keys)
 
             for dev in new_devices:
+                if _offline_hold:
+                    print(f"  New USB held for offline update: {dev}", flush=True)
+                    continue
                 if is_linux:
                     known[dev] = current[dev]
                 else:

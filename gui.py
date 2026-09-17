@@ -12,7 +12,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
+import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -68,6 +69,7 @@ def _is_busy(workers_data):
 
 
 UPDATE_SERVICE = "astra-usb-update.service"
+UPDATE_STARTED = "Проверка обновления запущена"
 
 
 def _start_update_service(runner=subprocess.run):
@@ -84,7 +86,7 @@ def _start_update_service(runner=subprocess.run):
         return f"Не удалось запустить проверку: {e}"
     if result.returncode != 0:
         return "Не удалось запустить проверку обновлений"
-    return "Проверка обновления запущена"
+    return UPDATE_STARTED
 
 
 class App:
@@ -125,6 +127,8 @@ class App:
         self.monitor_thread = None
         self.workers_data = {}
         self.port_assignment = {}
+        self._offline_wait = False
+        self._offline_dlg = None
         self._search_results = []
         self._search_gen = 0
 
@@ -606,7 +610,7 @@ class App:
 
         self._refresh_pw_status()
 
-        reset_frame = ttk.LabelFrame(left, text="Заводской сброс", padding=10)
+        reset_frame = ttk.LabelFrame(right, text="Заводской сброс", padding=10)
         reset_frame.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(reset_frame, text="Удаляет устройства, историю, архив, пароль и настройки.", style="Panel.TLabel").pack(anchor="w")
@@ -656,26 +660,178 @@ class App:
         about = ttk.LabelFrame(left, text="О программе", padding=10)
         about.pack(fill="x", padx=10, pady=5)
         ttk.Label(about, text="BestCam USB Backup Manager", style="Panel.TLabel").pack(anchor="w")
-        ttk.Label(about, text="Автоматическое резервное копирование USB-устройств.", foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w")
-        self._update_status_var = tk.StringVar(value="")
-        ttk.Label(about, textvariable=self._update_status_var,
+        self._about_status_var = tk.StringVar(value="")
+        ttk.Label(about, textvariable=self._about_status_var,
                   foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
-        ttk.Button(about, text="Проверить обновления", command=self._force_update_check).pack(anchor="w", pady=(4, 0))
+        update_btns = ttk.Frame(about, style="Panel.TFrame")
+        update_btns.pack(anchor="w", pady=(4, 0))
+        ttk.Button(update_btns, text="Проверить обновления", command=self._force_update_check).pack(side="left")
+        ttk.Button(update_btns, text="С флешки", command=self._start_offline_update).pack(side="left", padx=(8, 0))
 
     def _force_update_check(self):
         if _is_busy(self.workers_data):
-            self._update_status_var.set("Дождитесь конца сканирования или копирования")
+            self._about_status_var.set("Дождитесь конца сканирования или копирования")
             return
-        self._update_status_var.set("Запуск проверки...")
+        self._about_status_var.set("Запуск проверки...")
 
         def _do():
             msg = _start_update_service()
             try:
-                self._update_status_var.set(msg)
+                self._about_status_var.set(msg)
             except Exception:
                 pass
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _start_offline_update(self):
+        # Режим обновления без интернета: блокируем программу и ждём флешку
+        # с архивом релиза. Саму установку выполняет внешний сервис —
+        # установщик перезапускает сервис приложения и убил бы GUI.
+        if _is_busy(self.workers_data):
+            self._about_status_var.set("Дождитесь конца сканирования или копирования")
+            return
+        C = self.C
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Обновление с флешки")
+        dlg.configure(bg=C["bg_app"])
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        dlg.geometry(f"{sw}x{sh}+0+0")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.wait_visibility(dlg)
+        dlg.grab_set()
+        self._offline_status = tk.StringVar(value="Вставьте флешку с файлом обновления…")
+        box = tk.Frame(dlg, bg=C["bg_app"])
+        box.place(relx=0.5, rely=0.42, anchor="center")
+        tk.Label(box, text="Обновление с флешки", font=("Segoe UI", 24, "bold"),
+                 fg=C["fg_main"], bg=C["bg_app"]).pack(pady=(0, 12))
+        tk.Label(box, text="Дождитесь флешки с обновлением — дальше всё само",
+                 font=("Segoe UI", 14), fg=C["fg_muted"], bg=C["bg_app"]).pack(pady=8)
+        tk.Label(box, textvariable=self._offline_status, font=("Segoe UI", 16, "bold"),
+                 fg=C["brand"], bg=C["bg_app"], wraplength=sw - 100).pack(pady=20)
+        ttk.Button(box, text="Отмена", command=self._cancel_offline_update).pack(pady=20)
+        dlg.protocol("WM_DELETE_WINDOW", self._cancel_offline_update)
+        if self._offline_wait:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+            return
+        self._offline_wait = True
+        self._offline_dlg = dlg
+        threading.Thread(target=self._offline_watch_worker, daemon=True).start()
+
+    def _cancel_offline_update(self):
+        self._offline_wait = False
+        dlg, self._offline_dlg = self._offline_dlg, None
+        if dlg is not None:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+
+    def _monitor_uses_dev(self, devname):
+        for key, data in self.workers_data.items():
+            if key == f"identity:{devname}":
+                return data.get("state_raw") in ("identifying", "scanning", "copying")
+            if isinstance(data, dict) and data.get("devname") == devname:
+                return data.get("state_raw") in ("identifying", "scanning", "copying")
+        return False
+
+    def _offline_roots(self):
+        """[(devname, mountpoint|None)] съёмных носителей, кроме диска архива."""
+        try:
+            if platform.system() == "Windows":
+                roots = [(letter, f"{letter}:\\")
+                         for letter in sorted(get_removable_drives())]
+            else:
+                roots = list(_get_linux_partitions().items())
+        except Exception:
+            return []
+        return [(dev, mp) for dev, mp in roots
+                if not (mp and _is_dest_path(mp))]
+
+    def _offline_watch_worker(self):
+        current = read_version()
+        current_tag = current[0] if current else None
+        last_text = ""
+
+        def say(text):
+            nonlocal last_text
+            if text != last_text:
+                last_text = text
+                try:
+                    self._offline_status.set(text)
+                except Exception:
+                    pass
+
+        owned = {}  # devname -> mountpoint, примонтированные watcher'ом
+        set_offline_hold(True)
+        try:
+            while self._offline_wait:
+                roots = self._offline_roots()
+                for dev in [d for d in owned if d not in dict(roots)]:
+                    _unmount(owned.pop(dev))
+                if not roots:
+                    say("Вставьте флешку с файлом обновления…")
+                for devname, mountpoint in sorted(roots):
+                    if not self._offline_wait:
+                        break
+                    if self._monitor_uses_dev(devname):
+                        continue
+                    scan_mp = mountpoint
+                    if scan_mp is None:
+                        if platform.system() == "Windows":
+                            continue
+                        try:
+                            scan_mp = _mount_device(devname)
+                        except Exception:
+                            scan_mp = None
+                        if not scan_mp:
+                            continue
+                        owned[devname] = scan_mp
+                    found = updater.find_offline_archives(scan_mp)
+                    if not found:
+                        say("На подключённой флешке обновление не найдено")
+                        continue
+                    tag, tarball = found[0]
+                    ok_tag, error = updater.check_offline_package(tarball)
+                    if error:
+                        say(f"Архив {tag}: {error}")
+                        continue
+                    if not updater.needs_update(current_tag, ok_tag):
+                        say(f"Версия {ok_tag} уже установлена")
+                        continue
+                    staged, stage_error = updater.stage_offline_package(tarball)
+                    if devname in owned:
+                        _unmount(owned.pop(devname))
+                    if stage_error:
+                        say(stage_error)
+                        continue
+                    self._offline_wait = False
+                    self.root.after(0, lambda: self._after_offline_kick(ok_tag))
+                    return
+                time.sleep(1.5)
+        finally:
+            set_offline_hold(False)
+            for dev in list(owned):
+                _unmount(owned.pop(dev))
+
+    def _after_offline_kick(self, tag):
+        dlg, self._offline_dlg = self._offline_dlg, None
+        if dlg is not None:
+            try:
+                dlg.destroy()
+            except Exception:
+                pass
+        msg = _start_update_service()
+        if msg == UPDATE_STARTED:
+            self._about_status_var.set(
+                f"Обновление {tag} передано установщику — программа скоро перезапустится")
+        else:
+            updater._clear_offline_spool()
+            self._about_status_var.set(msg)
 
     def _version_text(self):
         v = read_version()

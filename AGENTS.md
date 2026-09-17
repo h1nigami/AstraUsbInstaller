@@ -63,6 +63,7 @@ Four top-level modules:
 
 **`updater.py`** — auto-update, run by a systemd timer (`astra-usb-update.timer`), not from inside the GUI service (so the installer's final `systemctl restart` of the GUI service can't kill an update mid-file-swap)
 - `main()`: reads `VERSION`, polls `releases/latest` of the public `h1nigami/AstraUsbInstaller` repo, compares tags for inequality (not ordering — the point is always brought to whatever GitHub marks latest), skips while `usb_monitor.is_copying()` or while the latest tag is the one already recorded as failed, downloads the release asset + `.sha256` and refuses to install on a mismatch, then hands off to `_apply()`.
+- Offline stations: the Настройки tab has an "Обновление с флешки" button that locks the GUI into a wait mode (`set_offline_hold(True)` stops the monitor from claiming new sticks) and watches for `astra-usb-monitor-vX.tar.gz` + `.sha256` in the stick root (`find_offline_archives` picks newest, `check_offline_package` enforces the checksum). The archive is staged to `APP_DIR.offline` and installed by kicking the same external `astra-usb-update.service` — `main(spool_dir)` applies the spool first with the same busy/failed-tag guards and clears it afterwards. The GUI never installs from inside its own process.
 - `_apply()`: сохраняет код в `APP_DIR.prev`, сбрасывает счётчик перезапусков до установки и запускает `install_native.sh`. Затем проверяет импорт Python, активность службы, отсутствие перезапусков и совпадение `VERSION` с тегом. Любая ошибка сохраняет неудачный тег и вызывает откат; резервная копия удаляется только после всех проверок. `start_native.sh` запускает GUI через `exec`, поэтому systemd видит падения процесса.
 - `_rollback()` restores only `APP_DIR`; the systemd units and udev rule it installs are not reverted (deliberate — see the comment in the function and the spec's rollback section for the ceiling this implies).
 - Only stdlib (`urllib`, `hashlib`, `tarfile`, `shutil`, `subprocess`); no secrets on the point since the repo is public.
@@ -101,7 +102,11 @@ Python устанавливается через `install_native.sh`, C# чер�
   never fails over a missing/malformed version.
 - `install_native.sh` also installs `astra-usb-update.{service,timer}`, a
   systemd timer that runs `updater.py` 10 minutes after boot and every 6h
-  after that, `enable --now`. Installing from a git clone with no tags means
+  after that, `enable --now`, plus a `BestCam-USB.desktop` shortcut on the
+  invoking user's desktop (`install_desktop_shortcut`, honouring `ASTRA_ROOT` /
+  `ASTRA_DESKTOP_DIR` in tests) that brings the GUI back after a password exit
+  via `pkexec systemctl start` — never `restart`, which would kill a copy.
+  Installing from a git clone with no tags means
   no `VERSION`, so the very first tick treats the point as needing an update
   and replaces the local build with whatever is latest on GitHub — the
   installer prints a warning about this when it detects a non-release install.

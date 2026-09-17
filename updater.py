@@ -149,6 +149,122 @@ def _clear_failed_tag(path=None):
         pass
 
 
+#: Маска имени архива офлайн-обновления в корне флешки.
+OFFLINE_ARCHIVE_RE = re.compile(r"astra-usb-monitor-(v1\.[0-9]+(?:\.[0-9]+)*)\.tar\.gz")
+
+#: Спул: сюда GUI складывает архив с флешки, сервис забирает его без сети.
+OFFLINE_SPOOL_DIR = APP_DIR + ".offline"
+
+
+def _version_key(tag):
+    return tuple(int(part) for part in tag[1:].split("."))
+
+
+def find_offline_archives(directory):
+    """Найти архивы обновления в корне directory: [(tag, tarball)], сначала новее.
+
+    Имена строго по маске Python-релизов; чужое игнорируется. Пустой список —
+    это и есть «обновление не найдено».
+    """
+    found = []
+    try:
+        names = os.listdir(directory)
+    except Exception:
+        return []
+    for name in names:
+        match = OFFLINE_ARCHIVE_RE.fullmatch(name)
+        if not match:
+            continue
+        path = os.path.join(directory, name)
+        if os.path.isfile(path):
+            found.append((match.group(1), path))
+    found.sort(key=lambda item: _version_key(item[0]), reverse=True)
+    return found
+
+
+def _verify_checksum_file(tarball_path, sha_path):
+    """None, если сумма сошлась, иначе текст ошибки."""
+    try:
+        with open(sha_path) as stream:
+            expected = parse_sha256(stream.read())
+    except Exception:
+        return "рядом нет файла контрольной суммы (.sha256)"
+    if not expected:
+        return "файл контрольной суммы пуст"
+    try:
+        actual = sha256_of(tarball_path)
+    except Exception as error:
+        return f"архив не читается: {error}"
+    if actual != expected:
+        return "контрольная сумма не сошлась — архив битый"
+    return None
+
+
+def check_offline_package(tarball_path):
+    """(tag, None), если пакет с флешки годен, иначе (None, текст ошибки)."""
+    name = os.path.basename(tarball_path)
+    match = OFFLINE_ARCHIVE_RE.fullmatch(name)
+    if not match:
+        return None, "это не архив обновления"
+    error = _verify_checksum_file(tarball_path, tarball_path + ".sha256")
+    if error:
+        return None, error
+    return match.group(1), None
+
+
+def stage_offline_package(tarball_path, spool_dir=None):
+    """Скопировать архив и сумму с флешки в спул для сервиса.
+
+    Возвращает (tag, None) или (None, текст ошибки). Саму установку
+    по-прежнему выполняет внешний сервис, а не вызывающий процесс.
+    """
+    tag, error = check_offline_package(tarball_path)
+    if error:
+        return None, error
+    dest = spool_dir or OFFLINE_SPOOL_DIR
+    try:
+        os.makedirs(dest, exist_ok=True)
+        shutil.copyfile(tarball_path, os.path.join(dest, "release.tar.gz"))
+        shutil.copyfile(tarball_path + ".sha256",
+                        os.path.join(dest, "release.tar.gz.sha256"))
+        with open(os.path.join(dest, "tag"), "w") as stream:
+            stream.write(tag)
+    except Exception as error:
+        shutil.rmtree(dest, ignore_errors=True)
+        return None, f"не удалось подготовить обновление: {error}"
+    return tag, None
+
+
+def _take_offline_spool(spool_dir=None):
+    """(tag, tarball) из спула или None. Спул чистит вызывающий."""
+    directory = spool_dir or OFFLINE_SPOOL_DIR
+    try:
+        with open(os.path.join(directory, "tag")) as stream:
+            tag = stream.read().strip()
+    except Exception:
+        return None
+    if not re.fullmatch(r"v1\.[0-9]+(?:\.[0-9]+)*", tag or ""):
+        return None
+    tarball = os.path.join(directory, "release.tar.gz")
+    if not os.path.isfile(tarball):
+        return None
+    return tag, tarball
+
+
+def _clear_offline_spool(spool_dir=None):
+    shutil.rmtree(spool_dir or OFFLINE_SPOOL_DIR, ignore_errors=True)
+
+
+def _extract_src_dir(archive, tmp):
+    unpacked = os.path.join(tmp, "src")
+    with tarfile.open(archive) as tar:
+        tar.extractall(unpacked)
+    roots = [os.path.join(unpacked, name) for name in os.listdir(unpacked)]
+    if len(roots) == 1 and os.path.isdir(roots[0]):
+        return roots[0]
+    return unpacked
+
+
 def _rollback():
     """
     ponytail: откатывается только APP_DIR — юниты systemd
@@ -206,9 +322,40 @@ def _apply(src_dir, tag):
     return 0
 
 
-def main():
+def main(spool_dir=None):
     current = usb_monitor.read_version()
     current_tag = current[0] if current else None
+
+    offline = _take_offline_spool(spool_dir)
+    if offline is not None:
+        tag, tarball = offline
+        error = _verify_checksum_file(
+            tarball, os.path.join(spool_dir or OFFLINE_SPOOL_DIR,
+                                  "release.tar.gz.sha256"))
+        if error:
+            _log(f"офлайн-пакет битый ({error}) — пропуск")
+            _clear_offline_spool(spool_dir)
+            return 0
+        if not needs_update(current_tag, tag):
+            _log(f"офлайн-пакет {tag} уже установлен")
+            _clear_offline_spool(spool_dir)
+            return 0
+        if tag == _read_failed_tag():
+            _log(f"офлайн-пакет {tag} уже откатывали — пропуск")
+            _clear_offline_spool(spool_dir)
+            return 0
+        if usb_monitor.is_copying():
+            _log("идёт копирование — офлайн-обновление отложено")
+            return 0
+        with tempfile.TemporaryDirectory() as tmp:
+            src_dir = _extract_src_dir(tarball, tmp)
+            if usb_monitor.is_copying():
+                _log("копирование началось — офлайн-обновление отложено")
+                return 0
+            _log(f"ставим офлайн {tag} (было {current_tag})")
+            rc = _apply(src_dir, tag)
+            _clear_offline_spool(spool_dir)
+            return rc
 
     try:
         release = json.loads(_fetch(LATEST_URL))
@@ -249,11 +396,7 @@ def main():
             _log("контрольная сумма не сошлась — архив не установлен")
             return 0
 
-        unpacked = os.path.join(tmp, "src")
-        with tarfile.open(archive) as tar:
-            tar.extractall(unpacked)
-        roots = [os.path.join(unpacked, n) for n in os.listdir(unpacked)]
-        src_dir = roots[0] if len(roots) == 1 and os.path.isdir(roots[0]) else unpacked
+        src_dir = _extract_src_dir(archive, tmp)
 
         # is_copying() проверялся ещё до скачивания архива — за это время
         # (до 300с на архив + время на сумму и распаковку) могла начаться
