@@ -11,6 +11,8 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import usb_monitor as um
+
 try:
     import gui as gui_mod
     _HAS_TK = True
@@ -24,7 +26,8 @@ class GuiConfigTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.cfg_path = os.path.join(self.tmpdir.name, "config.json")
-        self._patcher = mock.patch.object(gui_mod, "CONFIG_PATH", self.cfg_path)
+        # GUI больше не хранит своей копии чтения-записи конфигурации.
+        self._patcher = mock.patch.object(um, "_CONFIG_PATH", self.cfg_path)
         self._patcher.start()
 
     def tearDown(self):
@@ -35,7 +38,7 @@ class GuiConfigTest(unittest.TestCase):
         self.assertEqual(gui_mod._load_config(), {})
 
     def test_save_then_load_roundtrip(self):
-        gui_mod._save_config({"a": 1})
+        um._save_config({"a": 1})
         self.assertEqual(gui_mod._load_config(), {"a": 1})
 
     def test_get_exit_password_defaults_from_env_and_persists(self):
@@ -45,12 +48,12 @@ class GuiConfigTest(unittest.TestCase):
         self.assertEqual(gui_mod._load_config()["exit_password"], "hunter2")
 
     def test_get_exit_password_prefers_saved_value_over_env(self):
-        gui_mod._save_config({"exit_password": "saved"})
+        um._save_config({"exit_password": "saved"})
         with mock.patch.dict(os.environ, {"APP_EXIT_PASSWORD": "other"}):
             self.assertEqual(gui_mod._get_exit_password(), "saved")
 
     def test_set_exit_password_overwrites_and_preserves_other_keys(self):
-        gui_mod._save_config({"backup_dest": "/x"})
+        um._save_config({"backup_dest": "/x"})
         gui_mod._set_exit_password("newpw")
         cfg = gui_mod._load_config()
         self.assertEqual(cfg["exit_password"], "newpw")

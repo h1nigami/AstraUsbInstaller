@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import platform
 import queue
 import shutil
@@ -12,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives, _load_config, update_config, _DEST_CFG_KEYS, _CONFIG_PATH as CONFIG_PATH
 import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
@@ -25,37 +24,21 @@ except ImportError:
     _HAVE_PIL = False
 
 POLL_MS = 200
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
-
-
-def _load_config():
-    try:
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_config(cfg):
-    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f)
+# Чтение и запись config.json живут в usb_monitor: две независимые реализации
+# поверх одного файла затирали ключи друг друга.
 
 
 def _get_exit_password():
-    cfg = _load_config()
-    pw = cfg.get("exit_password")
+    pw = _load_config().get("exit_password")
     if pw:
         return pw
     default = os.environ.get("APP_EXIT_PASSWORD", "exit")
-    _save_config({**cfg, "exit_password": default})
+    update_config({"exit_password": default})
     return default
 
 
 def _set_exit_password(new_pw):
-    cfg = _load_config()
-    cfg["exit_password"] = new_pw
-    _save_config(cfg)
+    update_config({"exit_password": new_pw})
 
 
 def _is_busy(workers_data):
@@ -865,9 +848,7 @@ class App:
             messagebox.showwarning("Ошибка", "Введите целое число минут")
             return
         self._lock_timeout = minutes * 60
-        cfg = _load_config()
-        cfg["lock_timeout_minutes"] = minutes
-        _save_config(cfg)
+        update_config({"lock_timeout_minutes": minutes})
         self._refresh_timeout_status()
 
     def _save_cleanup_settings(self):
@@ -880,10 +861,8 @@ class App:
             return
         self._cleanup_enabled = self._cleanup_enabled_var.get()
         self._cleanup_days = days
-        cfg = _load_config()
-        cfg["auto_cleanup_enabled"] = self._cleanup_enabled
-        cfg["auto_cleanup_days"] = days
-        _save_config(cfg)
+        update_config({"auto_cleanup_enabled": self._cleanup_enabled,
+                       "auto_cleanup_days": days})
         self._cleanup_status_var.set("Настройки сохранены")
 
     def _run_startup_cleanup(self):
@@ -942,7 +921,9 @@ class App:
                     os.remove(CONFIG_PATH)
                 except OSError:
                     pass
-            except OSError as e:
+            except Exception as e:
+                # Ловим всё: sqlite3.Error не наследник OSError, и раньше
+                # такой сбой убивал поток молча, оставляя статус «Сброс...».
                 self.root.after(0, lambda: self._finish_factory_reset(None, str(e)))
             else:
                 self.root.after(0, lambda: self._finish_factory_reset(result, None))
@@ -987,11 +968,8 @@ class App:
                 f"Папка недоступна для записи:\n{new_path}\n\n"
                 f"Убедитесь, что диск подключён и смонтирован.")
             return
-        cfg = _load_config()
-        for key in ("backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial"):
-            cfg.pop(key, None)
-        cfg.update(describe_dest_path(new_path))
-        _save_config(cfg)
+        update_config(describe_dest_path(new_path),
+                      drop=("backup_dest",) + _DEST_CFG_KEYS)
         self.backup_dest_var.set(new_path)
         messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
 
@@ -1086,14 +1064,22 @@ class App:
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
     def _get_db(self):
-        return sqlite3.connect(DB_PATH)
+        # Тот же запас ожидания, что и у воркеров: иначе кнопка интерфейса
+        # отваливается по «database is locked», пока идёт копирование.
+        return sqlite3.connect(DB_PATH, timeout=30)
 
     def _device_label(self, dev_id):
-        conn = self._get_db()
+        # Подпись вызывается до собственных try в обработчиках кнопок,
+        # поэтому ошибка базы здесь не должна ронять обработчик целиком.
+        row = None
         try:
-            row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
-        finally:
-            conn.close()
+            conn = self._get_db()
+            try:
+                row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            print(f"Не прочитано имя устройства {dev_id}: {e}", flush=True)
         name = (row[0] if row else "") or ""
         return _short_device_label(dev_id, name)
 
