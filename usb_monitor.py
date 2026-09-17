@@ -562,6 +562,13 @@ def _positive_id(value):
 
 
 def _id_from_latest_log(mountpoint):
+    """ID из последней строки "#ID:" в самом свежем файле LOG.
+
+    Только самый свежий файл — более старые не подставляются вместо него,
+    иначе за отсутствие номера в актуальном логе выдался бы номер из
+    устаревшей записи. Ошибка чтения/декодирования этого файла — тоже
+    повод остановиться, а не тихо перейти к записям в DCIM.
+    """
     log_dir = os.path.join(mountpoint, "LOG")
     if not os.path.isdir(log_dir):
         return None
@@ -571,20 +578,16 @@ def _id_from_latest_log(mountpoint):
                        key=os.path.getmtime, reverse=True)
         if not files:
             return None
-        for path in files:
-            try:
-                with open(path, encoding="utf-8", errors="ignore") as stream:
-                    lines = stream.readlines()
-                for line in reversed(lines):
-                    if "#ID:" in line:
-                        tokens = line.partition("#ID:")[2].split()
-                        val = _positive_id(tokens[0] if tokens else "")
-                        if val:
-                            return val
-            except Exception:
-                continue
+        with open(files[0], encoding="utf-8") as stream:
+            lines = stream.readlines()
     except (OSError, UnicodeError) as error:
         raise OSError("Не удалось прочитать журнал регистратора") from error
+    for line in reversed(lines):
+        if "#ID:" in line:
+            tokens = line.partition("#ID:")[2].split()
+            val = _positive_id(tokens[0] if tokens else "")
+            if val:
+                return val
     return None
 
 

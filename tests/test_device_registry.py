@@ -51,7 +51,10 @@ class DeviceIdentityReaderTest(unittest.TestCase):
                     pass
             self.assertEqual(um._read_device_id(mount), 7654321)
 
-    def test_conflicting_log_and_recording_ids_are_rejected(self):
+    def test_log_id_wins_over_conflicting_recording_id(self):
+        """Записи на карте могут быть старыми (карту переставили с другого
+        регистратора) — журнал считается более надёжным источником и
+        побеждает без ошибки при расхождении."""
         with tempfile.TemporaryDirectory() as mount:
             os.makedirs(os.path.join(mount, "LOG"))
             os.makedirs(os.path.join(mount, "DCIM"))
@@ -59,8 +62,7 @@ class DeviceIdentityReaderTest(unittest.TestCase):
                 out.write("#ID:1234567\n")
             with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
                 pass
-            with self.assertRaisesRegex(OSError, "Разные ID"):
-                um._read_device_id(mount)
+            self.assertEqual(um._read_device_id(mount), 1234567)
 
     def test_empty_id_in_log_is_reported_as_missing(self):
         with tempfile.TemporaryDirectory() as mount:
