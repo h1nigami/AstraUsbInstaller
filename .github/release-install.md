@@ -68,3 +68,20 @@ sudo systemctl disable --now astra-usb-monitor   # удалить из авто�
 ```
 
 После выхода из программы по паролю сервис намеренно не перезапускается — иначе выйти из киоска было бы невозможно. Вернуть интерфейс: перезагрузка или `sudo systemctl start astra-usb-monitor`.
+
+## Удаление
+
+Удаляет сервис, таймер, правило udev, саму программу в `/opt` вместе с базой и настройками, а также ярлык с рабочего стола. Диск с копиями (если выбирали внешний) не трогается.
+
+```bash
+sudo systemctl disable --now astra-usb-monitor astra-usb-update.timer || true
+sudo rm -f /etc/systemd/system/astra-usb-monitor.service \
+  /etc/systemd/system/astra-usb-update.service \
+  /etc/systemd/system/astra-usb-update.timer \
+  /etc/udev/rules.d/99-astra-usb-monitor-udisks.rules \
+  ~/Desktop/BestCam-USB.desktop "$HOME/Рабочий стол/BestCam-USB.desktop"
+sudo rm -rf /opt/astra-usb-monitor /opt/astra-usb-monitor.prev \
+  /opt/astra-usb-monitor.failed /opt/astra-usb-monitor.offline
+sudo systemctl daemon-reload
+sudo udevadm control --reload-rules
+```
