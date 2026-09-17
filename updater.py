@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tarfile
@@ -81,6 +82,21 @@ def _fetch(url, timeout=15):
     req = urllib.request.Request(url, headers={"User-Agent": "astra-usb-monitor"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+def has_network(timeout=5):
+    """Быстрая проверка, что до api.github.com можно достучаться.
+
+    Не заменяет саму проверку релиза (TCP-порт может быть открыт, а HTTPS —
+    подменён), но отдельно отличает «сети нет вообще» от прочих ошибок и не
+    требует загрузки JSON, чтобы GUI могло сразу сказать пользователю
+    причину вместо общего «не удалось».
+    """
+    try:
+        with socket.create_connection(("api.github.com", 443), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def _log(msg):
