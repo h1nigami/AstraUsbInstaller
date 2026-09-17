@@ -70,7 +70,7 @@ class UpdateCheckTest(unittest.TestCase):
             calls.append(cmd)
             return self._Result(0)
 
-        self.assertEqual(gui_mod._start_update_service(fake_runner),
+        self.assertEqual(gui_mod._start_update_service(fake_runner, network_check=lambda: True),
                          "Проверка обновления запущена")
         self.assertEqual(calls[0][:3], ["systemctl", "start", "astra-usb-update.service"])
 
@@ -78,15 +78,26 @@ class UpdateCheckTest(unittest.TestCase):
         def fake_runner(cmd, timeout):
             return self._Result(1)
 
-        self.assertEqual(gui_mod._start_update_service(fake_runner),
+        self.assertEqual(gui_mod._start_update_service(fake_runner, network_check=lambda: True),
                          "Не удалось запустить проверку обновлений")
 
     def test_missing_systemd_reports_gracefully(self):
         def fake_runner(cmd, timeout):
             raise FileNotFoundError("systemctl")
 
-        self.assertEqual(gui_mod._start_update_service(fake_runner),
+        self.assertEqual(gui_mod._start_update_service(fake_runner, network_check=lambda: True),
                          "Проверка недоступна: нет systemd")
+
+    def test_no_network_skips_systemctl_entirely(self):
+        calls = []
+
+        def fake_runner(cmd, timeout):
+            calls.append(cmd)
+            return self._Result(0)
+
+        self.assertEqual(gui_mod._start_update_service(fake_runner, network_check=lambda: False),
+                         "Нет подключения к интернету")
+        self.assertEqual(calls, [])
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")

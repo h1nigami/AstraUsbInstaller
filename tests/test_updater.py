@@ -505,3 +505,17 @@ class OfflineSpoolTest(unittest.TestCase):
             self.assertEqual(updater.main(spool_dir=self.spool), 0)
         apply_mock.assert_not_called()
         self.assertFalse(os.path.exists(self.spool))
+
+
+class HasNetworkTest(unittest.TestCase):
+    def test_true_when_connection_succeeds(self):
+        with mock.patch.object(updater.socket, "create_connection") as connect:
+            connect.return_value.__enter__ = mock.Mock(return_value=None)
+            connect.return_value.__exit__ = mock.Mock(return_value=False)
+            self.assertTrue(updater.has_network())
+        connect.assert_called_once_with(("api.github.com", 443), timeout=5)
+
+    def test_false_on_os_error(self):
+        with mock.patch.object(updater.socket, "create_connection",
+                               side_effect=OSError("no route to host")):
+            self.assertFalse(updater.has_network())

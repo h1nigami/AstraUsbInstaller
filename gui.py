@@ -70,14 +70,20 @@ def _is_busy(workers_data):
 
 UPDATE_SERVICE = "astra-usb-update.service"
 UPDATE_STARTED = "Проверка обновления запущена"
+NO_NETWORK = "Нет подключения к интернету"
 
 
-def _start_update_service(runner=subprocess.run):
+def _start_update_service(runner=subprocess.run, network_check=updater.has_network):
     """Пнуть внешний юнит проверки обновлений (oneshot, вне сервиса GUI).
 
     Саму установку GUI не выполняет: установщик в конце перезапускает сервис
-    приложения и убил бы себя посреди подмены файлов. Возвращает текст статуса.
+    приложения и убил бы себя посреди подмены файлов. Сеть проверяется здесь
+    же — без неё сам updater.py молча завершится "успешно" (чтобы таймер не
+    ругался каждые 6 часов), и кнопка иначе показала бы то же самое "Проверка
+    обновления запущена", что и при настоящей проверке. Возвращает текст статуса.
     """
+    if not network_check():
+        return NO_NETWORK
     try:
         result = runner(["systemctl", "start", UPDATE_SERVICE], timeout=60)
     except FileNotFoundError:
