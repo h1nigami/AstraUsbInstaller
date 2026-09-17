@@ -90,7 +90,6 @@ def factory_reset(db_path=None, dest_base=None):
     """
     if is_copying():
         raise OSError("Сброс невозможен: идёт сканирование или копирование")
-    db_path = db_path or DB_PATH
     try:
         dest = dest_base or get_dest_base()
     except Exception:
@@ -197,6 +196,12 @@ def update_config(changes=None, drop=()):
     """
     with _config_lock:
         cfg = _load_config()
+        if cfg.get(_CONFIG_BROKEN) and "backup_dest" not in (changes or {}):
+            # Файл не прочитался, а перезапись выбросила бы уцелевшие ключи —
+            # в том числе backup_dest, из-за чего dest_available снова начала
+            # бы разрешать запись мимо диска назначения. Исключение только для
+            # явного выбора папки оператором: он сам задаёт потерянный ключ.
+            return False
         for key in drop:
             cfg.pop(key, None)
         cfg.update(changes or {})
@@ -1502,12 +1507,11 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     known.pop(dev, None)
                 else:
                     known.discard(dev)
-                fut = active.get(dev)
-                if fut is None or fut.done():
-                    active.pop(dev, None)
-                # Работающего воркера из active не убираем: он ещё пишет и
-                # удаляет в той же точке монтирования, и то же имя устройства,
-                # доставшееся новой флешке, не должно поднять второго такого же.
+                # active не трогаем: сборщик в начале тика сам снимет
+                # завершившийся future вместе с его result(). Пока воркер жив,
+                # он пишет и удаляет в той же точке монтирования, и то же имя
+                # устройства, доставшееся новой флешке, не должно поднять
+                # второго такого же.
                 dn = os.path.basename(dev)
                 if progress_queue is not None:
                     try:
@@ -1522,8 +1526,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                 if _offline_hold:
                     print(f"  New USB held for offline update: {dev}", flush=True)
                     continue
-                fut = active.get(dev)
-                if fut is not None and not fut.done():
+                if active.get(dev) is not None:
                     # Прежний воркер с этим именем ещё копирует — подождём
                     # следующего опроса, устройство останется «новым».
                     print(f"  Waiting for previous worker: {dev}", flush=True)
