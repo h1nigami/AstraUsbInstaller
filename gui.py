@@ -25,12 +25,12 @@ except ImportError:
 
 POLL_MS = 200
 # Сколько плитка ждёт возвращения устройства, прежде чем погаснуть.
-# После сбоя шины карта возвращается под другим именем: по журналам станции
-# на переобнаружение и чтение ID уходит шесть-десять секунд, пятнадцать —
-# с запасом. Карту, вынутую руками, держать незачем: оператор сам её вынул
-# и ждать возвращения не должен.
-DETACH_GRACE = 15
-DETACH_GRACE_PULLED = 5
+# Фиксированный срок тут не работает: после сбоя шины карты возвращаются
+# кто через десять секунд, кто через минуту — станция успевает опознать их
+# только по очереди. Поэтому основной признак другой: пока идёт опознание,
+# карты ещё едут и плитки держатся. Сроки ниже — только границы.
+DETACH_GRACE_PULLED = 5    # опознавать некого, карту просто вынули
+DETACH_GRACE_MAX = 150     # потолок, чтобы плитка не висела вечно
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
@@ -64,22 +64,25 @@ def _set_exit_password(new_pw):
     _save_config(cfg)
 
 
-def _detached_too_long(workers_data, now, grace=None, pulled_grace=None):
-    """Номера устройств, которые пропали и не вернулись за отведённое время.
+def _detached_too_long(workers_data, now, pulled_grace=None, max_grace=None):
+    """Номера устройств, чьи плитки пора погасить.
 
-    Чистая функция ради тестов без окна. Сроки разные: снесённую сбоем шины
-    карту ждём, пока она вернётся под новым именем, а вынутую руками гасим
-    почти сразу — иначе оператор смотрит на серую плитку и думает, что
-    станция зависла.
+    Чистая функция ради тестов без окна. Пока станция кого-то опознаёт,
+    карты после сбоя шины ещё возвращаются — плитки держим, сколько бы это
+    ни заняло, но не дольше потолка. Опознавать некого: карту просто вынули,
+    и держать серую плитку незачем — оператор сам её достал.
     """
-    limit = DETACH_GRACE if grace is None else grace
     quick = DETACH_GRACE_PULLED if pulled_grace is None else pulled_grace
+    ceiling = DETACH_GRACE_MAX if max_grace is None else max_grace
+    returning = any(data.get("state_raw") == "identifying"
+                    for data in workers_data.values())
     gone = []
     for did, data in workers_data.items():
         since = data.get("detached_at")
         if not since:
             continue
-        if now - since > (limit if data.get("detached_glitch") else quick):
+        waited = now - since
+        if waited > ceiling or (not returning and waited > quick):
             gone.append(did)
     return gone
 
@@ -1490,7 +1493,12 @@ class App:
                     pending_id = f"identity:{devname}"
                     self.workers_data.pop(pending_id, None)
                     if pending_id in self.port_assignment:
-                        self.port_assignment[device_id] = self.port_assignment.pop(pending_id)
+                        freed = self.port_assignment.pop(pending_id)
+                        # Если плитка этого устройства уже где-то есть, оставляем
+                        # её на месте: иначе гнездо переезжает, а в старом
+                        # остаётся вторая плитка с тем же номером — мёртвая.
+                        if device_id not in self.port_assignment:
+                            self.port_assignment[device_id] = freed
 
                 previous = self.workers_data.get(device_id, {})
                 self.workers_data[device_id] = {

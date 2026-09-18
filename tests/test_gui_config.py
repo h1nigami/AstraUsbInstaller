@@ -120,16 +120,24 @@ class DetachedTileTest(unittest.TestCase):
         data = {7: {"state_raw": "copying", "devname": "sdf"}}
         self.assertEqual(gui_mod._detached_too_long(data, now=1000.0), [])
 
-    def test_glitched_device_is_waited_for(self):
-        data = {7: {"state_raw": "detached", "detached_at": 1000.0, "detached_glitch": True}}
-        self.assertEqual(gui_mod._detached_too_long(data, now=1010.0), [])
-
-    def test_glitched_device_purged_after_grace(self):
-        data = {7: {"state_raw": "detached", "detached_at": 1000.0, "detached_glitch": True}}
-        self.assertEqual(gui_mod._detached_too_long(data, now=1020.0), [7])
+    def test_waits_while_station_identifies_returning_cards(self):
+        """Идёт опознание — карты после сбоя ещё возвращаются, плитки держим."""
+        data = {
+            7: {"state_raw": "detached", "detached_at": 1000.0},
+            "identity:sdf": {"state_raw": "identifying"},
+        }
+        self.assertEqual(gui_mod._detached_too_long(data, now=1060.0), [])
 
     def test_pulled_device_clears_quickly(self):
-        """Карту вынул оператор — держать серую плитку незачем."""
+        """Опознавать некого — карту просто вынули, серую плитку не держим."""
         data = {7: {"state_raw": "detached", "detached_at": 1000.0}}
         self.assertEqual(gui_mod._detached_too_long(data, now=1004.0), [])
         self.assertEqual(gui_mod._detached_too_long(data, now=1007.0), [7])
+
+    def test_ceiling_applies_even_while_identifying(self):
+        """Потолок обязателен: иначе зависшее опознание держит плитку вечно."""
+        data = {
+            7: {"state_raw": "detached", "detached_at": 1000.0},
+            "identity:sdf": {"state_raw": "identifying"},
+        }
+        self.assertEqual(gui_mod._detached_too_long(data, now=1000.0 + 200), [7])
