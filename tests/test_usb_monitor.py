@@ -294,3 +294,39 @@ class SourceGoneTest(BusResetTest):
                 src, dst, lambda p: p == bad)
             self.assertEqual(failed, 1, "пропавший файл при живой карте — не потеря носителя")
             self.assertEqual(copied, 9)
+
+
+class CardReturnTest(unittest.TestCase):
+    """Карту сбросило шиной — воркер ждёт её возвращения и продолжает работу,
+    а второй воркер на ту же карту не поднимается."""
+
+    def setUp(self):
+        um._awaiting_cards.clear()
+        self.addCleanup(um._awaiting_cards.clear)
+
+    def test_awaited_card_is_not_picked_up_twice(self):
+        um._await_card_register("C23E-1A23", 60)
+        self.assertTrue(um._card_is_awaited("C23E-1A23"))
+        self.assertFalse(um._card_is_awaited("DFDD-190B"))
+
+    def test_expired_wait_releases_card(self):
+        um._await_card_register("C23E-1A23", 60)
+        um._awaiting_cards["C23E-1A23"] = time.time() - 1
+        self.assertFalse(um._card_is_awaited("C23E-1A23"), "просроченное ожидание не держит карту")
+        self.assertNotIn("C23E-1A23", um._awaiting_cards)
+
+    def test_card_without_uuid_is_never_awaited(self):
+        um._await_card_register(None, 60)
+        self.assertFalse(um._card_is_awaited(None))
+        self.assertEqual(um._awaiting_cards, {})
+
+    def test_wait_returns_new_devname_of_same_card(self):
+        with mock.patch.object(um, "_get_linux_partitions", lambda: {"sdf": None, "sdg": None}), \
+             mock.patch.object(um, "_get_filesystem_uuid",
+                               lambda dev: "C23E-1A23" if dev == "/dev/sdg" else "OTHER"):
+            self.assertEqual(um._wait_for_card("C23E-1A23", timeout=5), "sdg")
+
+    def test_wait_gives_up_when_card_does_not_return(self):
+        with mock.patch.object(um, "_get_linux_partitions", lambda: {}), \
+             mock.patch.object(um, "_get_filesystem_uuid", lambda dev: None):
+            self.assertIsNone(um._wait_for_card("C23E-1A23", timeout=0.1))

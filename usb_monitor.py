@@ -35,6 +35,12 @@ BUS_GLITCH_GRACE = float(os.environ.get("USB_BUS_GLITCH_GRACE", "20"))
 # всю карту бессмысленно — это минуты впустую и простыня в журнале вместо
 # одного внятного сообщения оператору.
 IO_ERRORS_TO_GIVE_UP = int(os.environ.get("USB_IO_ERRORS_LIMIT", "5"))
+# Сколько ждать возвращения карты, которую сбросило шиной, и сколько раз
+# пробовать. Хаб отдаёт устройство обратно под новым именем, и по журналам
+# станции на это уходит до минуты. Ждать дешевле, чем бросать работу: копия
+# продолжается с того же места, а оператор видит одну плитку, а не цирк.
+CARD_RETURN_WAIT = float(os.environ.get("USB_CARD_RETURN_WAIT", "120"))
+CARD_RETURN_RETRIES = int(os.environ.get("USB_CARD_RETURN_RETRIES", "3"))
 # Носитель отвечает ошибкой — сброшен шиной, но ещё числится подключённым.
 # EREMOTEIO есть не на всех платформах, поэтому берём его осторожно.
 _LOST_DEVICE_ERRNOS = {errno.EIO, errno.ENODEV, errno.ENXIO,
@@ -61,6 +67,70 @@ VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
 
 class DeviceLost(OSError):
     """Носитель пропал или сброшен шиной — читать с него больше нечего."""
+
+
+_awaiting_cards = {}
+_awaiting_lock = threading.Lock()
+
+
+def _await_card_register(fs_uuid, seconds):
+    """Пометить карту как ожидаемую: пока метка здесь, новый воркер на неё
+    не поднимается — её доигрывает тот, кто уже начал."""
+    if fs_uuid:
+        with _awaiting_lock:
+            _awaiting_cards[fs_uuid] = time.time() + seconds
+
+
+def _await_card_clear(fs_uuid):
+    if fs_uuid:
+        with _awaiting_lock:
+            _awaiting_cards.pop(fs_uuid, None)
+
+
+def _card_is_awaited(fs_uuid):
+    if not fs_uuid:
+        return False
+    with _awaiting_lock:
+        until = _awaiting_cards.get(fs_uuid)
+        if until and until > time.time():
+            return True
+        _awaiting_cards.pop(fs_uuid, None)
+        return False
+
+
+def _find_card_by_uuid(fs_uuid):
+    """Имя устройства, под которым сейчас видна карта с этой меткой."""
+    if not fs_uuid:
+        return None
+    for devname in _get_linux_partitions():
+        if _get_filesystem_uuid(f"/dev/{devname}") == fs_uuid:
+            return devname
+    return None
+
+
+def _wait_for_card(fs_uuid, timeout, stop_check=None):
+    """Дождаться возвращения той же карты под любым именем устройства."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if stop_check is not None and stop_check():
+            return None
+        devname = _find_card_by_uuid(fs_uuid)
+        if devname:
+            return devname
+        time.sleep(2)
+    return None
+
+
+def _mountpoint_for(devname):
+    """Точка монтирования устройства: чужая, если система уже смонтировала,
+    иначе своя. Возвращает (точка, надо ли отмонтировать самим)."""
+    existing = _wait_for_system_mount(devname, MOUNT_GRACE_SECONDS)
+    if existing:
+        return existing, False
+    mp = _mount_device(devname)
+    if mp is None:
+        return None, False
+    return mp, _is_own_mount(mp)
 
 
 def _source_gone(src_root):
@@ -1438,10 +1508,44 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
+        # Карту может сбросить шиной посреди копирования: хаб передёргивает
+        # соседние порты, когда из него вынимают другое устройство. Бросать
+        # работу нельзя — оператор не виноват, что хаб так себя ведёт. Ждём
+        # ту же карту (узнаём по метке файловой системы, имя устройства при
+        # этом меняется) и продолжаем с того же места: уже скопированные
+        # файлы пропускаются по размеру и времени.
+        fs_uuid = _get_filesystem_uuid(f"/dev/{devname}") if is_linux else None
+        attempt = 0
         try:
-            copied_files, copied_bytes, backed_up, failed = _copy_files(
-                mountpoint, dest, ts, friendly, total_files, total_bytes,
-                progress_obj, task_id, start_time, emit_fn=_emit)
+            while True:
+                try:
+                    copied_files, copied_bytes, backed_up, failed = _copy_files(
+                        mountpoint, dest, ts, friendly, total_files, total_bytes,
+                        progress_obj, task_id, start_time, emit_fn=_emit)
+                    break
+                except DeviceLost as lost:
+                    attempt += 1
+                    if not fs_uuid or attempt > CARD_RETURN_RETRIES:
+                        raise
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: карту сбросило "
+                          f"шиной ({lost}), ждём возвращения", flush=True)
+                    _emit("detached", 0, total_bytes,
+                          "Устройство переподключается, копирование продолжится")
+                    _await_card_register(fs_uuid, CARD_RETURN_WAIT)
+                    returned = _wait_for_card(fs_uuid, CARD_RETURN_WAIT)
+                    if not returned:
+                        _await_card_clear(fs_uuid)
+                        raise
+                    if should_unmount:
+                        _unmount(mountpoint)
+                    mountpoint, should_unmount = _mountpoint_for(returned)
+                    if mountpoint is None:
+                        _await_card_clear(fs_uuid)
+                        raise
+                    devname = returned
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: карта вернулась "
+                          f"как {returned}, копирование продолжается", flush=True)
+                    _emit("copying", 0, total_bytes, f"Копирование ID {_label()}")
         except DeviceLost as error:
             # Носитель сброшен шиной или выдернут. Дальше читать нечего, а с
             # источника ничего не удаляем: доехавшее останется и на карте.
@@ -1491,6 +1595,8 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         return device_id, copied_files, copied_bytes
     finally:
+        if is_linux:
+            _await_card_clear(_get_filesystem_uuid(f"/dev/{devname}"))
         conn.close()
 
 
@@ -1500,6 +1606,11 @@ def copy_task_windows(drive_letter, progress_obj, task_id, progress_queue=None):
 
 
 def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
+    # Ту же карту уже доигрывает воркер, потерявший её при сбросе шины:
+    # второй на неё не поднимаем, иначе два потока полезут в одну папку.
+    if _card_is_awaited(_get_filesystem_uuid(f"/dev/{devname}")):
+        print(f"  Карта {devname} возвращается к прежней выгрузке", flush=True)
+        return 0, 0, 0
     should_unmount = False
     if not (mountpoint and os.path.ismount(mountpoint)):
         # The lsblk mountpoint captured at detection can be stale: the desktop
