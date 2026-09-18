@@ -50,5 +50,10 @@ jobs:
           if ! grep -q '^## Установка$' /tmp/body.md; then
             printf '\n' >> /tmp/body.md
             cat .github/release-install.md >> /tmp/body.md
-            gh release edit "$TAG" --notes-file /tmp/body.md
+            # Только тело описания. `gh release edit` заодно переставляет
+            # метку latest на редактируемый релиз — так выпуск, специально
+            # опубликованный без неё, молча забирал её себе, и станции
+            # уезжали на версию, которую ещё не проверяли.
+            ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" -q .id)
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat /tmp/body.md)" > /dev/null
           fi
