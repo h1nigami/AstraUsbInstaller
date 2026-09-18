@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset
+from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -653,6 +653,16 @@ class App:
         ttk.Label(cleanup_frame, textvariable=self._cleanup_status_var,
                   foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
 
+        logs_frame = ttk.LabelFrame(right, text="Диагностика", padding=10)
+        logs_frame.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(logs_frame, text="Журнал, версия и сводка — без имён и людей.",
+                  style="Panel.TLabel").pack(anchor="w")
+        self._logs_status_var = tk.StringVar(value="")
+        ttk.Label(logs_frame, textvariable=self._logs_status_var,
+                  foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(4, 8))
+        ttk.Button(logs_frame, text="Выгрузить логи", command=self._export_logs).pack(anchor="w")
+
         about = ttk.LabelFrame(left, text="О программе", padding=10)
         about.pack(fill="x", padx=10, pady=5)
         ttk.Label(about, text="BestCam USB Backup Manager", style="Panel.TLabel").pack(anchor="w")
@@ -754,6 +764,28 @@ class App:
             try:
                 self._cleanup_status_var.set(msg)
             except Exception:
+                pass
+
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _export_logs(self):
+        dest = filedialog.askdirectory(
+            title="Куда сохранить логи",
+            parent=self.root,
+        )
+        if not dest:
+            return
+        self._logs_status_var.set("Сбор логов...")
+
+        def _do():
+            try:
+                bundle = export_logs(dest)
+                msg = f"Готово: {os.path.basename(bundle)}"
+            except Exception as e:
+                msg = f"Ошибка: {e}"
+            try:
+                self.root.after(0, lambda: self._logs_status_var.set(msg))
+            except tk.TclError:
                 pass
 
         threading.Thread(target=_do, daemon=True).start()
