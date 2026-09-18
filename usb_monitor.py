@@ -23,6 +23,12 @@ MOUNT_BASE = "/mnt/usb_backup"
 # на запись. Без автомонтирования задержка ограничена этим интервалом.
 MOUNT_GRACE_SECONDS = float(os.environ.get("USB_MOUNT_GRACE", "4"))
 MAX_WORKERS = int(os.environ.get("USB_MAX_WORKERS", "10"))
+# Сколько ждать возврата шины, когда из опроса разом пропали все устройства.
+# Дешёвый многопортовый хаб при выдёргивании одной карты передёргивает всю
+# линейку: порты пропадают на секунду-другую целиком. Человек так не делает —
+# он вынимает по одному, поэтому одновременное исчезновение всех считаем
+# сбоем шины. Дольше этого срока — верим, что хаб действительно отключили.
+BUS_GLITCH_GRACE = float(os.environ.get("USB_BUS_GLITCH_GRACE", "20"))
 DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
 IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
@@ -1520,6 +1526,8 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
     # dev → timestamp of first consecutive miss; cleared when device reappears
     pending_removals = {}
+    # Когда из опроса пропала вся линейка разом; None — шина в порядке.
+    bus_glitch_since = None
 
     try:
         while True:
@@ -1537,10 +1545,26 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             now_t = time.time()
             current = _get_linux_partitions() if is_linux else get_removable_drives()
-            _update_connected_devices(current)
 
             known_keys = set(known) if is_linux else known
             current_keys = set(current) if is_linux else current
+
+            # Из опроса разом пропали все, кто был. Это сбой шины, а не
+            # отключение всей линейки руками: пока ждём возврата, состояние
+            # не публикуем (иначе воркеры решат, что их карты вынули) и
+            # отключений не подтверждаем.
+            if len(known_keys) > 1 and not (current_keys & known_keys):
+                if bus_glitch_since is None:
+                    bus_glitch_since = now_t
+                    print(f"  Из опроса пропала вся линейка ({len(known_keys)} устройств) — "
+                          f"ждём возврата шины", flush=True)
+                if now_t - bus_glitch_since < BUS_GLITCH_GRACE:
+                    continue
+            elif bus_glitch_since is not None:
+                print("  Шина вернулась, устройства на месте", flush=True)
+                bus_glitch_since = None
+
+            _update_connected_devices(current)
 
             # Devices missing from this poll but still in known
             candidate_removed = known_keys - current_keys
