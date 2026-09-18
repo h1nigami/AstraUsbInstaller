@@ -120,10 +120,16 @@ class DetachedTileTest(unittest.TestCase):
         data = {7: {"state_raw": "copying", "devname": "sdf"}}
         self.assertEqual(gui_mod._detached_too_long(data, now=1000.0), [])
 
-    def test_detached_kept_within_grace(self):
-        data = {7: {"state_raw": "detached", "detached_at": 1000.0}}
-        self.assertEqual(gui_mod._detached_too_long(data, now=1005.0, grace=25), [])
+    def test_glitched_device_is_waited_for(self):
+        data = {7: {"state_raw": "detached", "detached_at": 1000.0, "detached_glitch": True}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1010.0), [])
 
-    def test_detached_purged_after_grace(self):
+    def test_glitched_device_purged_after_grace(self):
+        data = {7: {"state_raw": "detached", "detached_at": 1000.0, "detached_glitch": True}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1020.0), [7])
+
+    def test_pulled_device_clears_quickly(self):
+        """Карту вынул оператор — держать серую плитку незачем."""
         data = {7: {"state_raw": "detached", "detached_at": 1000.0}}
-        self.assertEqual(gui_mod._detached_too_long(data, now=1030.0, grace=25), [7])
+        self.assertEqual(gui_mod._detached_too_long(data, now=1004.0), [])
+        self.assertEqual(gui_mod._detached_too_long(data, now=1007.0), [7])

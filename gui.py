@@ -24,10 +24,13 @@ except ImportError:
     _HAVE_PIL = False
 
 POLL_MS = 200
-# Сколько плитка ждёт возвращения устройства, прежде чем погаснуть. Хаб при
-# сбросе отдаёт карту обратно под другим именем за пару секунд; гасить экран
-# на это время — значит показывать оператору мигание вместо работы.
-DETACH_GRACE = 40
+# Сколько плитка ждёт возвращения устройства, прежде чем погаснуть.
+# После сбоя шины карта возвращается под другим именем: по журналам станции
+# на переобнаружение и чтение ID уходит шесть-десять секунд, пятнадцать —
+# с запасом. Карту, вынутую руками, держать незачем: оператор сам её вынул
+# и ждать возвращения не должен.
+DETACH_GRACE = 15
+DETACH_GRACE_PULLED = 5
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
@@ -61,16 +64,24 @@ def _set_exit_password(new_pw):
     _save_config(cfg)
 
 
-def _detached_too_long(workers_data, now, grace=None):
+def _detached_too_long(workers_data, now, grace=None, pulled_grace=None):
     """Номера устройств, которые пропали и не вернулись за отведённое время.
 
-    Чистая функция ради тестов без окна: карта после сброса хабом уходит и
-    возвращается под другим именем за пару секунд, и плитка обязана это
-    пережить, иначе оператор видит мигание всей стойки.
+    Чистая функция ради тестов без окна. Сроки разные: снесённую сбоем шины
+    карту ждём, пока она вернётся под новым именем, а вынутую руками гасим
+    почти сразу — иначе оператор смотрит на серую плитку и думает, что
+    станция зависла.
     """
     limit = DETACH_GRACE if grace is None else grace
-    return [did for did, data in workers_data.items()
-            if data.get("detached_at") and now - data["detached_at"] > limit]
+    quick = DETACH_GRACE_PULLED if pulled_grace is None else pulled_grace
+    gone = []
+    for did, data in workers_data.items():
+        since = data.get("detached_at")
+        if not since:
+            continue
+        if now - since > (limit if data.get("detached_glitch") else quick):
+            gone.append(did)
+    return gone
 
 
 def _is_busy(workers_data):
@@ -1441,6 +1452,7 @@ class App:
                             data["state_raw"] = "detached"
                             data["message"] = "Устройство переподключается..."
                             data["detached_at"] = time.time()
+                            data["detached_glitch"] = bool(getattr(self, "_bus_glitch", False))
                             marked.append(did)
                     if marked:
                         print(f"  Плитка ждёт возвращения: {display_id} -> {marked}",
@@ -1458,7 +1470,7 @@ class App:
                     if not self._bus_glitch:
                         back = time.time()
                         for data in self.workers_data.values():
-                            if data.get("detached_at"):
+                            if data.get("detached_at") and data.get("detached_glitch"):
                                 data["detached_at"] = back
                     print(f"  Плитки: шина {'сбоит' if self._bus_glitch else 'в порядке'}",
                           flush=True)
