@@ -24,6 +24,10 @@ except ImportError:
     _HAVE_PIL = False
 
 POLL_MS = 200
+# Сколько плитка ждёт возвращения устройства, прежде чем погаснуть. Хаб при
+# сбросе отдаёт карту обратно под другим именем за пару секунд; гасить экран
+# на это время — значит показывать оператору мигание вместо работы.
+DETACH_GRACE = 25
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
@@ -55,6 +59,18 @@ def _set_exit_password(new_pw):
     cfg = _load_config()
     cfg["exit_password"] = new_pw
     _save_config(cfg)
+
+
+def _detached_too_long(workers_data, now, grace=None):
+    """Номера устройств, которые пропали и не вернулись за отведённое время.
+
+    Чистая функция ради тестов без окна: карта после сброса хабом уходит и
+    возвращается под другим именем за пару секунд, и плитка обязана это
+    пережить, иначе оператор видит мигание всей стойки.
+    """
+    limit = DETACH_GRACE if grace is None else grace
+    return [did for did, data in workers_data.items()
+            if data.get("detached_at") and now - data["detached_at"] > limit]
 
 
 def _is_busy(workers_data):
@@ -1412,9 +1428,18 @@ class App:
                 devname = raw[6] if len(raw) > 6 else ""
 
                 if device_id == "_removed_":
-                    for did, data in list(self.workers_data.items()):
-                        if data.get("devname") == display_id:
-                            self.workers_data.pop(did, None)
+                    # Плитку сразу не убираем. При сбросе хаба карта уходит и
+                    # через пару секунд возвращается под другим именем: если
+                    # гасить экран на каждое такое исчезновение, оператор видит
+                    # мигание всей стойки и не понимает, что происходит.
+                    # Плитка держится за номер регистратора и переживает
+                    # переподключение; не вернулась за DETACH_GRACE — гаснет.
+                    for data in self.workers_data.values():
+                        if data.get("devname") == display_id and not data.get("detached_at"):
+                            data["state"] = "Переподключение"
+                            data["state_raw"] = "detached"
+                            data["message"] = "Устройство переподключается..."
+                            data["detached_at"] = time.time()
                     self._refresh_workers()
                     continue
 
@@ -1448,6 +1473,15 @@ class App:
         except queue.Empty:
             pass
 
+        # Устройства, которые так и не вернулись за отведённое время, гаснут.
+        # Вернувшиеся сюда не попадают: их сообщения перезаписывают строку
+        # целиком, вместе с отметкой об отключении.
+        gone = _detached_too_long(self.workers_data, time.time())
+        for did in gone:
+            self.workers_data.pop(did, None)
+        if gone:
+            self._refresh_workers()
+
         # Выполняется на каждом тике (раз в 200мс) независимо от того, было ли
         # что-то в очереди — один большой файл может копироваться минутами без
         # единого сообщения в очереди, и маркер не должен за это время устареть.
@@ -1475,7 +1509,11 @@ class App:
             port = self.ports[pi]
             port["device_id"] = dev_id
 
-            if state == "Сканирование":
+            if state == "Переподключение":
+                bg = self.C["bg_surface"]
+                preview_text = data["device"]
+                status_text = data.get("message", "Переподключение...")
+            elif state == "Сканирование":
                 bg = self.C["accent"]
                 preview_text = data["device"]
                 status_text = f"Сканирование... {data.get('message', '')}"

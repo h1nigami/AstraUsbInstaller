@@ -109,3 +109,21 @@ class BusyMarkerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+@unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
+class DetachedTileTest(unittest.TestCase):
+    """При сбросе хаба карта возвращается под другим именем за пару секунд.
+    Плитка обязана это пережить, иначе мигает вся стойка."""
+
+    def test_returned_device_is_not_purged(self):
+        data = {7: {"state_raw": "copying", "devname": "sdf"}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1000.0), [])
+
+    def test_detached_kept_within_grace(self):
+        data = {7: {"state_raw": "detached", "detached_at": 1000.0}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1005.0, grace=25), [])
+
+    def test_detached_purged_after_grace(self):
+        data = {7: {"state_raw": "detached", "detached_at": 1000.0}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1030.0, grace=25), [7])
