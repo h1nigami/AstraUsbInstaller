@@ -943,6 +943,11 @@ class App:
             pw_in = pw_var.get().strip()
             expected = _get_exit_password()
             if pw_in == expected:
+                # Без этой строки выход не оставляет в журнале ни следа, и
+                # потом не отличить «кто-то вышел по паролю» от «станция не
+                # запустилась»: systemd чистый выход намеренно не перезапускает.
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Выход по паролю — "
+                      f"станция остановлена оператором", flush=True)
                 dlg.destroy()
                 self.stop_event.set()
                 self.root.destroy()

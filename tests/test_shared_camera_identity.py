@@ -185,3 +185,35 @@ class SharedCameraIdentityTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReenumeratedCardTest(SharedCameraIdentityTest):
+    """Хаб сбрасывает порт, и карта возвращается под новым именем. Ядро
+    какое-то время держит оба имени, поэтому «владелец ещё на шине» тут не
+    работает. Различаем по метке файловой системы: у разных карт она разная,
+    у одной и той же при переподключении сохраняется."""
+
+    def test_same_card_under_new_name_takes_over_its_id(self):
+        first = self.mount("before", 1234567)
+        second = self.mount("after", 1234567)
+        with mock.patch.object(um, "_get_filesystem_uuid", lambda dev: "C23E-1A23"):
+            self.assertEqual(self.resolve(first, "sdb"), 1234567)
+            # Та же карта, новое имя — не дубликат, а возврат.
+            self.assertEqual(self.resolve(second, "sdg"), 1234567)
+
+    def test_two_different_cards_with_same_id_still_rejected(self):
+        first = self.mount("one", 1234567)
+        second = self.mount("two", 1234567)
+        uuids = {"/dev/sdb": "C23E-1A23", "/dev/sdg": "DFDD-190B"}
+        with mock.patch.object(um, "_get_filesystem_uuid", lambda dev: uuids.get(dev)):
+            self.assertEqual(self.resolve(first, "sdb"), 1234567)
+            with self.assertRaisesRegex(OSError, "Дубликат ID устройства 1234567"):
+                self.resolve(second, "sdg")
+
+    def test_unknown_uuid_falls_back_to_rejecting(self):
+        first = self.mount("one", 1234567)
+        second = self.mount("two", 1234567)
+        with mock.patch.object(um, "_get_filesystem_uuid", lambda dev: None):
+            self.assertEqual(self.resolve(first, "sdb"), 1234567)
+            with self.assertRaisesRegex(OSError, "Дубликат ID устройства 1234567"):
+                self.resolve(second, "sdg")

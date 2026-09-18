@@ -829,12 +829,16 @@ def _register_id_from_device(conn, device_id, serial, label, now):
 def _resolve_device_id(conn, mountpoint, serial, label, devname):
     database = os.path.realpath(conn.execute("PRAGMA database_list").fetchone()[2])
     owner = (database, devname)
+    # Метка файловой системы — единственный надёжный признак «та же карта»:
+    # USB-серийники у регистраторов заводские и совпадают у всех до единого.
+    # Читается до замка: это подпроцесс blkid.
+    fs_uuid = _get_filesystem_uuid(f"/dev/{devname}")
     with _device_id_lock:
         present = _connected_devices.get(database)
         if present is not None and devname not in present:
             raise OSError("Устройство отключено")
         # Отмечаем попытку до чтения USB, чтобы отключение отменяло даже зависшее чтение.
-        reservation = (None, object())
+        reservation = (None, object(), fs_uuid)
         _connected_device_ids[owner] = reservation
     try:
         device_id = _read_device_id(mountpoint)
@@ -848,12 +852,21 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             # после сброса хабом устройство возвращается под новым именем, и
             # без этой проверки оно объявляло дубликатом собственную старую
             # заявку и навсегда оставалось красным.
-            duplicate = any(
-                key[0] == database and key != owner and claim[0] == device_id
-                and (present is None or key[1] in present)
-                for key, claim in _connected_device_ids.items())
-            if duplicate:
-                raise OSError(f"Дубликат ID устройства {device_id}")
+            # Старая заявка с той же меткой файловой системы — это сама карта,
+            # вернувшаяся после сброса под новым именем: ядро какое-то время
+            # держит оба имени, поэтому «владелец ещё на шине» здесь не помогает.
+            # Без метки различить нечем — считаем дубликатом, как раньше.
+            returned = []
+            for key, claim in _connected_device_ids.items():
+                if key[0] != database or key == owner or claim[0] != device_id:
+                    continue
+                if fs_uuid and len(claim) > 2 and claim[2] == fs_uuid:
+                    returned.append(key)
+                else:
+                    raise OSError(f"Дубликат ID устройства {device_id}")
+            for key in returned:
+                _connected_device_ids.pop(key, None)
+                print(f"  Карта вернулась под новым именем: {key[1]} -> {devname}", flush=True)
             now = datetime.now().isoformat()
             row = conn.execute("SELECT id_source FROM devices WHERE id = ?",
                                (device_id,)).fetchone()
@@ -864,7 +877,7 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
                          (now, label or devname, device_id))
             conn.commit()
-            reservation = (device_id, reservation[1])
+            reservation = (device_id, reservation[1], fs_uuid)
             _connected_device_ids[owner] = reservation
         with _device_id_lock:
             present = _connected_devices.get(database)
