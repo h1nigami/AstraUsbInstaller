@@ -1,6 +1,5 @@
 import os
 import sys
-import json
 import platform
 import queue
 import shutil
@@ -12,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
+from usb_monitor import monitor_usb, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives, _load_config, update_config, remember_configured_dest, reset_config, _connect, GUI_DB_TIMEOUT
 import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
@@ -25,37 +24,37 @@ except ImportError:
     _HAVE_PIL = False
 
 POLL_MS = 200
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
-
-
-def _load_config():
-    try:
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {}
-
-
-def _save_config(cfg):
-    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f)
+# Чтение и запись config.json живут в usb_monitor: две независимые реализации
+# поверх одного файла затирали ключи друг друга.
 
 
 def _get_exit_password():
-    cfg = _load_config()
-    pw = cfg.get("exit_password")
+    pw = _load_config().get("exit_password")
     if pw:
         return pw
     default = os.environ.get("APP_EXIT_PASSWORD", "exit")
-    _save_config({**cfg, "exit_password": default})
+    update_config({"exit_password": default})
     return default
 
 
 def _set_exit_password(new_pw):
-    cfg = _load_config()
-    cfg["exit_password"] = new_pw
-    _save_config(cfg)
+    return _save_setting({"exit_password": new_pw})
+
+
+def _save_setting(changes):
+    """Записать настройки и сказать оператору, если файл не поддался.
+
+    update_config отказывает, когда config.json не читается. Без этого
+    сообщения человек видел «Готово», а пароль или таймаут оставались
+    прежними — и узнавал об этом в худший момент.
+    """
+    if update_config(changes):
+        return True
+    messagebox.showerror(
+        "Ошибка",
+        "Настройки не сохранены: файл data/config.json повреждён.\n\n"
+        "Выберите заново папку для резервных копий — это пересоздаст файл.")
+    return False
 
 
 def _is_busy(workers_data):
@@ -864,10 +863,9 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число минут")
             return
+        if not _save_setting({"lock_timeout_minutes": minutes}):
+            return
         self._lock_timeout = minutes * 60
-        cfg = _load_config()
-        cfg["lock_timeout_minutes"] = minutes
-        _save_config(cfg)
         self._refresh_timeout_status()
 
     def _save_cleanup_settings(self):
@@ -878,12 +876,11 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число дней (не менее 1)")
             return
+        if not _save_setting({"auto_cleanup_enabled": self._cleanup_enabled_var.get(),
+                              "auto_cleanup_days": days}):
+            return
         self._cleanup_enabled = self._cleanup_enabled_var.get()
         self._cleanup_days = days
-        cfg = _load_config()
-        cfg["auto_cleanup_enabled"] = self._cleanup_enabled
-        cfg["auto_cleanup_days"] = days
-        _save_config(cfg)
         self._cleanup_status_var.set("Настройки сохранены")
 
     def _run_startup_cleanup(self):
@@ -938,11 +935,10 @@ class App:
         def _do():
             try:
                 result = factory_reset()
-                try:
-                    os.remove(CONFIG_PATH)
-                except OSError:
-                    pass
-            except OSError as e:
+                reset_config()
+            except Exception as e:
+                # Ловим всё: sqlite3.Error не наследник OSError, и раньше
+                # такой сбой убивал поток молча, оставляя статус «Сброс...».
                 self.root.after(0, lambda: self._finish_factory_reset(None, str(e)))
             else:
                 self.root.after(0, lambda: self._finish_factory_reset(result, None))
@@ -987,11 +983,9 @@ class App:
                 f"Папка недоступна для записи:\n{new_path}\n\n"
                 f"Убедитесь, что диск подключён и смонтирован.")
             return
-        cfg = _load_config()
-        for key in ("backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial"):
-            cfg.pop(key, None)
-        cfg.update(describe_dest_path(new_path))
-        _save_config(cfg)
+        if not remember_configured_dest(new_path, update_path=True):
+            messagebox.showerror("Ошибка", "Не удалось сохранить настройки")
+            return
         self.backup_dest_var.set(new_path)
         messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
 
@@ -1030,7 +1024,9 @@ class App:
             if not new_var.get().strip():
                 err_var.set("Новый пароль не может быть пустым")
                 return
-            _set_exit_password(new_var.get().strip())
+            if not _set_exit_password(new_var.get().strip()):
+                dlg.destroy()
+                return
             self._refresh_pw_status()
             dlg.destroy()
             messagebox.showinfo("Готово", "Пароль изменён")
@@ -1086,14 +1082,21 @@ class App:
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
     def _get_db(self):
-        return sqlite3.connect(DB_PATH)
+        # Короткое ожидание: вызовы идут на потоке Tk, см. GUI_DB_TIMEOUT.
+        return _connect(timeout=GUI_DB_TIMEOUT)
 
     def _device_label(self, dev_id):
-        conn = self._get_db()
+        # Подпись вызывается до собственных try в обработчиках кнопок,
+        # поэтому ошибка базы здесь не должна ронять обработчик целиком.
+        row = None
         try:
-            row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
-        finally:
-            conn.close()
+            conn = self._get_db()
+            try:
+                row = conn.execute("SELECT name FROM devices WHERE id = ?", (int(dev_id),)).fetchone()
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            print(f"Не прочитано имя устройства {dev_id}: {e}", flush=True)
         name = (row[0] if row else "") or ""
         return _short_device_label(dev_id, name)
 

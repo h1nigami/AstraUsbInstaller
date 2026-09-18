@@ -28,6 +28,8 @@ IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
 
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
+_CONFIG_BROKEN = "_config_unreadable"
+_config_lock = threading.RLock()
 DEST_MARKER_FILE = ".astra_dest"
 VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
 _DEST_CFG_RELPATH = "backup_mount_relpath"
@@ -88,14 +90,13 @@ def factory_reset(db_path=None, dest_base=None):
     """
     if is_copying():
         raise OSError("Сброс невозможен: идёт сканирование или копирование")
-    db_path = db_path or DB_PATH
     try:
         dest = dest_base or get_dest_base()
     except Exception:
         dest = None
     devices = backups = 0
     try:
-        conn = sqlite3.connect(db_path)
+        conn = _connect(db_path)
     except Exception:
         conn = None
     if conn is not None:
@@ -109,7 +110,15 @@ def factory_reset(db_path=None, dest_base=None):
                 backups = conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0]
                 conn.execute("DELETE FROM backups")
             conn.commit()
-            conn.execute("VACUUM")
+            try:
+                conn.execute("VACUUM")
+            except sqlite3.Error as e:
+                # Данные уже удалены, место освободится позже — падать поздно.
+                print(f"  VACUUM пропущен: {e}", flush=True)
+        except sqlite3.Error as e:
+            # GUI ловит OSError; sqlite3.Error ему не родня, и без перевода
+            # поток сброса умирал молча, оставляя интерфейс в «Сброс...».
+            raise OSError(f"Не удалось очистить базу: {e}") from e
         finally:
             conn.close()
     entries = 0
@@ -138,22 +147,78 @@ def factory_reset(db_path=None, dest_base=None):
 
 
 def _load_config():
+    """Прочитать config.json.
+
+    Отсутствующий файл — это «ничего не настроено», а нечитаемый или
+    испорченный помечается служебным ключом: принять потерю настроек за их
+    отсутствие опаснее всего для диска назначения (см. dest_available).
+    """
     try:
         with open(_CONFIG_PATH) as f:
             data = json.load(f)
-            return data if isinstance(data, dict) else {}
-    except Exception:
+        return data if isinstance(data, dict) else {_CONFIG_BROKEN: True}
+    except FileNotFoundError:
         return {}
+    except Exception:
+        return {_CONFIG_BROKEN: True}
 
 
 def _save_config(cfg):
+    """Записать config.json целиком через временный файл и os.replace.
+
+    Обрыв питания посреди записи оставляет прежний файл, а не обрезанный:
+    станция работает без присмотра, а потеря backup_dest тихо меняет режим
+    проверки диска назначения.
+    """
+    cfg = {k: v for k, v in cfg.items() if k != _CONFIG_BROKEN}
+    tmp = _CONFIG_PATH + ".tmp"
     try:
         os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-        with open(_CONFIG_PATH, "w") as f:
+        with open(tmp, "w") as f:
             json.dump(cfg, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, _CONFIG_PATH)
         return True
     except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
         return False
+
+
+def update_config(changes=None, drop=()):
+    """Изменить ключи config.json под общим замком.
+
+    Без него чтение-правка-запись из потока GUI и из воркеров идут вперемешку
+    по одному файлу, и та запись, что легла позже, затирает чужие ключи.
+    """
+    with _config_lock:
+        cfg = _load_config()
+        if cfg.get(_CONFIG_BROKEN) and "backup_dest" not in (changes or {}):
+            # Файл не прочитался, а перезапись выбросила бы уцелевшие ключи —
+            # в том числе backup_dest, из-за чего dest_available снова начала
+            # бы разрешать запись мимо диска назначения. Исключение только для
+            # явного выбора папки оператором: он сам задаёт потерянный ключ.
+            return False
+        for key in drop:
+            cfg.pop(key, None)
+        cfg.update(changes or {})
+        return _save_config(cfg)
+
+
+def reset_config():
+    """Удалить config.json при заводском сбросе — под тем же замком.
+
+    Мимо замка удаление успевало разойтись с записью из потока монитора,
+    и файл воскресал со старыми настройками уже после сброса.
+    """
+    with _config_lock:
+        try:
+            os.remove(_CONFIG_PATH)
+        except OSError:
+            pass
 
 
 def _config_backup_dest():
@@ -242,19 +307,11 @@ def describe_dest_path(dest_base):
 
 def remember_configured_dest(dest_base, update_path=False):
     """Persist destination metadata once the real filesystem is reachable."""
-    cfg = _load_config()
     info = describe_dest_path(dest_base)
-
-    for key in _DEST_CFG_KEYS:
-        cfg.pop(key, None)
-    for key in _DEST_CFG_KEYS:
-        if key in info:
-            cfg[key] = info[key]
-
+    changes = {k: v for k, v in info.items() if k in _DEST_CFG_KEYS}
     if update_path:
-        cfg["backup_dest"] = dest_base
-
-    return _save_config(cfg)
+        changes["backup_dest"] = dest_base
+    return update_config(changes, drop=_DEST_CFG_KEYS)
 
 
 def _dest_device_matches(src, cfg):
@@ -338,6 +395,11 @@ def dest_available():
     written at selection time — see ensure_dest_marker().
     """
     cfg = _load_config()
+    if cfg.get(_CONFIG_BROKEN):
+        # Настройки не прочитались. Диск назначения мог быть выбран, и тогда
+        # запись «по умолчанию» уйдёт в теневую папку на системном разделе,
+        # а оригиналы будут удалены с флешки. Отказываемся до починки файла.
+        return False
     cfg_dest = cfg.get("backup_dest", "") or None
     if not cfg_dest:
         return True
@@ -469,14 +531,21 @@ def _log_progress(label, copied_files, total_files, copied_bytes, total_bytes, f
     print(line, flush=True)
 
 
-def _connect():
+def _connect(db_path=None, timeout=30):
     """Open a fresh SQLite connection for the calling thread.
 
     Each backup worker uses its own connection (with a busy timeout) instead
     of sharing one across the thread pool, which is not safe for concurrent
     writes and silently dropped backup records under load.
     """
-    return sqlite3.connect(DB_PATH, timeout=30)
+    return sqlite3.connect(db_path or DB_PATH, timeout=timeout)
+
+
+# ponytail: запросы интерфейса идут на потоке Tk, поэтому ждать базу столько
+# же, сколько ждут воркеры, нельзя — киоск замирает целиком. Отказ человек
+# видит в диалоге и повторяет. Убрать потолок можно, только уведя запросы
+# вкладки «Устройства» в отдельный поток.
+GUI_DB_TIMEOUT = 5
 
 
 def _init_db():
@@ -666,18 +735,21 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
                 for key, claim in _connected_device_ids.items())
             if duplicate:
                 raise OSError(f"Дубликат ID устройства {device_id}")
-            now = datetime.now().isoformat()
-            row = conn.execute("SELECT id_source FROM devices WHERE id = ?",
-                               (device_id,)).fetchone()
-            if row and row[0] != "device":
-                raise OSError(f"ID {device_id} занят прежней записью")
-            if not row:
-                _register_id_from_device(conn, device_id, serial, label or devname, now)
-            conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
-                         (now, label or devname, device_id))
-            conn.commit()
             reservation = (device_id, reservation[1])
             _connected_device_ids[owner] = reservation
+        # Запись в БД идёт уже без общего замка: sqlite сериализует писателей
+        # сам и ждёт до 30 с, а замок нужен циклу опроса USB каждые две
+        # секунды. От гонки за один ID защищает заявка выше.
+        now = datetime.now().isoformat()
+        row = conn.execute("SELECT id_source FROM devices WHERE id = ?",
+                           (device_id,)).fetchone()
+        if row and row[0] != "device":
+            raise OSError(f"ID {device_id} занят прежней записью")
+        if not row:
+            _register_id_from_device(conn, device_id, serial, label or devname, now)
+        conn.execute("UPDATE devices SET last_seen = ?, label = ? WHERE id = ?",
+                     (now, label or devname, device_id))
+        conn.commit()
         with _device_id_lock:
             present = _connected_devices.get(database)
             if ((present is not None and devname not in present)
@@ -1057,7 +1129,11 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
     # copied or already identical. Only these may be auto-deleted from source.
     backed_up = set()
     last_emit_t = 0.0
-    for root, dirs, files in os.walk(src_root):
+    # Без onerror обход молча обрывается на пропавшем каталоге (носитель
+    # выдернули посреди копирования), и сеанс заканчивается зелёным «Готово»
+    # с неполным числом файлов.
+    walk_errors = []
+    for root, dirs, files in os.walk(src_root, onerror=walk_errors.append):
         rel_path = os.path.relpath(root, src_root)
         if rel_path == ".":
             rel_path = ""
@@ -1104,6 +1180,9 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
                 # backed_up, so it will be preserved on the source.
                 failed += 1
                 print(f"  Copy failed {src_file}: {e}", flush=True)
+    if walk_errors:
+        failed += len(walk_errors)
+        print(f"  Обход источника прерван: {walk_errors[0]}", flush=True)
     return copied_files, copied_bytes, backed_up, failed
 
 
@@ -1203,7 +1282,23 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 _unmount(mountpoint)
             return device_id, 0, 0
 
-        os.makedirs(dest, exist_ok=True)
+        def _fail(error):
+            """Ошибка вне пофайловой обработки: показать её оператору.
+
+            Исключение отсюда всплывает в future и молча теряется в цикле
+            монитора, поэтому устройство навсегда зависало на прошлом статусе.
+            """
+            msg = f"Ошибка копирования: {error}"
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {msg}", flush=True)
+            _emit("error", 0, 0, msg)
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
+
+        try:
+            os.makedirs(dest, exist_ok=True)
+        except OSError as error:
+            return _fail(error)
 
         if total_files == 0:
             msg = f"Empty: {friendly}"
@@ -1224,13 +1319,21 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
-        copied_files, copied_bytes, backed_up, failed = _copy_files(
-            mountpoint, dest, ts, friendly, total_files, total_bytes,
-            progress_obj, task_id, start_time, emit_fn=_emit)
+        try:
+            copied_files, copied_bytes, backed_up, failed = _copy_files(
+                mountpoint, dest, ts, friendly, total_files, total_bytes,
+                progress_obj, task_id, start_time, emit_fn=_emit)
+        except Exception as error:
+            return _fail(error)
         _repair_archive_ownership(dest_base, dest)
 
-        # Only delete videos that were actually backed up successfully.
-        _delete_source_videos(mountpoint, backed_up)
+        # Карту могли подменить не до копирования, а прямо во время него:
+        # пути из backed_up тогда относятся к ушедшей карте, а удаление
+        # пошло бы по совпадающим путям уже на новой.
+        same_device = _still_same_device()
+        if same_device:
+            # Only delete videos that were actually backed up successfully.
+            _delete_source_videos(mountpoint, backed_up)
 
         if should_unmount:
             _unmount(mountpoint)
@@ -1239,12 +1342,15 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
         if failed:
             msg = f"Ошибки: {friendly} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
             _emit("error", copied_bytes, total_bytes, f"Не скопировано: {failed} файл(ов)")
+        elif not same_device:
+            msg = f"Носитель сменился: {friendly} — исходные файлы сохранены"
+            _emit("error", copied_bytes, total_bytes, "Носитель сменился, файлы сохранены")
         else:
             msg = f"Done: {friendly} ({copied_files} files, {_format_size(copied_bytes)})"
             _emit("done", copied_bytes, total_bytes, f"Готово: ID {_label()}")
 
         if USE_RICH and progress_obj:
-            color = "red" if failed else "green"
+            color = "green" if not failed and same_device else "red"
             progress_obj.update(task_id, description=f"[{color}]{msg}")
         else:
             print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
@@ -1255,8 +1361,12 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 (device_id, dest, copied_files, copied_bytes, started_at.isoformat(), finished_at.isoformat()),
             )
             conn.commit()
-        except Exception:
-            pass
+        except Exception as error:
+            # Файлы уже скопированы и удалены с источника, а без строки в
+            # backups поиск по вкладке их не найдёт — молчать тут нельзя.
+            print(f"  Сеанс не записан в базу: {error}", flush=True)
+            _emit("error", copied_bytes, total_bytes,
+                  "Копия сделана, но не записана в базу")
 
         return device_id, copied_files, copied_bytes
     finally:
@@ -1417,7 +1527,11 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     known.pop(dev, None)
                 else:
                     known.discard(dev)
-                active.pop(dev, None)
+                # active не трогаем: сборщик в начале тика сам снимет
+                # завершившийся future вместе с его result(). Пока воркер жив,
+                # он пишет и удаляет в той же точке монтирования, и то же имя
+                # устройства, доставшееся новой флешке, не должно поднять
+                # второго такого же.
                 dn = os.path.basename(dev)
                 if progress_queue is not None:
                     try:
@@ -1431,6 +1545,11 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
             for dev in new_devices:
                 if _offline_hold:
                     print(f"  New USB held for offline update: {dev}", flush=True)
+                    continue
+                if active.get(dev) is not None:
+                    # Прежний воркер с этим именем ещё копирует — подождём
+                    # следующего опроса, устройство останется «новым».
+                    print(f"  Waiting for previous worker: {dev}", flush=True)
                     continue
                 if is_linux:
                     known[dev] = current[dev]

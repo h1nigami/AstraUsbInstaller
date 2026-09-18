@@ -15,6 +15,50 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import usb_monitor as um
 
 
+class BrokenConfigTest(unittest.TestCase):
+    """Испорченный config.json не должен выглядеть как «диск назначения не
+    настроен»: иначе копия уйдёт мимо архива, а оригиналы сотрутся с флешки."""
+
+    def _broken(self, d):
+        cfg_path = os.path.join(d, "config.json")
+        with open(cfg_path, "w") as f:
+            f.write("{не json")
+        return cfg_path
+
+    def test_dest_unavailable_while_config_unreadable(self):
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(um, "_CONFIG_PATH", self._broken(d)):
+                self.assertFalse(um.dest_available())
+
+    def test_ordinary_write_does_not_wipe_unreadable_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = self._broken(d)
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path):
+                self.assertFalse(um.update_config({"exit_password": "x"}))
+                self.assertFalse(um.dest_available())
+            with open(cfg_path) as f:
+                self.assertEqual(f.read(), "{не json")
+
+    def test_reset_config_removes_file_and_tolerates_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = self._broken(d)
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path):
+                um.reset_config()
+                self.assertFalse(os.path.exists(cfg_path))
+                um.reset_config()
+
+    def test_choosing_destination_repairs_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "disk")
+            os.makedirs(dest)
+            um.ensure_dest_marker(dest)
+            with mock.patch.object(um, "_CONFIG_PATH", self._broken(d)), \
+                 mock.patch.object(um, "describe_dest_path",
+                                   return_value={"backup_dest": dest}):
+                self.assertTrue(um.remember_configured_dest(dest, update_path=True))
+                self.assertTrue(um.dest_available())
+
+
 class GetDestBaseTest(unittest.TestCase):
     def test_uses_config_when_present(self):
         with tempfile.TemporaryDirectory() as d:
