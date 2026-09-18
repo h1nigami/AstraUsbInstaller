@@ -254,3 +254,43 @@ class BusResetTest(unittest.TestCase):
             self.assertEqual(failed, 1, "один сбойный файл — не повод бросать карту")
             self.assertEqual(copied, 9)
             self.assertNotIn(bad, backed_up, "несостоявшаяся копия не должна удаляться")
+
+
+class SourceGoneTest(BusResetTest):
+    """Выдернутый носитель даёт не ошибку ввода-вывода, а «нет такого файла»:
+    точка монтирования пустеет. Перебирать после этого всю карту незачем."""
+
+    def test_pulled_card_aborts(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            self._card(src, 30)
+            dcim = os.path.join(src, "DCIM")
+            state = {"n": 0}
+            real_copy = um.shutil.copy2
+
+            def fake_copy2(a, b, *args, **kwargs):
+                state["n"] += 1
+                if state["n"] <= 2:
+                    return real_copy(a, b, *args, **kwargs)
+                # Карту выдернули: точка монтирования опустела, и дальше
+                # каждый файл отвечает «нет такого файла».
+                if os.path.isdir(dcim):
+                    um.shutil.rmtree(dcim)
+                raise FileNotFoundError(errno.ENOENT, "No such file or directory", a)
+
+            with mock.patch.object(um.shutil, "copy2", fake_copy2):
+                with self.assertRaises(um.DeviceLost):
+                    um._copy_files(src, dst, "20260918_120000", 1, 0, 0,
+                                   None, None, time.time())
+
+    def test_missing_single_file_does_not_abort(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            names = self._card(src, 10)
+            bad = names[2]
+
+            def fake(path):
+                raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
+
+            copied, _bytes, _backed, failed = self._copy_with_failures(
+                src, dst, lambda p: p == bad)
+            self.assertEqual(failed, 1, "пропавший файл при живой карте — не потеря носителя")
+            self.assertEqual(copied, 9)

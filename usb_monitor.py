@@ -35,10 +35,14 @@ BUS_GLITCH_GRACE = float(os.environ.get("USB_BUS_GLITCH_GRACE", "20"))
 # всю карту бессмысленно — это минуты впустую и простыня в журнале вместо
 # одного внятного сообщения оператору.
 IO_ERRORS_TO_GIVE_UP = int(os.environ.get("USB_IO_ERRORS_LIMIT", "5"))
-# Ошибки, означающие, что носителя больше нет: сброс шины, отвал устройства.
+# Носитель отвечает ошибкой — сброшен шиной, но ещё числится подключённым.
 # EREMOTEIO есть не на всех платформах, поэтому берём его осторожно.
 _LOST_DEVICE_ERRNOS = {errno.EIO, errno.ENODEV, errno.ENXIO,
                        getattr(errno, "EREMOTEIO", errno.EIO)}
+# Файлы просто исчезли: так выглядит физически выдернутая карта — точка
+# монтирования пустеет. Само по себе это ещё не потеря носителя (файл мог
+# исчезнуть между сканированием и копированием), поэтому проверяется отдельно.
+_GONE_ERRNOS = {errno.ENOENT, getattr(errno, "ESTALE", errno.ENOENT)}
 DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
 IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
@@ -57,6 +61,14 @@ VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
 
 class DeviceLost(OSError):
     """Носитель пропал или сброшен шиной — читать с него больше нечего."""
+
+
+def _source_gone(src_root):
+    """Носителя больше нет? Пропавший одиночный файл — ещё не потеря карты."""
+    try:
+        return not os.listdir(src_root)
+    except OSError:
+        return True
 
 
 def read_version(path=None):
@@ -831,8 +843,14 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             if ((present is not None and devname not in present)
                     or _connected_device_ids.get(owner) is not reservation):
                 raise OSError("Устройство отключено")
+            # Дубликат — это другое СЕЙЧАС подключённое устройство с тем же ID.
+            # Заявка под именем, которого на шине уже нет, — след самого себя:
+            # после сброса хабом устройство возвращается под новым именем, и
+            # без этой проверки оно объявляло дубликатом собственную старую
+            # заявку и навсегда оставалось красным.
             duplicate = any(
                 key[0] == database and key != owner and claim[0] == device_id
+                and (present is None or key[1] in present)
                 for key, claim in _connected_device_ids.items())
             if duplicate:
                 raise OSError(f"Дубликат ID устройства {device_id}")
@@ -1277,13 +1295,16 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
                 # backed_up, so it will be preserved on the source.
                 failed += 1
                 print(f"  Copy failed {src_file}: {e}", flush=True)
-                if isinstance(e, OSError) and e.errno in _LOST_DEVICE_ERRNOS:
+                code = e.errno if isinstance(e, OSError) else None
+                if code in _LOST_DEVICE_ERRNOS:
                     lost_in_row += 1
-                    if lost_in_row >= IO_ERRORS_TO_GIVE_UP:
-                        raise DeviceLost(
-                            f"{src_root}: {lost_in_row} отказов чтения подряд") from e
+                elif code in _GONE_ERRNOS and _source_gone(src_root):
+                    lost_in_row += 1
                 else:
                     lost_in_row = 0
+                if lost_in_row >= IO_ERRORS_TO_GIVE_UP:
+                    raise DeviceLost(
+                        f"{src_root}: {lost_in_row} отказов чтения подряд") from e
     return copied_files, copied_bytes, backed_up, failed
 
 
