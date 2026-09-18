@@ -29,6 +29,7 @@ jobs:
           tar -czf "$NAME" \
               main.py gui.py usb_monitor.py updater.py \
               start_native.sh install_native.sh update.sh diagnose.sh \
+              remove_station_v2.sh \
               requirements.txt \
               99-astra-usb-monitor-udisks.rules VERSION data tests
           sha256sum "$NAME" > "${NAME}.sha256"

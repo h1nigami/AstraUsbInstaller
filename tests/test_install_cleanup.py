@@ -16,6 +16,10 @@ import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALLER = os.path.join(REPO, "install_native.sh")
+# Логика выключения второй версии переехала из установщика в отдельный файл:
+# её зовут и установщик, и кнопка диагностики. Подключаем через source —
+# скрипт сам себя выполняет только при прямом запуске.
+CLEANUP_SCRIPT = os.path.join(REPO, "remove_station_v2.sh").replace("\\", "/")
 FUNC = "remove_bestcam_station"
 
 SYSTEMCTL = """#!/bin/sh
@@ -70,7 +74,7 @@ def extract_named_function(name):
 
 
 def extract_function():
-    return extract_named_function(FUNC)
+    return '. "%s"' % CLEANUP_SCRIPT
 
 
 @unittest.skipUnless(BASH, "нужен работающий bash")

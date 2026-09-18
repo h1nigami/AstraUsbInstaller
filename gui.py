@@ -102,6 +102,29 @@ DIAG_CONTAINER = "astra-usb-monitor"
 # `python3 -c "from gui import launch; launch()"` (см. start_native.sh), поэтому
 # ловить только main.py недостаточно — нужен и маркер этого запуска.
 _DIAG_PROC_MARKERS = ("main.py", "usb_monitor.py", "gui import launch")
+# Вторая версия станции: имена совпадают с теми, что выключает
+# remove_station_v2.sh — искать и чистить надо одно и то же.
+DIAG_STATION_V2_UNIT = "astra-usb-avalonia.service"
+DIAG_STATION_V2_PKG = "bestcam-station"
+DIAG_STATION_V2_PATHS = (
+    "/etc/systemd/system/astra-usb-avalonia.service",
+    "/etc/systemd/system/astra-usb-avalonia-update.service",
+    "/etc/systemd/system/astra-usb-avalonia-update.timer",
+    "/etc/udev/rules.d/99-astra-usb-avalonia-udisks.rules",
+    "/opt/astra-usb-avalonia",
+)
+# Строки, которые станция печатает при отказе (usb_monitor.py). Держать их
+# рядом с местом печати нельзя — журнал читается уже готовым текстом.
+DIAG_LOG_MARKERS = (
+    "Copy failed", "Mount error", "Mount failed", "Обход источника прерван",
+    "Сеанс не записан в базу", "Диск назначения недоступен",
+    "Ошибка копирования", "Ошибка регистрации",
+)
+DIAG_UDEV_RULE = "/etc/udev/rules.d/99-astra-usb-monitor-udisks.rules"
+DIAG_KERNEL_MARKERS = (
+    "USB disconnect", "I/O error", "device descriptor read",
+    "reset high-speed USB", "Buffer I/O error",
+)
 
 
 def _diag_run(runner, cmd):
@@ -162,21 +185,134 @@ def _diag_container(runner):
     return (DIAG_OK, "Старый docker-контейнер не запущен")
 
 
-def run_diagnostics(runner=subprocess.run, system=platform.system, self_pid=None):
-    """Собрать проверки конфликтов служб станции: список кортежей (статус, текст).
+def _diag_station_v2(runner, exists=os.path.isfile):
+    """Остатки кроссплатформенной станции (версия 2) на этой машине.
+
+    Её служба опрашивает те же порты и копирует те же карты: какая из двух
+    программ заберёт флешку — как повезёт, а копировать начнут обе.
+    """
+    active = _diag_run(runner, ["systemctl", "is-active", DIAG_STATION_V2_UNIT])
+    package = _diag_run(runner, ["dpkg", "-s", DIAG_STATION_V2_PKG])
+    if active is None and package is None:
+        return (DIAG_SKIP, "Проверка второй версии недоступна (нет systemd и dpkg)")
+
+    if active is not None and (active.stdout or "").strip() == "active":
+        return (DIAG_FAIL, "Запущена станция второй версии — две программы делят "
+                           "устройства и копируют одно и то же:\n    "
+                           + DIAG_STATION_V2_UNIT)
+
+    found = []
+    if package is not None and package.returncode == 0:
+        found.append(f"установлен пакет {DIAG_STATION_V2_PKG}")
+    found += [f"остался файл {p}" for p in DIAG_STATION_V2_PATHS if exists(p)]
+    if found:
+        return (DIAG_WARN, "Остатки второй версии (могут вернуться после "
+                           "обновления системы):\n    " + "\n    ".join(found))
+    return (DIAG_OK, "Остатков второй версии нет")
+
+
+def _diag_mount_holders(runner, mounts, self_pid):
+    """Чужие процессы, держащие смонтированные карты: файловый менеджер,
+    антивирус, чужой скрипт копирования. Любой из них — гонка за файлы."""
+    holders = []
+    checked = 0
+    for mount in mounts:
+        r = _diag_run(runner, ["fuser", "-m", mount])
+        if r is None:
+            return (DIAG_SKIP, "Проверка держателей недоступна (нет fuser, пакет psmisc)")
+        checked += 1
+        pids = [p for p in (r.stdout or "").split() if p.isdigit() and int(p) != self_pid]
+        if not pids:
+            continue
+        names = _diag_run(runner, ["ps", "-o", "pid=,comm=", "-p", ",".join(pids)])
+        listing = (names.stdout or "").strip() if names else ""
+        for line in (listing.splitlines() or pids):
+            holders.append(f"{mount}: {line.strip()}")
+    if holders:
+        return (DIAG_WARN, "Карты держат чужие процессы:\n    " + "\n    ".join(holders))
+    if not checked:
+        return (DIAG_OK, "Смонтированных карт нет — делить нечего")
+    return (DIAG_OK, "Чужих процессов на смонтированных картах нет")
+
+
+def _diag_udev_rule(exists=os.path.exists):
+    """Без нашего правила рабочий стол монтирует карту вторым монтированием,
+    а два монтирования FAT на запись — это уже не гонка, а порча файловой
+    системы."""
+    if exists(DIAG_UDEV_RULE):
+        return (DIAG_OK, "Правило udev на месте — рабочий стол карты не монтирует")
+    return (DIAG_WARN, "Нет правила udev против автомонтирования:\n    "
+                       + DIAG_UDEV_RULE)
+
+
+def _diag_journal(runner):
+    """Известные отказы в журнале службы за эту загрузку."""
+    r = _diag_run(runner, ["journalctl", "-u", DIAG_SERVICE, "-b",
+                           "--no-pager", "-n", "2000"])
+    if r is None:
+        return (DIAG_SKIP, "Журнал недоступен (нет journalctl)")
+
+    found = {}
+    for line in (r.stdout or "").splitlines():
+        for marker in DIAG_LOG_MARKERS:
+            if marker in line:
+                count, _last = found.get(marker, (0, ""))
+                found[marker] = (count + 1, line.strip())
+
+    restarts = _diag_run(runner, ["systemctl", "show", "-p", "NRestarts",
+                                  "--value", DIAG_SERVICE])
+    times = (restarts.stdout or "").strip() if restarts else ""
+    problems = [f"{marker} — {count} раз, последний: {last}"
+                for marker, (count, last) in found.items()]
+    if times.isdigit() and int(times) > 0:
+        problems.append(f"служба перезапускалась {times} раз")
+    if problems:
+        return (DIAG_WARN, "В журнале службы есть отказы:\n    " + "\n    ".join(problems))
+    return (DIAG_OK, "Отказов в журнале службы за эту загрузку нет")
+
+
+def _diag_kernel(runner):
+    """Отвалы носителей в журнале ядра — частая причина «копия не удалась»."""
+    r = _diag_run(runner, ["journalctl", "-k", "-b", "--no-pager", "-n", "2000"])
+    if r is None:
+        return (DIAG_SKIP, "Журнал ядра недоступен (нет journalctl)")
+
+    found = {}
+    for line in (r.stdout or "").splitlines():
+        for marker in DIAG_KERNEL_MARKERS:
+            if marker in line:
+                count, _last = found.get(marker, (0, ""))
+                found[marker] = (count + 1, line.strip())
+    if found:
+        return (DIAG_WARN, "Ядро сообщало об отвалах носителей:\n    "
+                + "\n    ".join(f"{marker} — {count} раз, последний: {last}"
+                                for marker, (count, last) in found.items()))
+    return (DIAG_OK, "Отвалов носителей в журнале ядра нет")
+
+
+def run_diagnostics(runner=subprocess.run, system=platform.system, self_pid=None,
+                    exists=os.path.exists, mounts=None):
+    """Собрать проверки станции: список кортежей (статус, текст).
 
     Чистая функция ради тестов без GUI: команды идут через runner, ОС — через
-    system, PID текущего процесса можно подменить. На не-Linux одна строка
-    «недоступно» — это не ошибка.
+    system, файлы — через exists, список точек монтирования и PID можно
+    подменить. На не-Linux одна строка «недоступно» — это не ошибка.
     """
     if system() != "Linux":
         return [(DIAG_SKIP, "Диагностика доступна только на Linux")]
     if self_pid is None:
         self_pid = os.getpid()
+    if mounts is None:
+        mounts = sorted({mp for mp in _get_linux_partitions().values() if mp})
     return [
         _diag_unit(runner, DIAG_SERVICE),
         _diag_unit(runner, DIAG_TIMER),
+        _diag_station_v2(runner, exists),
         _diag_processes(runner, self_pid),
+        _diag_mount_holders(runner, mounts, self_pid),
+        _diag_udev_rule(exists),
+        _diag_journal(runner),
+        _diag_kernel(runner),
         _diag_container(runner),
     ]
 
@@ -818,8 +954,44 @@ class App:
         btns = tk.Frame(dlg, bg=C["bg_app"])
         btns.pack(pady=(8, 4))
         ttk.Button(btns, text="Скопировать", command=_copy).pack(side="left")
+        # Кнопка чистки появляется только когда есть что чистить: удаление
+        # чужого продукта не то, что предлагают на всякий случай.
+        if any(status in (DIAG_WARN, DIAG_FAIL) and "второй версии" in text
+               for status, text in checks):
+            ttk.Button(btns, text="Убрать остатки версии 2", style="Danger.TButton",
+                       command=lambda: self._remove_station_v2(dlg)).pack(side="left", padx=(8, 0))
         ttk.Button(btns, text="Закрыть", command=dlg.destroy).pack(side="left", padx=(8, 0))
         tk.Label(dlg, textvariable=copied, fg=C["fg_muted"], bg=C["bg_app"]).pack(pady=(0, 12))
+
+    def _remove_station_v2(self, parent):
+        """Выключить вторую версию тем же скриптом, что зовёт установщик."""
+        if _is_busy(self.workers_data):
+            messagebox.showwarning(
+                "Занято", "Дождитесь конца сканирования или копирования.", parent=parent)
+            return
+        if not messagebox.askyesno(
+                "Убрать остатки версии 2",
+                "Выключить станцию второй версии и снять её службы?\n\n"
+                "Записи и база второй версии не удаляются: её каталог "
+                "останется рядом с пометкой .removed и датой.",
+                parent=parent):
+            return
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "remove_station_v2.sh")
+        try:
+            done = subprocess.run(["bash", script], capture_output=True, text=True,
+                                  timeout=180)
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось запустить очистку: {e}",
+                                 parent=parent)
+            return
+        if done.returncode != 0:
+            messagebox.showerror("Ошибка", (done.stderr or "").strip()
+                                 or "Очистка не удалась", parent=parent)
+            return
+        parent.destroy()
+        messagebox.showinfo("Готово", (done.stdout or "").strip()
+                            or "Остатки второй версии убраны")
 
     def _start_offline_update(self):
         # Режим обновления без интернета: блокируем программу и ждём флешку
