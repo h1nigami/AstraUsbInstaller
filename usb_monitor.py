@@ -81,6 +81,165 @@ def is_copying(path=None, max_age=60):
         return False
 
 
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
+LOG_MAX_BYTES = 1024 * 1024
+
+_orig_stdout = None
+_orig_stderr = None
+_log_fh = None
+
+
+class _LogTee:
+    """Дублирует print в файл. Один flush на запись, чтобы строки не терялись при падении."""
+
+    def __init__(self, stream, fh):
+        self._stream = stream
+        self._fh = fh
+
+    def write(self, data):
+        self._stream.write(data)
+        try:
+            self._fh.write(data)
+            self._fh.flush()
+        except OSError:
+            pass
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    def flush(self):
+        try:
+            self._stream.flush()
+            self._fh.flush()
+        except OSError:
+            pass
+
+    def isatty(self):
+        try:
+            return self._stream.isatty()
+        except Exception:
+            return False
+
+
+def setup_file_logging(path=None):
+    """Дублировать stdout/stderr в файл. Идемпотентно; вызывать один раз на старте."""
+    global _orig_stdout, _orig_stderr, _log_fh
+    if _orig_stdout is not None:
+        return True
+    target = path or LOG_PATH
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.isfile(target) and os.path.getsize(target) > LOG_MAX_BYTES:
+            with open(target, "rb") as f:
+                f.seek(-LOG_MAX_BYTES // 2, os.SEEK_END)
+                tail = f.read()
+            with open(target, "wb") as f:
+                f.write(tail)
+        _log_fh = open(target, "a", encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+    sys.stdout = _LogTee(_orig_stdout, _log_fh)
+    sys.stderr = _LogTee(_orig_stderr, _log_fh)
+    return True
+
+
+def restore_stdout():
+    """Вернуть stdout/stderr. Нужно только тестам; в бою не вызывается."""
+    global _orig_stdout, _orig_stderr, _log_fh
+    if _orig_stdout is not None:
+        sys.stdout, sys.stderr = _orig_stdout, _orig_stderr
+        _orig_stdout, _orig_stderr = None, None
+    if _log_fh is not None:
+        try:
+            _log_fh.close()
+        except OSError:
+            pass
+        _log_fh = None
+
+
+def collect_diagnostics(db_path=None):
+    """Сводка для выгрузки: только счётчики, без имён, серийников и людей."""
+    info = {
+        "version": "unknown",
+        "platform": platform.system(),
+        "devices": 0,
+        "backups": 0,
+        "archive": get_dest_base(),
+        "archive_bytes": 0,
+    }
+    ver = read_version()
+    if ver:
+        info["version"] = f"{ver[0]} {ver[1]}"
+    try:
+        conn = _connect(db_path)
+    except Exception:
+        conn = None
+    if conn is not None:
+        try:
+            tables = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if "devices" in tables:
+                info["devices"] = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+            if "backups" in tables:
+                info["backups"] = conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0]
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
+    total = 0
+    try:
+        for root, _dirs, files in os.walk(info["archive"]):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    pass
+    except OSError:
+        pass
+    info["archive_bytes"] = total
+    return info
+
+
+def export_logs(dest_dir, db_path=None, log_path=None):
+    """Собрать app.log + version.txt + summary.txt в подпапку dest_dir.
+
+    Возвращает путь пакета. Персональных данных (имена, люди, серийники)
+    в пакете нет — только счётчики.
+    """
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bundle = os.path.join(dest_dir, f"bestcam-logs-{stamp}")
+    os.makedirs(bundle, exist_ok=False)
+    src_log = log_path or LOG_PATH
+    try:
+        if os.path.isfile(src_log):
+            shutil.copy2(src_log, os.path.join(bundle, "app.log"))
+        else:
+            with open(os.path.join(bundle, "app.log"), "w") as f:
+                f.write("Журнал пуст: станция перезапускалась до включения записи в файл.\n")
+    except OSError as e:
+        raise OSError(f"Не удалось скопировать журнал: {e}") from e
+    ver = read_version()
+    try:
+        with open(os.path.join(bundle, "version.txt"), "w") as f:
+            f.write(f"{ver[0]} {ver[1]}\n" if ver else "unknown\n")
+        d = collect_diagnostics(db_path)
+        with open(os.path.join(bundle, "summary.txt"), "w") as f:
+            f.write(
+                "BestCam USB Backup Manager — диагностика\n"
+                f"version: {d['version']}\n"
+                f"platform: {d['platform']}\n"
+                f"devices: {d['devices']}\n"
+                f"backups: {d['backups']}\n"
+                f"archive: {d['archive']}\n"
+                f"archive_bytes: {d['archive_bytes']}\n"
+            )
+    except OSError as e:
+        raise OSError(f"Не удалось записать сводку: {e}") from e
+    return bundle
+
+
 def factory_reset(db_path=None, dest_base=None):
     """Удалить устройства, историю выгрузок и файлы архива.
 
