@@ -2,6 +2,7 @@ import os
 import shutil
 import time
 import subprocess
+import errno
 import json
 import platform
 import sys
@@ -29,6 +30,15 @@ MAX_WORKERS = int(os.environ.get("USB_MAX_WORKERS", "10"))
 # он вынимает по одному, поэтому одновременное исчезновение всех считаем
 # сбоем шины. Дольше этого срока — верим, что хаб действительно отключили.
 BUS_GLITCH_GRACE = float(os.environ.get("USB_BUS_GLITCH_GRACE", "20"))
+# Сколько подряд идущих отказов чтения считать потерей носителя. Когда хаб
+# сбрасывает порт, ядро отдаёт ошибку на каждом файле: перебирать после этого
+# всю карту бессмысленно — это минуты впустую и простыня в журнале вместо
+# одного внятного сообщения оператору.
+IO_ERRORS_TO_GIVE_UP = int(os.environ.get("USB_IO_ERRORS_LIMIT", "5"))
+# Ошибки, означающие, что носителя больше нет: сброс шины, отвал устройства.
+# EREMOTEIO есть не на всех платформах, поэтому берём его осторожно.
+_LOST_DEVICE_ERRNOS = {errno.EIO, errno.ENODEV, errno.ENXIO,
+                       getattr(errno, "EREMOTEIO", errno.EIO)}
 DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
 IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
@@ -43,6 +53,10 @@ _DEST_CFG_KEYS = (_DEST_CFG_RELPATH, _DEST_CFG_UUID, _DEST_CFG_SERIAL)
 
 VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
               ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
+
+
+class DeviceLost(OSError):
+    """Носитель пропал или сброшен шиной — читать с него больше нечего."""
 
 
 def read_version(path=None):
@@ -1212,6 +1226,8 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
     # Source paths that are now safely present at the destination — either just
     # copied or already identical. Only these may be auto-deleted from source.
     backed_up = set()
+    # Отказов чтения подряд: сброшенный шиной носитель валит их пачкой.
+    lost_in_row = 0
     last_emit_t = 0.0
     for root, dirs, files in os.walk(src_root):
         rel_path = os.path.relpath(root, src_root)
@@ -1246,6 +1262,7 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
                 copied_files += 1
                 copied_bytes += file_size
                 backed_up.add(src_file)
+                lost_in_row = 0
                 if USE_RICH and progress_obj:
                     progress_obj.update(task_id, advance=file_size)
                 elif not IS_TTY:
@@ -1260,6 +1277,13 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
                 # backed_up, so it will be preserved on the source.
                 failed += 1
                 print(f"  Copy failed {src_file}: {e}", flush=True)
+                if isinstance(e, OSError) and e.errno in _LOST_DEVICE_ERRNOS:
+                    lost_in_row += 1
+                    if lost_in_row >= IO_ERRORS_TO_GIVE_UP:
+                        raise DeviceLost(
+                            f"{src_root}: {lost_in_row} отказов чтения подряд") from e
+                else:
+                    lost_in_row = 0
     return copied_files, copied_bytes, backed_up, failed
 
 
@@ -1380,9 +1404,23 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
-        copied_files, copied_bytes, backed_up, failed = _copy_files(
-            mountpoint, dest, ts, friendly, total_files, total_bytes,
-            progress_obj, task_id, start_time, emit_fn=_emit)
+        try:
+            copied_files, copied_bytes, backed_up, failed = _copy_files(
+                mountpoint, dest, ts, friendly, total_files, total_bytes,
+                progress_obj, task_id, start_time, emit_fn=_emit)
+        except DeviceLost as error:
+            # Носитель сброшен шиной или выдернут. Дальше читать нечего, а с
+            # источника ничего не удаляем: доехавшее останется и на карте.
+            msg = (f"Устройство отключилось или сброшено шиной: {friendly} — "
+                   f"копирование прервано, карта не изменена")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg} ({error})", flush=True)
+            _emit("error", 0, 0, "Устройство отключено — копирование прервано, "
+                                 "вставьте карту заново")
+            if USE_RICH and progress_obj:
+                progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
         _repair_archive_ownership(dest_base, dest)
 
         # Only delete videos that were actually backed up successfully.

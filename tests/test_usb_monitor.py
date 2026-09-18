@@ -6,12 +6,14 @@ Pure stdlib (unittest) so they run without pytest or a GUI/X11 display:
     python3 tests/test_usb_monitor.py
 """
 
+import errno
 import os
 import sys
 import time
 import tempfile
 import unittest
 from datetime import datetime
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -207,3 +209,48 @@ class CopyAndDeleteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class BusResetTest(unittest.TestCase):
+    """Хаб сбрасывает соседние порты при выдёргивании устройства, и ядро
+    отдаёт ошибку ввода-вывода на каждом чтении. Молотить по всей карте в
+    таком состоянии бессмысленно — надо быстро остановиться и сказать это."""
+
+    def _card(self, root, count):
+        os.makedirs(os.path.join(root, "DCIM"), exist_ok=True)
+        names = []
+        for i in range(count):
+            path = os.path.join(root, "DCIM", f"A11_7_000_2026091812000{i}_000{i}.mp4")
+            with open(path, "wb") as f:
+                f.write(b"x" * 16)
+            names.append(path)
+        return names
+
+    def _copy_with_failures(self, src, dst, failing):
+        """failing(path) -> True, если чтение этого файла падает как при сбросе."""
+        real_copy = um.shutil.copy2
+
+        def fake_copy2(a, b, *args, **kwargs):
+            if failing(a):
+                raise OSError(errno.EIO, "Input/output error")
+            return real_copy(a, b, *args, **kwargs)
+
+        with mock.patch.object(um.shutil, "copy2", fake_copy2):
+            return um._copy_files(src, dst, "20260918_120000", 1, 0, 0,
+                                  None, None, time.time())
+
+    def test_device_lost_aborts_instead_of_grinding(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            self._card(src, 40)
+            with self.assertRaises(um.DeviceLost):
+                self._copy_with_failures(src, dst, lambda p: True)
+
+    def test_single_bad_file_does_not_abort(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            names = self._card(src, 10)
+            bad = names[3]
+            copied, _bytes, backed_up, failed = self._copy_with_failures(
+                src, dst, lambda p: p == bad)
+            self.assertEqual(failed, 1, "один сбойный файл — не повод бросать карту")
+            self.assertEqual(copied, 9)
+            self.assertNotIn(bad, backed_up, "несостоявшаяся копия не должна удаляться")
