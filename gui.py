@@ -1442,9 +1442,9 @@ class App:
                             data["message"] = "Устройство переподключается..."
                             data["detached_at"] = time.time()
                             marked.append(did)
-                    print(f"  ПЛИТКИ: отключено {display_id}, помечено "
-                          f"{marked or 'нечего'}; на экране {list(self.workers_data)}",
-                          flush=True)
+                    if marked:
+                        print(f"  Плитка ждёт возвращения: {display_id} -> {marked}",
+                              flush=True)
                     self._refresh_workers()
                     continue
 
@@ -1460,7 +1460,7 @@ class App:
                         for data in self.workers_data.values():
                             if data.get("detached_at"):
                                 data["detached_at"] = back
-                    print(f"  ПЛИТКИ: шина {'сбоит' if self._bus_glitch else 'в порядке'}",
+                    print(f"  Плитки: шина {'сбоит' if self._bus_glitch else 'в порядке'}",
                           flush=True)
                     continue
 
@@ -1502,7 +1502,7 @@ class App:
         for did in gone:
             self.workers_data.pop(did, None)
         if gone:
-            print(f"  ПЛИТКИ: погасли не вернувшиеся {gone}", flush=True)
+            print(f"  Не вернулись, плитки погашены: {gone}", flush=True)
             self._refresh_workers()
 
         # Выполняется на каждом тике (раз в 200мс) независимо от того, было ли
