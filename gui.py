@@ -94,6 +94,93 @@ def _start_update_service(runner=subprocess.run, network_check=updater.has_netwo
     return UPDATE_STARTED
 
 
+DIAG_OK, DIAG_WARN, DIAG_FAIL, DIAG_SKIP = "ok", "warn", "fail", "skip"
+DIAG_SERVICE = "astra-usb-monitor.service"
+DIAG_TIMER = "astra-usb-update.timer"
+DIAG_CONTAINER = "astra-usb-monitor"
+# Маркеры командной строки экземпляра станции. Сервис запускает GUI как
+# `python3 -c "from gui import launch; launch()"` (см. start_native.sh), поэтому
+# ловить только main.py недостаточно — нужен и маркер этого запуска.
+_DIAG_PROC_MARKERS = ("main.py", "usb_monitor.py", "gui import launch")
+
+
+def _diag_run(runner, cmd):
+    """Выполнить команду диагностики. None — инструмента нет в системе."""
+    try:
+        return runner(cmd, capture_output=True, text=True, timeout=10)
+    except Exception:
+        return None
+
+
+def _diag_unit(runner, unit):
+    active = _diag_run(runner, ["systemctl", "is-active", unit])
+    if active is None:
+        return (DIAG_SKIP, f"{unit}: systemd недоступен")
+    enabled = _diag_run(runner, ["systemctl", "is-enabled", unit])
+    a = (active.stdout or "").strip()
+    e = (enabled.stdout or "").strip() if enabled else ""
+    if a == "active" and e == "enabled":
+        return (DIAG_OK, f"{unit}: работает, автозапуск включён")
+    if a != "active":
+        return (DIAG_FAIL, f"{unit}: не запущен (состояние: {a or 'неизвестно'})")
+    return (DIAG_WARN, f"{unit}: работает, но автозапуск {e or 'выключен'}")
+
+
+def _diag_processes(runner, self_pid):
+    r = _diag_run(runner, ["pgrep", "-af", "python"])
+    if r is None:
+        return (DIAG_SKIP, "Проверка процессов недоступна (нет pgrep)")
+    others = []
+    for line in (r.stdout or "").splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        if pid == self_pid:
+            continue
+        if any(m in parts[1] for m in _DIAG_PROC_MARKERS):
+            others.append(f"PID {pid}: {parts[1]}")
+    if others:
+        return (DIAG_WARN, "Найдены другие копии программы (возможна гонка):\n    "
+                + "\n    ".join(others))
+    return (DIAG_OK, "Другие копии программы не запущены")
+
+
+def _diag_container(runner):
+    r = _diag_run(runner, ["docker", "ps", "--filter", "name=" + DIAG_CONTAINER,
+                           "--format", "{{.Names}} {{.Status}}"])
+    if r is None:
+        return (DIAG_SKIP, "Docker не установлен — старый контейнер исключён")
+    out = (r.stdout or "").strip()
+    if out:
+        return (DIAG_FAIL, "Запущен старый docker-контейнер (конфликт со службой):\n    " + out)
+    if r.returncode != 0:
+        return (DIAG_SKIP, "Не удалось опросить docker")
+    return (DIAG_OK, "Старый docker-контейнер не запущен")
+
+
+def run_diagnostics(runner=subprocess.run, system=platform.system, self_pid=None):
+    """Собрать проверки конфликтов служб станции: список кортежей (статус, текст).
+
+    Чистая функция ради тестов без GUI: команды идут через runner, ОС — через
+    system, PID текущего процесса можно подменить. На не-Linux одна строка
+    «недоступно» — это не ошибка.
+    """
+    if system() != "Linux":
+        return [(DIAG_SKIP, "Диагностика доступна только на Linux")]
+    if self_pid is None:
+        self_pid = os.getpid()
+    return [
+        _diag_unit(runner, DIAG_SERVICE),
+        _diag_unit(runner, DIAG_TIMER),
+        _diag_processes(runner, self_pid),
+        _diag_container(runner),
+    ]
+
+
 class App:
     def __init__(self):
         self.root = tk.Tk()
@@ -672,6 +759,7 @@ class App:
         update_btns.pack(anchor="w", pady=(4, 0))
         ttk.Button(update_btns, text="Проверить обновления", command=self._force_update_check).pack(side="left")
         ttk.Button(update_btns, text="С флешки", command=self._start_offline_update).pack(side="left", padx=(8, 0))
+        ttk.Button(update_btns, text="Диагностика", command=self._run_diagnostics).pack(side="left", padx=(8, 0))
 
     def _force_update_check(self):
         if _is_busy(self.workers_data):
@@ -687,6 +775,51 @@ class App:
                 pass
 
         threading.Thread(target=_do, daemon=True).start()
+
+    def _run_diagnostics(self):
+        # Опрос systemctl/pgrep/docker занимает время — уводим в поток, модалку
+        # рисуем в главном потоке через after.
+        self._about_status_var.set("Диагностика…")
+        def _do():
+            checks = run_diagnostics()
+            self.root.after(0, lambda: self._show_diagnostics(checks))
+        threading.Thread(target=_do, daemon=True).start()
+
+    def _show_diagnostics(self, checks):
+        C = self.C
+        icons = {DIAG_OK: ("✓", C["accent_ok"]), DIAG_WARN: ("⚠", C["accent_warn"]),
+                 DIAG_FAIL: ("✗", "#f87171"), DIAG_SKIP: ("○", C["fg_muted"])}
+        self._about_status_var.set("")
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Диагностика")
+        dlg.configure(bg=C["bg_app"])
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w, h = sw // 2, sh * 3 // 4
+        dlg.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        dlg.transient(self.root)
+        dlg.wait_visibility(dlg)
+        dlg.grab_set()
+        tk.Label(dlg, text="Диагностика станции", font=("Segoe UI", 20, "bold"),
+                 fg=C["fg_main"], bg=C["bg_app"]).pack(pady=(16, 12))
+        body = tk.Frame(dlg, bg=C["bg_app"])
+        body.pack(fill="both", expand=True, padx=20)
+        report = []
+        for status, text in checks:
+            icon, color = icons.get(status, ("•", C["fg_main"]))
+            tk.Label(body, text=f"{icon}  {text}", justify="left", anchor="w",
+                     font=("Segoe UI", 13), fg=color, bg=C["bg_app"],
+                     wraplength=w - 60).pack(fill="x", anchor="w", pady=4)
+            report.append(f"{icon} {text}")
+        copied = tk.StringVar(value="")
+        def _copy():
+            self.root.clipboard_clear()
+            self.root.clipboard_append("\n".join(report))
+            copied.set("Скопировано в буфер обмена")
+        btns = tk.Frame(dlg, bg=C["bg_app"])
+        btns.pack(pady=(8, 4))
+        ttk.Button(btns, text="Скопировать", command=_copy).pack(side="left")
+        ttk.Button(btns, text="Закрыть", command=dlg.destroy).pack(side="left", padx=(8, 0))
+        tk.Label(dlg, textvariable=copied, fg=C["fg_muted"], bg=C["bg_app"]).pack(pady=(0, 12))
 
     def _start_offline_update(self):
         # Режим обновления без интернета: блокируем программу и ждём флешку
