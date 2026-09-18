@@ -1492,9 +1492,11 @@ class App:
                     if pending_id in self.port_assignment:
                         self.port_assignment[device_id] = self.port_assignment.pop(pending_id)
 
+                previous = self.workers_data.get(device_id, {})
                 self.workers_data[device_id] = {
                     "device": display_id,
-                    "state": {"identifying": "Определение ID", "scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
+                    "state": {"identifying": "Определение ID", "scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка",
+                              "detached": "Переподключение"}.get(state, state),
                     "state_raw": state,
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",
@@ -1502,6 +1504,14 @@ class App:
                     "message": msg,
                     "devname": devname,
                 }
+                if state == "detached":
+                    # Отсчёт ожидания начинается с первой такой строки: если
+                    # отключение устройства так и не придёт, плитка всё равно
+                    # погаснет сама и не повиснет серой навсегда.
+                    row = self.workers_data[device_id]
+                    row["detached_at"] = previous.get("detached_at") or time.time()
+                    row["detached_glitch"] = previous.get(
+                        "detached_glitch", bool(getattr(self, "_bus_glitch", False)))
                 self._refresh_workers()
         except queue.Empty:
             pass

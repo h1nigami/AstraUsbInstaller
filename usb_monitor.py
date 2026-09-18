@@ -1448,8 +1448,11 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             msg = (f"Устройство отключилось или сброшено шиной: {friendly} — "
                    f"копирование прервано, карта не изменена")
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg} ({error})", flush=True)
-            _emit("error", 0, 0, "Устройство отключено — копирование прервано, "
-                                 "вставьте карту заново")
+            # Не «ошибка», а «переподключение»: при сбросе порта карта
+            # возвращается через несколько секунд и продолжает работу. Красная
+            # вспышка на весь экран кричит оператору «сломалось», хотя ничего
+            # не сломалось. Не вернётся — плитка погаснет по своему сроку.
+            _emit("detached", 0, 0, "Устройство переподключается...")
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
             if should_unmount:
