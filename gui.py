@@ -11,7 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives, _load_config, update_config, remember_configured_dest, _connect, _CONFIG_PATH as CONFIG_PATH
+from usb_monitor import monitor_usb, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives, _load_config, update_config, remember_configured_dest, reset_config, _connect, GUI_DB_TIMEOUT
 import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
@@ -38,7 +38,23 @@ def _get_exit_password():
 
 
 def _set_exit_password(new_pw):
-    update_config({"exit_password": new_pw})
+    return _save_setting({"exit_password": new_pw})
+
+
+def _save_setting(changes):
+    """Записать настройки и сказать оператору, если файл не поддался.
+
+    update_config отказывает, когда config.json не читается. Без этого
+    сообщения человек видел «Готово», а пароль или таймаут оставались
+    прежними — и узнавал об этом в худший момент.
+    """
+    if update_config(changes):
+        return True
+    messagebox.showerror(
+        "Ошибка",
+        "Настройки не сохранены: файл data/config.json повреждён.\n\n"
+        "Выберите заново папку для резервных копий — это пересоздаст файл.")
+    return False
 
 
 def _is_busy(workers_data):
@@ -847,8 +863,9 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число минут")
             return
+        if not _save_setting({"lock_timeout_minutes": minutes}):
+            return
         self._lock_timeout = minutes * 60
-        update_config({"lock_timeout_minutes": minutes})
         self._refresh_timeout_status()
 
     def _save_cleanup_settings(self):
@@ -859,10 +876,11 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число дней (не менее 1)")
             return
+        if not _save_setting({"auto_cleanup_enabled": self._cleanup_enabled_var.get(),
+                              "auto_cleanup_days": days}):
+            return
         self._cleanup_enabled = self._cleanup_enabled_var.get()
         self._cleanup_days = days
-        update_config({"auto_cleanup_enabled": self._cleanup_enabled,
-                       "auto_cleanup_days": days})
         self._cleanup_status_var.set("Настройки сохранены")
 
     def _run_startup_cleanup(self):
@@ -917,10 +935,7 @@ class App:
         def _do():
             try:
                 result = factory_reset()
-                try:
-                    os.remove(CONFIG_PATH)
-                except OSError:
-                    pass
+                reset_config()
             except Exception as e:
                 # Ловим всё: sqlite3.Error не наследник OSError, и раньше
                 # такой сбой убивал поток молча, оставляя статус «Сброс...».
@@ -1009,7 +1024,9 @@ class App:
             if not new_var.get().strip():
                 err_var.set("Новый пароль не может быть пустым")
                 return
-            _set_exit_password(new_var.get().strip())
+            if not _set_exit_password(new_var.get().strip()):
+                dlg.destroy()
+                return
             self._refresh_pw_status()
             dlg.destroy()
             messagebox.showinfo("Готово", "Пароль изменён")
@@ -1065,9 +1082,8 @@ class App:
         dlg.protocol("WM_DELETE_WINDOW", dlg.destroy)
 
     def _get_db(self):
-        # Тот же запас ожидания, что и у воркеров: иначе кнопка интерфейса
-        # отваливается по «database is locked», пока идёт копирование.
-        return _connect()
+        # Короткое ожидание: вызовы идут на потоке Tk, см. GUI_DB_TIMEOUT.
+        return _connect(timeout=GUI_DB_TIMEOUT)
 
     def _device_label(self, dev_id):
         # Подпись вызывается до собственных try в обработчиках кнопок,

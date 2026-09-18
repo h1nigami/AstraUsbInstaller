@@ -208,6 +208,19 @@ def update_config(changes=None, drop=()):
         return _save_config(cfg)
 
 
+def reset_config():
+    """Удалить config.json при заводском сбросе — под тем же замком.
+
+    Мимо замка удаление успевало разойтись с записью из потока монитора,
+    и файл воскресал со старыми настройками уже после сброса.
+    """
+    with _config_lock:
+        try:
+            os.remove(_CONFIG_PATH)
+        except OSError:
+            pass
+
+
 def _config_backup_dest():
     """Return the destination explicitly chosen in the GUI (config.json), or None."""
     return _load_config().get("backup_dest", "") or None
@@ -518,14 +531,21 @@ def _log_progress(label, copied_files, total_files, copied_bytes, total_bytes, f
     print(line, flush=True)
 
 
-def _connect(db_path=None):
+def _connect(db_path=None, timeout=30):
     """Open a fresh SQLite connection for the calling thread.
 
     Each backup worker uses its own connection (with a busy timeout) instead
     of sharing one across the thread pool, which is not safe for concurrent
     writes and silently dropped backup records under load.
     """
-    return sqlite3.connect(db_path or DB_PATH, timeout=30)
+    return sqlite3.connect(db_path or DB_PATH, timeout=timeout)
+
+
+# ponytail: запросы интерфейса идут на потоке Tk, поэтому ждать базу столько
+# же, сколько ждут воркеры, нельзя — киоск замирает целиком. Отказ человек
+# видит в диалоге и повторяет. Убрать потолок можно, только уведя запросы
+# вкладки «Устройства» в отдельный поток.
+GUI_DB_TIMEOUT = 5
 
 
 def _init_db():

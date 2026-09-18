@@ -39,6 +39,14 @@ class BrokenConfigTest(unittest.TestCase):
             with open(cfg_path) as f:
                 self.assertEqual(f.read(), "{не json")
 
+    def test_reset_config_removes_file_and_tolerates_missing(self):
+        with tempfile.TemporaryDirectory() as d:
+            cfg_path = self._broken(d)
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path):
+                um.reset_config()
+                self.assertFalse(os.path.exists(cfg_path))
+                um.reset_config()
+
     def test_choosing_destination_repairs_config(self):
         with tempfile.TemporaryDirectory() as d:
             dest = os.path.join(d, "disk")
