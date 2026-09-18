@@ -27,7 +27,7 @@ POLL_MS = 200
 # Сколько плитка ждёт возвращения устройства, прежде чем погаснуть. Хаб при
 # сбросе отдаёт карту обратно под другим именем за пару секунд; гасить экран
 # на это время — значит показывать оператору мигание вместо работы.
-DETACH_GRACE = 25
+DETACH_GRACE = 40
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
@@ -1434,13 +1434,34 @@ class App:
                     # мигание всей стойки и не понимает, что происходит.
                     # Плитка держится за номер регистратора и переживает
                     # переподключение; не вернулась за DETACH_GRACE — гаснет.
-                    for data in self.workers_data.values():
+                    marked = []
+                    for did, data in self.workers_data.items():
                         if data.get("devname") == display_id and not data.get("detached_at"):
                             data["state"] = "Переподключение"
                             data["state_raw"] = "detached"
                             data["message"] = "Устройство переподключается..."
                             data["detached_at"] = time.time()
+                            marked.append(did)
+                    print(f"  ПЛИТКИ: отключено {display_id}, помечено "
+                          f"{marked or 'нечего'}; на экране {list(self.workers_data)}",
+                          flush=True)
                     self._refresh_workers()
+                    continue
+
+                if device_id == "_bus_":
+                    # Пока шина не вернулась, плитки не гаснут: карты придут
+                    # обратно под другими именами, и гасить их значит показать
+                    # оператору мигание всей стойки вместо работы. Когда шина
+                    # вернулась, отсчёт начинается заново — с этого момента,
+                    # а не с пропажи имени устройства.
+                    self._bus_glitch = (display_id == "glitch")
+                    if not self._bus_glitch:
+                        back = time.time()
+                        for data in self.workers_data.values():
+                            if data.get("detached_at"):
+                                data["detached_at"] = back
+                    print(f"  ПЛИТКИ: шина {'сбоит' if self._bus_glitch else 'в порядке'}",
+                          flush=True)
                     continue
 
                 if device_id == "_status_":
@@ -1476,10 +1497,12 @@ class App:
         # Устройства, которые так и не вернулись за отведённое время, гаснут.
         # Вернувшиеся сюда не попадают: их сообщения перезаписывают строку
         # целиком, вместе с отметкой об отключении.
-        gone = _detached_too_long(self.workers_data, time.time())
+        gone = [] if getattr(self, "_bus_glitch", False) else _detached_too_long(
+            self.workers_data, time.time())
         for did in gone:
             self.workers_data.pop(did, None)
         if gone:
+            print(f"  ПЛИТКИ: погасли не вернувшиеся {gone}", flush=True)
             self._refresh_workers()
 
         # Выполняется на каждом тике (раз в 200мс) независимо от того, было ли

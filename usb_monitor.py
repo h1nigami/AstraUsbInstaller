@@ -1630,11 +1630,23 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     bus_glitch_since = now_t
                     print(f"  Из опроса пропала вся линейка ({len(known_keys)} устройств) — "
                           f"ждём возврата шины", flush=True)
+                    # Интерфейс должен знать про сбой: пока шина не вернулась,
+                    # гасить плитки нельзя — карты вернутся под другими именами.
+                    if progress_queue is not None:
+                        try:
+                            progress_queue.put_nowait(("_bus_", "glitch", "", 0, 0, "", ""))
+                        except Exception:
+                            pass
                 if now_t - bus_glitch_since < BUS_GLITCH_GRACE:
                     continue
             elif bus_glitch_since is not None:
                 print("  Шина вернулась, устройства на месте", flush=True)
                 bus_glitch_since = None
+                if progress_queue is not None:
+                    try:
+                        progress_queue.put_nowait(("_bus_", "ok", "", 0, 0, "", ""))
+                    except Exception:
+                        pass
 
             _update_connected_devices(current)
 
