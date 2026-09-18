@@ -69,6 +69,23 @@ class DeviceLost(OSError):
     """Носитель пропал или сброшен шиной — читать с него больше нечего."""
 
 
+# Безопасное извлечение: оператор останавливает копирование перед тем, как
+# вынимать регистраторы. Тогда выдёргивать нечего — нет ни одного открытого
+# чтения, и хаб не сбрасывает соседние порты.
+_safe_removal = False
+
+
+def set_safe_removal(on):
+    """Включить или снять остановку копирования для извлечения карт."""
+    global _safe_removal
+    _safe_removal = bool(on)
+    print(f"  Безопасное извлечение: {'включено' if _safe_removal else 'снято'}", flush=True)
+
+
+def safe_removal_active():
+    return _safe_removal
+
+
 _awaiting_cards = {}
 _awaiting_lock = threading.Lock()
 
@@ -1345,6 +1362,11 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
             print(f"  Copy failed into {dest_dir}: {e}", flush=True)
             continue
         for file_name in files:
+            if _safe_removal:
+                # Остановка между файлами: начатый файл дописывается целиком,
+                # обрывков в архиве не остаётся.
+                print("  Копирование остановлено для извлечения карт", flush=True)
+                return copied_files, copied_bytes, backed_up, failed
             if file_name in SERVICE_ID_FILES:
                 continue
             src_file = os.path.join(root, file_name)
@@ -1799,6 +1821,11 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             # New devices: present in current but not yet in known
             new_devices = sorted(current_keys - known_keys)
+
+            if _safe_removal and new_devices:
+                # Пока идёт извлечение, новые карты не трогаем: оператор как
+                # раз ими и занят.
+                new_devices = []
 
             for dev in new_devices:
                 if is_linux:

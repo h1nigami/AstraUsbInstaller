@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs
+from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -248,6 +248,14 @@ class App:
         # системной кнопки закрытия, поэтому это единственный видимый способ выйти.
         ttk.Button(hdr, text="⏻ Выход", style="Danger.TButton",
                    command=self._on_close).pack(side="right", padx=16, pady=20)
+
+        # Безопасное извлечение: остановить копирование перед тем, как вынимать
+        # регистраторы. Выдёргивание под нагрузкой заставляет хаб сбрасывать
+        # соседние порты, и тогда рушатся выгрузки со всех карт сразу.
+        self.eject_text = tk.StringVar(value="⏏ Остановить для извлечения")
+        self.eject_btn = ttk.Button(hdr, textvariable=self.eject_text,
+                                    command=self._toggle_safe_removal)
+        self.eject_btn.pack(side="right", padx=(0, 8), pady=20)
 
         tk.Frame(self.root, bg=C["brand"], height=2).pack(fill="x")
 
@@ -937,6 +945,30 @@ class App:
 
         ttk.Button(dlg, text="Сохранить", command=submit).pack(pady=10)
 
+    def _toggle_safe_removal(self):
+        """Остановить копирование для извлечения карт — или продолжить работу."""
+        if safe_removal_active():
+            set_safe_removal(False)
+            self.eject_text.set("⏏ Остановить для извлечения")
+            self.mon_status.set("Мониторинг USB запущен")
+            return
+        set_safe_removal(True)
+        self.eject_text.set("▶ Продолжить работу")
+        self.mon_status.set("Останавливаю копирование, дождитесь разрешения...")
+
+    def _update_safe_removal_status(self):
+        """Сказать оператору, когда карты действительно можно вынимать.
+
+        Ждём, пока встанут все выгрузки: пока хоть одна читает карту, её
+        извлечение заставит хаб сбросить соседние порты.
+        """
+        if not safe_removal_active():
+            return
+        if _is_busy(self.workers_data):
+            self.mon_status.set("Останавливаю копирование, дождитесь разрешения...")
+        else:
+            self.mon_status.set("Копирование остановлено — карты можно вынимать")
+
     def _on_close(self):
         C = self.C
         dlg = tk.Toplevel(self.root)
@@ -1540,6 +1572,7 @@ class App:
         # единого сообщения в очереди, и маркер не должен за это время устареть.
         if _is_busy(self.workers_data):
             touch_copying_marker()
+        self._update_safe_removal_status()
 
         try:
             self.root.after(POLL_MS, self._poll_queue)

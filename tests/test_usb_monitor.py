@@ -330,3 +330,40 @@ class CardReturnTest(unittest.TestCase):
         with mock.patch.object(um, "_get_linux_partitions", lambda: {}), \
              mock.patch.object(um, "_get_filesystem_uuid", lambda dev: None):
             self.assertIsNone(um._wait_for_card("C23E-1A23", timeout=0.1))
+
+
+class SafeRemovalTest(unittest.TestCase):
+    """Кнопка безопасного извлечения: копирование встаёт между файлами,
+    начатый файл дописывается целиком, обрывков в архиве не остаётся."""
+
+    def tearDown(self):
+        um.set_safe_removal(False)
+
+    def test_copying_stops_between_files(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            for i in range(6):
+                with open(os.path.join(src, f"clip{i}.mp4"), "wb") as f:
+                    f.write(b"x" * 8)
+            real_copy = um.shutil.copy2
+            done = {"n": 0}
+
+            def fake_copy2(a, b, *args, **kwargs):
+                done["n"] += 1
+                if done["n"] == 2:
+                    um.set_safe_removal(True)   # оператор нажал кнопку
+                return real_copy(a, b, *args, **kwargs)
+
+            with mock.patch.object(um.shutil, "copy2", fake_copy2):
+                copied, _bytes, backed_up, failed = um._copy_files(
+                    src, dst, "20260918_120000", 1, 0, 0, None, None, time.time())
+
+            self.assertEqual(failed, 0, "остановка — не отказ")
+            self.assertEqual(copied, 2, "копирование встало сразу после текущего файла")
+            self.assertEqual(len(backed_up), 2)
+            for path in backed_up:
+                name = os.path.basename(path)
+                self.assertEqual(os.path.getsize(os.path.join(dst, name)), 8,
+                                 "файл дописан целиком")
+
+    def test_flag_is_off_by_default(self):
+        self.assertFalse(um.safe_removal_active())
