@@ -72,6 +72,8 @@ class InstallerGuardTest(unittest.TestCase):
         import fcntl
         installer = pathlib.Path(__file__).resolve().parents[1] / "install_native.sh"
         prefix = installer.read_text(encoding="utf-8").split("# --- 1.", 1)[0]
+        # Проверяем блокировку в root-ветке установщика, не запуск sudo из теста.
+        prefix = prefix.replace('$(id -u)', '0')
         with tempfile.TemporaryDirectory() as root:
             database = pathlib.Path(root, "devices.db")
             script = pathlib.Path(root, "install.sh")
@@ -80,13 +82,15 @@ class InstallerGuardTest(unittest.TestCase):
                 fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
                 result = subprocess.run(["sh", str(script)], capture_output=True,
                     env={**os.environ, "USB_DB_PATH": str(database)})
-            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("станция занята".encode(), result.stdout)
             self.assertFalse(pathlib.Path(str(database) + ".started").exists())
 
     def test_installer_reuses_inherited_lock(self):
         import fcntl
         installer = pathlib.Path(__file__).resolve().parents[1] / "install_native.sh"
         prefix = installer.read_text(encoding="utf-8").split("# --- 1.", 1)[0]
+        prefix = prefix.replace('$(id -u)', '0')
         with tempfile.TemporaryDirectory() as root:
             database = pathlib.Path(root, "devices.db")
             script = pathlib.Path(root, "install.sh")
