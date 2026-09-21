@@ -57,6 +57,8 @@ class MonitorLoopTest(unittest.TestCase):
                  mock.patch.object(um, "copy_task_windows", _forbidden_real_copy), \
                  mock.patch.object(um, "MOUNT_BASE", mount_base), \
                  mock.patch.object(um, "DB_PATH", db_path), \
+                 mock.patch.object(um, "_CONFIG_PATH", os.path.join(data_dir, "config.json")), \
+                 mock.patch.object(um, "get_removable_drives", side_effect=AssertionError("Реальные диски недоступны тесту")), \
                  mock.patch.object(um, "_get_linux_partitions", side_effect=fake_get_partitions), \
                  mock.patch.object(um, "copy_task_linux", fake_copy_task_linux):
                 t = threading.Thread(
@@ -119,6 +121,8 @@ class MonitorLoopTest(unittest.TestCase):
                  mock.patch.object(um, "copy_task_windows", _forbidden_real_copy), \
                  mock.patch.object(um, "MOUNT_BASE", mount_base), \
                  mock.patch.object(um, "DB_PATH", db_path), \
+                 mock.patch.object(um, "_CONFIG_PATH", os.path.join(data_dir, "config.json")), \
+                 mock.patch.object(um, "get_removable_drives", side_effect=AssertionError("Реальные диски недоступны тесту")), \
                  mock.patch.object(um, "_get_linux_partitions", side_effect=fake_get_partitions), \
                  mock.patch.object(um, "copy_task_linux", fake_copy_task_linux):
                 t = threading.Thread(

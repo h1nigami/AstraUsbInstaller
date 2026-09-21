@@ -22,6 +22,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
         with open(os.path.join(src, "LOG", "boot.txt"), "wb") as out:
             out.write(f"#ID:{device_id}\n".encode("ascii"))
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def _run(self, src, dest, progress_queue=None, label="MYUSB", serial="SERIAL123"):
         with mock.patch.object(um.platform, "system", return_value="Linux"), \
              mock.patch.object(um, "_get_drive_label_linux", return_value=label), \
@@ -99,6 +100,37 @@ class CopyTaskEndToEndTest(unittest.TestCase):
         self.assertEqual(states[:2], ["identifying", "scanning"])
         self.assertEqual(states[-1], "done")
         self.assertIn("copying", states)
+
+    def test_operator_stop_is_not_reported_as_done(self):
+        import queue
+        pq = queue.Queue()
+        with tempfile.TemporaryDirectory() as src, \
+             tempfile.TemporaryDirectory() as dest, \
+             tempfile.TemporaryDirectory() as data_dir:
+            self._id_log(src)
+            for index in range(3):
+                with open(os.path.join(src, f"clip{index}.mp4"), "wb") as out:
+                    out.write(b"recording")
+            original_copy = um._copy_archive_file
+
+            def copy_then_stop(source, target):
+                original_copy(source, target)
+                um.set_safe_removal(True)
+
+            try:
+                with mock.patch.object(um, "DB_PATH", os.path.join(data_dir, "d.db")), \
+                     mock.patch.object(um, "_copy_archive_file", copy_then_stop):
+                    um._init_db().close()
+                    self._run(src, dest, progress_queue=pq)
+            finally:
+                um.set_safe_removal(False)
+            events = list(pq.queue)
+            self.assertEqual(events[-1][2], "stopped")
+            self.assertNotIn("done", [event[2] for event in events])
+            self.assertIn("Копирование остановлено", events[-1][5])
+            self.assertLess(events[-1][3], events[-1][4])
+            for index in range(3):
+                self.assertTrue(os.path.exists(os.path.join(src, f"clip{index}.mp4")))
 
     def test_queue_carries_name_when_set_otherwise_id(self):
         import queue
@@ -211,6 +243,7 @@ class CopyTaskEndToEndTest(unittest.TestCase):
                 states.append(pq.get_nowait()[2])
             self.assertEqual(states, ["identifying", "error"])
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def test_should_unmount_triggers_unmount(self):
         with tempfile.TemporaryDirectory() as src, \
              tempfile.TemporaryDirectory() as dest, \
@@ -269,11 +302,12 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
     def test_already_mounted_path_used_directly_without_unmount_flag(self):
         with mock.patch.object(um.os.path, "ismount", return_value=True), \
              mock.patch.object(um, "copy_task", return_value=(5, 6, 7)) as copy_mock:
-            result = um.copy_task_linux("sda1", "/mnt/usb_backup/sda1", None, None)
+            result = um.copy_task_linux("sda1", "/media/system/sda1", None, None)
         self.assertEqual(result, (5, 6, 7))
         args, _kwargs = copy_mock.call_args
         self.assertFalse(args[5])  # should_unmount False: system already owns the mount
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def test_destination_drive_is_skipped_and_kept_mounted(self):
         """Regression: the drive hosting the backup destination used to be
         treated as a source — backed up and then unmounted, after which every
@@ -296,6 +330,7 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
         status = pq.get_nowait()
         self.assertEqual(status[0], "_status_")
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def test_destination_drive_heals_marker_on_connect(self):
         with tempfile.TemporaryDirectory() as mnt:
             dest = os.path.join(mnt, "backups")
@@ -313,6 +348,8 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(dest, um.DEST_MARKER_FILE)),
                             "reconnecting the dest drive must (re)stamp the marker")
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
+    @mock.patch.object(um.platform, "system", new=lambda: "Linux")
     def test_destination_drive_is_recognised_after_mountpoint_change(self):
         """Native mode may mount the configured destination under our own
         /mnt/usb_backup path after a reboot/replug. The same disk must still
@@ -357,27 +394,15 @@ class CopyTaskWindowsWrapperTest(unittest.TestCase):
 
 
 class MakeSubmitFnTest(unittest.TestCase):
-    class _FakeExecutor:
-        def __init__(self):
-            self.calls = []
-
-        def submit(self, fn, *args):
-            self.calls.append((fn, args))
-            return "future"
-
-    def test_selects_windows_impl_on_windows(self):
-        executor = self._FakeExecutor()
-        with mock.patch.object(um.platform, "system", return_value="Windows"):
-            submit = um._make_submit_fn(None)
-            submit(executor, "E", None, None, None)
-        self.assertIs(executor.calls[0][0], um.copy_task_windows)
-
-    def test_selects_linux_impl_off_windows(self):
-        executor = self._FakeExecutor()
-        with mock.patch.object(um.platform, "system", return_value="Linux"):
-            submit = um._make_submit_fn(None)
-            submit(executor, "sda1", None, None, None)
-        self.assertIs(executor.calls[0][0], um.copy_task_linux)
+    def test_selects_platform_worker(self):
+        from concurrent.futures import ThreadPoolExecutor
+        for system, name in (("Windows", "copy_task_windows"), ("Linux", "copy_task_linux")):
+            with self.subTest(system=system), mock.patch.object(um, "_safe_removal", False), \
+                 mock.patch.object(um.platform, "system", return_value=system), \
+                 mock.patch.object(um, name, return_value=(7, 1, 10)):
+                with ThreadPoolExecutor(max_workers=1) as executor:
+                    future = um._make_submit_fn()(executor, "source", None, None, None)
+                    self.assertEqual(future.result(timeout=3), (7, 1, 10))
 
 
 if __name__ == "__main__":

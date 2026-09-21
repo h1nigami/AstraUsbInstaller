@@ -190,6 +190,7 @@ class ExistingMountReuseTest(unittest.TestCase):
             self.assertIsNone(um._wait_for_system_mount("sdc1", 0))
 
 
+@unittest.skipIf(sys.platform == "win32", "Проверка отсутствующего Windows API")
 class WindowsFallbackTest(unittest.TestCase):
     """These helpers are only meaningful on Windows; on Linux ctypes.windll
     does not exist, exercising the except-branch fallback they ship for

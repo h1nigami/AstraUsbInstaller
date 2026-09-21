@@ -40,7 +40,7 @@ class GetDestBaseTest(unittest.TestCase):
                  mock.patch.dict(os.environ, {"USB_BACKUP_DEST": "/env/dest2"}):
                 self.assertEqual(um.get_dest_base(), "/env/dest2")
 
-    def test_falls_back_to_env_on_invalid_json(self):
+    def test_display_fallback_does_not_allow_backup_on_invalid_json(self):
         with tempfile.TemporaryDirectory() as d:
             cfg_path = os.path.join(d, "config.json")
             with open(cfg_path, "w") as f:
@@ -48,7 +48,9 @@ class GetDestBaseTest(unittest.TestCase):
             with mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
                  mock.patch.dict(os.environ, {"USB_BACKUP_DEST": "/env/dest3"}):
                 self.assertEqual(um.get_dest_base(), "/env/dest3")
+                self.assertFalse(um.dest_available())
 
+    @mock.patch.object(um.platform, "system", new=lambda: "Linux")
     def test_resolves_same_destination_disk_under_new_mountpoint(self):
         with tempfile.TemporaryDirectory() as d, \
              tempfile.TemporaryDirectory() as mount_root:
@@ -66,6 +68,7 @@ class GetDestBaseTest(unittest.TestCase):
                  mock.patch.object(um, "_get_filesystem_uuid", return_value="UUID-1"):
                 self.assertEqual(um.get_dest_base(), resolved)
 
+    @mock.patch.object(um.platform, "system", new=lambda: "Linux")
     def test_describe_dest_path_captures_relative_path_and_device_identity(self):
         with tempfile.TemporaryDirectory() as mount_root:
             dest = os.path.join(mount_root, "nested", "backups")
@@ -86,6 +89,7 @@ class DestMarkerTest(unittest.TestCase):
     destination disk was unmounted (the "interface says OK, disk is empty"
     bug)."""
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def test_ensure_dest_marker_creates_file(self):
         with tempfile.TemporaryDirectory() as d:
             self.assertTrue(um.ensure_dest_marker(d))
@@ -94,11 +98,12 @@ class DestMarkerTest(unittest.TestCase):
     def test_ensure_dest_marker_fails_on_unwritable_path(self):
         self.assertFalse(um.ensure_dest_marker("/no/such/dir"))
 
-    def test_dest_available_without_configured_dest(self):
+    def test_dest_unavailable_on_system_disk_without_configured_dest(self):
         with tempfile.TemporaryDirectory() as d:
             cfg_path = os.path.join(d, "missing.json")
-            with mock.patch.object(um, "_CONFIG_PATH", cfg_path):
-                self.assertTrue(um.dest_available(), "env/default dest keeps legacy behaviour")
+            with mock.patch.object(um, "_CONFIG_PATH", cfg_path), \
+                 mock.patch.dict(os.environ, {"USB_BACKUP_DEST": d}):
+                self.assertFalse(um.dest_available())
 
     def _with_config(self, d, dest):
         cfg_path = os.path.join(d, "config.json")
@@ -106,6 +111,7 @@ class DestMarkerTest(unittest.TestCase):
             json.dump({"backup_dest": dest}, f)
         return mock.patch.object(um, "_CONFIG_PATH", cfg_path)
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def test_dest_available_with_marker(self):
         with tempfile.TemporaryDirectory() as d:
             dest = os.path.join(d, "disk")
@@ -128,6 +134,8 @@ class DestMarkerTest(unittest.TestCase):
             with self._with_config(d, shadow):
                 self.assertFalse(um.dest_available())
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
+    @mock.patch.object(um.platform, "system", new=lambda: "Linux")
     def test_dest_available_when_real_disk_is_resolved_under_new_mountpoint(self):
         with tempfile.TemporaryDirectory() as d, \
              tempfile.TemporaryDirectory() as mount_root:
@@ -165,6 +173,7 @@ class IsDestPathTest(unittest.TestCase):
         with mock.patch.object(um, "get_dest_base", return_value="/app/USB_Backups"):
             self.assertFalse(um._is_dest_path("/mnt/usb_backup/sdb1"))
 
+    @mock.patch.object(um.platform, "system", new=lambda: "Linux")
     def test_resolved_dest_under_app_mount_is_still_detected(self):
         with tempfile.TemporaryDirectory() as d, \
              tempfile.TemporaryDirectory() as mount_root:
@@ -184,6 +193,18 @@ class IsDestPathTest(unittest.TestCase):
 
 
 class CleanupOldVideosTest(unittest.TestCase):
+    def setUp(self):
+        guard = mock.patch.object(um, "_require_archive_device")
+        guard.start()
+        self.addCleanup(guard.stop)
+
+    def _archive(self, directory):
+        with open(os.path.join(directory, um.DEST_MARKER_FILE), "w"):
+            pass
+        device = os.path.join(directory, "Device1")
+        os.makedirs(device, exist_ok=True)
+        return device
+
     def _touch(self, path, days_old, size=10):
         with open(path, "wb") as f:
             f.write(b"x" * size)
@@ -192,9 +213,10 @@ class CleanupOldVideosTest(unittest.TestCase):
 
     def test_deletes_only_videos_past_threshold(self):
         with tempfile.TemporaryDirectory() as dest:
-            old_video = os.path.join(dest, "old.mp4")
-            new_video = os.path.join(dest, "new.mp4")
-            old_photo = os.path.join(dest, "old.jpg")
+            device = self._archive(dest)
+            old_video = os.path.join(device, "old.mp4")
+            new_video = os.path.join(device, "new.mp4")
+            old_photo = os.path.join(device, "old.jpg")
             self._touch(old_video, 40)
             self._touch(new_video, 5)
             self._touch(old_photo, 40)
@@ -205,12 +227,14 @@ class CleanupOldVideosTest(unittest.TestCase):
             self.assertTrue(os.path.exists(new_video), "recent video must survive")
             self.assertTrue(os.path.exists(old_photo), "non-video must never be touched")
 
-    def test_missing_dest_dir_returns_zero(self):
-        self.assertEqual(um.cleanup_old_backup_videos("/no/such/dir", 30), (0, 0))
+    def test_missing_dest_dir_refuses_cleanup(self):
+        with self.assertRaises(OSError):
+            um.cleanup_old_backup_videos("/no/such/dir", 30)
 
     def test_uses_get_dest_base_when_dest_is_none(self):
         with tempfile.TemporaryDirectory() as dest:
-            video = os.path.join(dest, "a.mp4")
+            device = self._archive(dest)
+            video = os.path.join(device, "a.mp4")
             self._touch(video, 40)
             with mock.patch.object(um, "get_dest_base", return_value=dest):
                 deleted, _freed = um.cleanup_old_backup_videos(None, 30)
@@ -218,7 +242,8 @@ class CleanupOldVideosTest(unittest.TestCase):
 
     def test_recurses_into_subdirectories(self):
         with tempfile.TemporaryDirectory() as dest:
-            sub = os.path.join(dest, "Device1", "20260101_000000")
+            device = self._archive(dest)
+            sub = os.path.join(device, "20260101_000000")
             os.makedirs(sub)
             video = os.path.join(sub, "clip.mkv")
             self._touch(video, 40)

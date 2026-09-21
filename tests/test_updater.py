@@ -369,6 +369,7 @@ class ApplyTest(unittest.TestCase):
 
             with mock.patch.multiple(updater, APP_DIR=app, PREV_DIR=previous,
                                      FAILED_TAG_FILE=app + ".failed"), \
+                 mock.patch.object(updater.usb_monitor, "DB_PATH", database), \
                  mock.patch.object(updater.subprocess, "run", side_effect=run), \
                  mock.patch.object(updater.time, "sleep"), \
                  mock.patch.object(updater, "_service_healthy", return_value=True), \

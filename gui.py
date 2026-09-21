@@ -1,6 +1,6 @@
 import os
 import sys
-import json
+import usb_monitor
 import platform
 import queue
 import shutil
@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
 from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs
+from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
 DOC_EXTS   = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".odt", ".ods"}
@@ -34,34 +35,36 @@ DETACH_GRACE_MAX = 150     # потолок, чтобы плитка не вис
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
 
 
+CONFIG_ERROR = "Настройки недоступны. Восстановите config.json через администратора станции."
+
+
 def _load_config():
-    try:
-        with open(CONFIG_PATH) as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    return usb_monitor._load_config(path=CONFIG_PATH)
 
 
 def _save_config(cfg):
-    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-    with open(CONFIG_PATH, "w") as f:
-        json.dump(cfg, f)
+    return usb_monitor._save_config(cfg, path=CONFIG_PATH)
+
+
+def _update_config(updates, remove_keys=()):
+    return usb_monitor.update_config(updates, remove_keys=remove_keys, path=CONFIG_PATH)
 
 
 def _get_exit_password():
     cfg = _load_config()
+    if cfg.get("_config_unreadable"):
+        return None
     pw = cfg.get("exit_password")
     if pw:
         return pw
     default = os.environ.get("APP_EXIT_PASSWORD", "exit")
-    _save_config({**cfg, "exit_password": default})
+    if not _update_config({"exit_password": default}):
+        return None
     return default
 
 
 def _set_exit_password(new_pw):
-    cfg = _load_config()
-    cfg["exit_password"] = new_pw
-    _save_config(cfg)
+    return _update_config({"exit_password": new_pw})
 
 
 def _detached_too_long(workers_data, now, pulled_grace=None, max_grace=None):
@@ -252,7 +255,7 @@ class App:
         # Безопасное извлечение: остановить копирование перед тем, как вынимать
         # регистраторы. Выдёргивание под нагрузкой заставляет хаб сбрасывать
         # соседние порты, и тогда рушатся выгрузки со всех карт сразу.
-        self.eject_text = tk.StringVar(value="⏏ Остановить для извлечения")
+        self.eject_text = tk.StringVar(value="▶ Возобновить копирование" if safe_removal_active() else "⏏ Остановить для извлечения")
         self.eject_btn = ttk.Button(hdr, textvariable=self.eject_text,
                                     command=self._toggle_safe_removal)
         self.eject_btn.pack(side="right", padx=(0, 8), pady=20)
@@ -313,7 +316,11 @@ class App:
                  fg="#f87171", bg=C["bg_panel"]).pack()
 
         def confirm():
-            if pw_var.get().strip() == _get_exit_password():
+            expected = _get_exit_password()
+            if expected is None:
+                err_var.set(CONFIG_ERROR)
+                return
+            if pw_var.get().strip() == expected:
                 result["ok"] = True
                 dlg.destroy()
             else:
@@ -750,10 +757,10 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число минут")
             return
+        if not _update_config({"lock_timeout_minutes": minutes}):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
+            return
         self._lock_timeout = minutes * 60
-        cfg = _load_config()
-        cfg["lock_timeout_minutes"] = minutes
-        _save_config(cfg)
         self._refresh_timeout_status()
 
     def _save_cleanup_settings(self):
@@ -764,23 +771,27 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число дней (не менее 1)")
             return
-        self._cleanup_enabled = self._cleanup_enabled_var.get()
+        enabled = self._cleanup_enabled_var.get()
+        if not _update_config({"auto_cleanup_enabled": enabled, "auto_cleanup_days": days}):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
+            return
+        self._cleanup_enabled = enabled
         self._cleanup_days = days
-        cfg = _load_config()
-        cfg["auto_cleanup_enabled"] = self._cleanup_enabled
-        cfg["auto_cleanup_days"] = days
-        _save_config(cfg)
         self._cleanup_status_var.set("Настройки сохранены")
 
     def _run_startup_cleanup(self):
-        deleted, freed = cleanup_old_backup_videos(older_than_days=self._cleanup_days)
-        if deleted:
-            msg = f"Автоочистка при запуске: удалено {deleted} видео, освобождено {_format_size(freed)}"
-        else:
-            msg = "Автоочистка при запуске: старых видео не найдено"
+        self._cleanup_worker(self._cleanup_days, "Автоочистка при запуске: ")
+
+    def _cleanup_worker(self, days, prefix=""):
         try:
-            self._cleanup_status_var.set(msg)
-        except Exception:
+            deleted, freed = cleanup_old_backup_videos(older_than_days=days)
+            msg = (f"Удалено {deleted} видео, освобождено {_format_size(freed)}"
+                   if deleted else "Старых видео не найдено")
+        except OSError as error:
+            msg = f"Очистка не выполнена: {error}"
+        try:
+            self.root.after(0, self._cleanup_status_var.set, prefix + msg)
+        except tk.TclError:
             pass
 
     def _run_cleanup_now(self):
@@ -793,18 +804,7 @@ class App:
             return
         self._cleanup_status_var.set("Очистка...")
 
-        def _do():
-            deleted, freed = cleanup_old_backup_videos(older_than_days=days)
-            if deleted:
-                msg = f"Удалено {deleted} видео, освобождено {_format_size(freed)}"
-            else:
-                msg = "Старых видео не найдено"
-            try:
-                self._cleanup_status_var.set(msg)
-            except Exception:
-                pass
-
-        threading.Thread(target=_do, daemon=True).start()
+        threading.Thread(target=self._cleanup_worker, args=(days,), daemon=True).start()
 
     def _export_logs(self):
         dest = filedialog.askdirectory(
@@ -845,13 +845,9 @@ class App:
 
         def _do():
             try:
-                result = factory_reset()
-                try:
-                    os.remove(CONFIG_PATH)
-                except OSError:
-                    pass
-            except OSError as e:
-                self.root.after(0, lambda: self._finish_factory_reset(None, str(e)))
+                result = factory_reset(config_path=CONFIG_PATH)
+            except (OSError, sqlite3.Error) as e:
+                self.root.after(0, self._finish_factory_reset, None, str(e))
             else:
                 self.root.after(0, lambda: self._finish_factory_reset(result, None))
 
@@ -886,29 +882,33 @@ class App:
         )
         if not new_path:
             return
-        # Пробная запись + файл-маркер. Маркер пишется на реально подключённый
-        # диск; если позже диск окажется не смонтирован, копирование остановится
-        # с ошибкой вместо тихой записи в пустую папку на системном диске.
+        # Системный диск не может быть назначением архива.
         if not ensure_dest_marker(new_path):
             messagebox.showerror(
                 "Ошибка",
-                f"Папка недоступна для записи:\n{new_path}\n\n"
-                f"Убедитесь, что диск подключён и смонтирован.")
+                f"Папка недоступна для архива:\n{new_path}\n\n"
+                "Выберите папку на отдельном подключённом диске. "
+                "Запись архива на системный диск запрещена.")
             return
-        cfg = _load_config()
-        for key in ("backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial"):
-            cfg.pop(key, None)
-        cfg.update(describe_dest_path(new_path))
-        _save_config(cfg)
+        if not _update_config(describe_dest_path(new_path), remove_keys=(
+                "backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial")):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
+            return
         self.backup_dest_var.set(new_path)
         messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
 
     def _refresh_pw_status(self):
         pw = _get_exit_password()
+        if pw is None:
+            self.pw_status.set(CONFIG_ERROR)
+            return
         self.pw_status.set(f"Текущий пароль: {'*' * len(pw)} (длина {len(pw)} симв.)")
 
     def _change_password(self):
         old = _get_exit_password()
+        if old is None:
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
+            return
         dlg = tk.Toplevel(self.root)
         dlg.title("Смена пароля")
         dlg.geometry("350x200")
@@ -938,7 +938,9 @@ class App:
             if not new_var.get().strip():
                 err_var.set("Новый пароль не может быть пустым")
                 return
-            _set_exit_password(new_var.get().strip())
+            if not _set_exit_password(new_var.get().strip()):
+                err_var.set(CONFIG_ERROR)
+                return
             self._refresh_pw_status()
             dlg.destroy()
             messagebox.showinfo("Готово", "Пароль изменён")
@@ -950,24 +952,17 @@ class App:
         if safe_removal_active():
             set_safe_removal(False)
             self.eject_text.set("⏏ Остановить для извлечения")
-            self.mon_status.set("Мониторинг USB запущен")
+            self.mon_status.set("Автокопирование включено: новые устройства будут скопированы")
             return
         set_safe_removal(True)
-        self.eject_text.set("▶ Продолжить работу")
+        self.eject_text.set("▶ Возобновить копирование")
         self.mon_status.set("Останавливаю копирование, дождитесь разрешения...")
 
     def _update_safe_removal_status(self):
-        """Сказать оператору, когда карты действительно можно вынимать.
-
-        Ждём, пока встанут все выгрузки: пока хоть одна читает карту, её
-        извлечение заставит хаб сбросить соседние порты.
-        """
-        if not safe_removal_active():
-            return
-        if _is_busy(self.workers_data):
-            self.mon_status.set("Останавливаю копирование, дождитесь разрешения...")
-        else:
-            self.mon_status.set("Копирование остановлено — карты можно вынимать")
+        """Показать подтверждённый движком результат остановки."""
+        state, message = safe_removal_status()
+        if state != "running":
+            self.mon_status.set(message)
 
     def _on_close(self):
         C = self.C
@@ -1004,6 +999,9 @@ class App:
         def confirm():
             pw_in = pw_var.get().strip()
             expected = _get_exit_password()
+            if expected is None:
+                err_var.set(CONFIG_ERROR)
+                return
             if pw_in == expected:
                 # Без этой строки выход не оставляет в журнале ни следа, и
                 # потом не отличить «кто-то вышел по паролю» от «станция не
@@ -1074,11 +1072,13 @@ class App:
 
     def _search_worker(self, p, gen):
         results = []
+        if gen != self._search_gen:
+            return
         try:
             conn = self._get_db()
             try:
                 sql = """
-                    SELECT d.id, d.person, d.name, b.dest_path
+                    SELECT DISTINCT d.id, d.person, d.name, b.dest_path
                     FROM backups b
                     JOIN devices d ON d.id = b.device_id
                     WHERE 1=1
@@ -1104,11 +1104,24 @@ class App:
             fn_filter = p["filename"]
 
             seen_paths = set()
+            seen_dirs = set()
             for dev_id, person, dev_name, dest_path in sessions:
-                if not dest_path or not os.path.isdir(dest_path):
+                if gen != self._search_gen:
+                    return
+                if not dest_path:
+                    continue
+                directory = os.path.normcase(os.path.abspath(dest_path))
+                if directory in seen_dirs:
+                    continue
+                seen_dirs.add(directory)
+                if not os.path.isdir(dest_path):
                     continue
                 for root, _dirs, files in os.walk(dest_path):
+                    if gen != self._search_gen:
+                        return
                     for fname in files:
+                        if gen != self._search_gen:
+                            return
                         ext = os.path.splitext(fname)[1].lower()
                         if ft == "Фото" and ext not in IMAGE_EXTS:
                             continue
@@ -1280,6 +1293,11 @@ class App:
         )
         if not dest:
             return
+        if not _archive_path_allowed(dest):
+            messagebox.showerror("Выгрузка запрещена",
+                                 "Выберите папку на отдельном подключённом диске. "
+                                 "Запись архива на системный диск запрещена.", parent=self.root)
+            return
         count = len(self._search_results)
         if not messagebox.askyesno(
             "Подтверждение",
@@ -1301,7 +1319,7 @@ class App:
                     base, ext = os.path.splitext(r["filename"])
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     dst = os.path.join(dest, f"{base}_{ts}{ext}")
-                shutil.copy2(r["path"], dst)
+                _copy_archive_file(r["path"], dst)
                 ok += 1
             except Exception as e:
                 errors.append(str(e))
@@ -1400,7 +1418,7 @@ class App:
         if not dev_id:
             messagebox.showwarning("Ошибка", "Выберите устройство из списка")
             return
-        if not dev_id.isdigit():
+        if usb_monitor._positive_id(dev_id) is None:
             messagebox.showwarning("Ошибка", "Некорректный номер устройства")
             return
 
@@ -1435,22 +1453,12 @@ class App:
         ):
             return
 
-        deleted = 0
-        errors = []
-        for fp in videos:
-            try:
-                os.remove(fp)
-                deleted += 1
-            except OSError as e:
-                errors.append(f"{os.path.basename(fp)}: {e}")
-
-        msg = f"Удалено видеофайлов: {deleted} из {len(videos)}"
-        if errors:
-            shown = "\n".join(errors[:5])
-            more = f"\n...и ещё {len(errors) - 5}" if len(errors) > 5 else ""
-            messagebox.showwarning("Завершено с ошибками", f"{msg}\n\nОшибки:\n{shown}{more}")
-        else:
-            messagebox.showinfo("Готово", msg)
+        try:
+            deleted, _freed = cleanup_old_backup_videos(older_than_days=None, device_id=dev_id)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Очистка не выполнена", str(error), parent=self.root)
+            return
+        messagebox.showinfo("Готово", f"Удалено видеофайлов: {deleted} из {len(videos)}")
 
     def _start_monitor(self):
         self.stop_event.clear()
@@ -1536,7 +1544,7 @@ class App:
                 self.workers_data[device_id] = {
                     "device": display_id,
                     "state": {"identifying": "Определение ID", "scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка",
-                              "detached": "Переподключение"}.get(state, state),
+                              "detached": "Переподключение", "stopped": "Остановлено"}.get(state, state),
                     "state_raw": state,
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",
@@ -1607,6 +1615,10 @@ class App:
                 bg = self.C["accent_warn"]
                 preview_text = data["device"]
                 status_text = data.get("progress", "Копирование...")
+            elif state == "Остановлено":
+                bg = self.C["bg_surface"]
+                preview_text = data["device"]
+                status_text = f"Копирование остановлено • {data.get('progress', '')}"
             elif state == "Готово":
                 bg = self.C["accent_ok"]
                 preview_text = data["device"]

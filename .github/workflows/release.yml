@@ -18,6 +18,23 @@ jobs:
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Проверить исходники перед сборкой
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+          python -c "import tkinter, gui"
+          python -m py_compile main.py gui.py usb_monitor.py updater.py
+          python -m unittest discover -s tests -v
+          for script in start_native.sh install_native.sh update.sh diagnose.sh; do
+            bash -n "$script"
+          done
 
       - name: Собрать VERSION и архив
         env:
@@ -26,18 +43,18 @@ jobs:
           DATE="${PUBLISHED_AT%%T*}"
           echo "$TAG $DATE" > VERSION
           NAME="astra-usb-monitor-${TAG}.tar.gz"
-          tar -czf "$NAME" \
+          tar --exclude='__pycache__' --exclude='*.pyc' -czf "$NAME" \
               main.py gui.py usb_monitor.py updater.py \
               start_native.sh install_native.sh update.sh diagnose.sh \
               requirements.txt \
-              99-astra-usb-monitor-udisks.rules VERSION data tests
+              99-astra-usb-monitor-udisks.rules VERSION data/LOGO-1.png tests
           sha256sum "$NAME" > "${NAME}.sha256"
           echo "ASSET=$NAME" >> "$GITHUB_ENV"
 
       - name: Прикрепить к релизу
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
+        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256"
 
       # Инструкция по установке дописывается в конец описания каждого релиза,
       # чтобы её не приходилось копировать руками. Текст описания, набранный

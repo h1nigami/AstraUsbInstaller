@@ -12,11 +12,13 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    import gui as gui_mod
-    _HAS_TK = True
-except Exception:
+    import tkinter
+except ImportError:
     gui_mod = None
     _HAS_TK = False
+else:
+    import gui as gui_mod
+    _HAS_TK = True
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")

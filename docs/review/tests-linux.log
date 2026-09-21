@@ -1,0 +1,539 @@
+test_another_partition_of_system_disk_is_denied (test_archive_guard.LinuxArchiveGuardTest.test_another_partition_of_system_disk_is_denied) ... ok
+  Copy failed /run/tmpt52rtghu/source/video.mp4: Архивный файл не должен быть ссылкой
+test_existing_symlink_is_not_counted_as_backed_up (test_archive_guard.LinuxArchiveGuardTest.test_existing_symlink_is_not_counted_as_backed_up) ... ok
+test_failed_copy_leaves_source_and_removes_partial_destination (test_archive_guard.LinuxArchiveGuardTest.test_failed_copy_leaves_source_and_removes_partial_destination) ... ok
+test_missing_environment_subdirectory_is_created_only_on_allowed_disk (test_archive_guard.LinuxArchiveGuardTest.test_missing_environment_subdirectory_is_created_only_on_allowed_disk) ... ok
+test_open_directory_survives_mountpoint_path_replacement (test_archive_guard.LinuxArchiveGuardTest.test_open_directory_survives_mountpoint_path_replacement) ... ok
+test_partition_and_lvm_resolve_to_physical_disk (test_archive_guard.LinuxArchiveGuardTest.test_partition_and_lvm_resolve_to_physical_disk) ... ok
+test_separate_physical_disk_is_allowed (test_archive_guard.LinuxArchiveGuardTest.test_separate_physical_disk_is_allowed) ... ok
+test_symlink_and_hardlink_targets_are_not_overwritten (test_archive_guard.LinuxArchiveGuardTest.test_symlink_and_hardlink_targets_are_not_overwritten) ... ok
+test_unknown_physical_device_is_denied (test_archive_guard.LinuxArchiveGuardTest.test_unknown_physical_device_is_denied) ... ok
+test_uuid_is_read_from_open_directory_device_not_mountpoint_name (test_archive_guard.LinuxArchiveGuardTest.test_uuid_is_read_from_open_directory_device_not_mountpoint_name) ... ok
+test_wrong_uuid_is_denied_even_with_existing_marker (test_archive_guard.LinuxArchiveGuardTest.test_wrong_uuid_is_denied_even_with_existing_marker) ... ok
+[13:19:48] Диск архива недоступен или является системным: /run/tmptw9nj949/archive — Astra ID 1234567 не скопирован
+test_copy_task_refuses_system_archive_without_deleting_source (test_archive_guard.SystemDiskGuardTest.test_copy_task_refuses_system_archive_without_deleting_source) ... ok
+test_default_destination_cannot_bypass_system_disk_guard (test_archive_guard.SystemDiskGuardTest.test_default_destination_cannot_bypass_system_disk_guard) ... ok
+test_direct_copy_cannot_create_archive_on_system_disk (test_archive_guard.SystemDiskGuardTest.test_direct_copy_cannot_create_archive_on_system_disk) ... ok
+test_existing_marker_cannot_authorize_system_disk (test_archive_guard.SystemDiskGuardTest.test_existing_marker_cannot_authorize_system_disk) ... ok
+test_export_cannot_write_payload_to_system_disk (test_archive_guard.SystemDiskGuardTest.test_export_cannot_write_payload_to_system_disk) ... ok
+WARNING: backup destination is not available yet: /run/tmpa2scip8p (backups will fail until its disk is mounted)
+USB Monitor | Platform: Linux | Workers: 10 | DB: /mnt/host/c/Users/Best/.codex/worktrees/v115-review-fixes/AstraUsbInstaller/data/devices.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_restart_cannot_authorize_shadow_directory (test_archive_guard.SystemDiskGuardTest.test_restart_cannot_authorize_shadow_directory) ... ok
+test_system_directory_cannot_be_marked (test_archive_guard.SystemDiskGuardTest.test_system_directory_cannot_be_marked) ... ok
+USB Monitor | Platform: Linux | Workers: 10 | DB: /run/tmpus38p6og/devices.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Connected: sd0
+  Connected: sd1
+  Connected: sd2
+  Connected: sd3
+  Connected: sd4
+  Connected: sd5
+  Connected: sd6
+  Connected: sd7
+  Connected: sd8
+  Connected: sd9
+[13:19:48] Scanning Astra ID 1234565 (RECORDER)...
+[13:19:48] Scanning Astra ID 1234560 (RECORDER)...
+[13:19:48] Astra ID 1234560: 1 files, 1.0 MB
+[13:19:48] Astra ID 1234565: 1 files, 1.0 MB
+[13:19:48] Astra ID 1234565: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234565_222222_20260915120000_0001.mp4
+[13:19:48] Scanning Astra ID 1234561 (RECORDER)...
+[13:19:48] Astra ID 1234560: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234560_222222_20260915120000_0001.mp4
+[13:19:48] Scanning Astra ID 1234564 (RECORDER)...
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-5
+[13:19:48] Astra ID 1234561: 1 files, 1.0 MB
+[13:19:48] Done: Astra ID 1234565 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234565
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-0
+[13:19:48] Astra ID 1234564: 1 files, 1.0 MB
+[13:19:48] Astra ID 1234561: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234561_222222_20260915120000_0001.mp4
+[13:19:48] Done: Astra ID 1234560 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234560
+[13:19:48] Astra ID 1234564: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234564_222222_20260915120000_0001.mp4
+[13:19:48] Scanning Astra ID 1234562 (RECORDER)...
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-4
+[13:19:48] Done: Astra ID 1234564 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234564
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-1
+[13:19:48] Scanning Astra ID 1234567 (RECORDER)...
+[13:19:48] Done: Astra ID 1234561 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234561
+[13:19:48] Astra ID 1234562: 1 files, 1.0 MB
+[13:19:48] Scanning Astra ID 1234563 (RECORDER)...
+[13:19:48] Astra ID 1234563: 1 files, 1.0 MB
+[13:19:48] Scanning Astra ID 1234569 (RECORDER)...
+[13:19:48] Astra ID 1234562: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234562_222222_20260915120000_0001.mp4
+[13:19:48] Astra ID 1234563: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234563_222222_20260915120000_0001.mp4
+[13:19:48] Scanning Astra ID 1234566 (RECORDER)...
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-3
+[13:19:48] Astra ID 1234566: 1 files, 1.0 MB
+[13:19:48] Scanning Astra ID 1234568 (RECORDER)...
+[13:19:48] Done: Astra ID 1234563 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234563
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-2
+[13:19:48] Astra ID 1234569: 1 files, 1.0 MB
+[13:19:48] Done: Astra ID 1234562 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234562
+[13:19:48] Astra ID 1234566: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234566_222222_20260915120000_0001.mp4
+[13:19:48] Astra ID 1234567: 1 files, 1.0 MB
+[13:19:48] Astra ID 1234568: 1 files, 1.0 MB
+[13:19:48] Astra ID 1234569: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234569_222222_20260915120000_0001.mp4
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-6
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-9
+[13:19:48] Done: Astra ID 1234569 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234569
+[13:19:48] Done: Astra ID 1234566 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234566
+[13:19:48] Astra ID 1234568: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234568_222222_20260915120000_0001.mp4
+[13:19:48] Astra ID 1234567: 100.0% | 1/1 files | 1.0 MB/1.0 MB | ETA 0:00 | A11_1234567_222222_20260915120000_0001.mp4
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-8
+[13:19:48] Done: Astra ID 1234568 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234568
+  Auto-deleted 1 video file(s) from /run/tmpus38p6og/camera-7
+[13:19:48] Done: Astra ID 1234567 (1 files, 1.0 MB) -> /run/tmpus38p6og/archive/Device1234567
+SIMULATION_RESULT={"connected": 10, "copied": 10, "device_ids": [1234560, 1234561, 1234562, 1234563, 1234564, 1234565, 1234566, 1234567, 1234568, 1234569], "markers_created": false, "gui_logic_checked": true}
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_ten_unique_device_ids_copy_to_ten_separate_folders (test_camera_simulation.CameraSimulationTest.test_ten_unique_device_ids_copy_to_ten_separate_folders) ... ok
+[13:19:48] Scanning Astra ID 1234567 (MYUSB)...
+[13:19:48] Astra ID 1234567: 2 files, 15.0 B
+[13:19:48] Astra ID 1234567:  20.0% | 1/2 files | 3.0 B/15.0 B | ETA 0:00 | photo.jpg
+[13:19:48] Astra ID 1234567: 100.0% | 2/2 files | 15.0 B/15.0 B | ETA 0:00 | boot.txt
+[13:19:48] Done: Astra ID 1234567 (2 files, 15.0 B) -> /run/tmpzgwfd900/Device1234567
+test_copies_files_and_persists_device_and_backup_rows (test_copy_task_integration.CopyTaskEndToEndTest.test_copies_files_and_persists_device_and_backup_rows) ... ok
+[13:19:48] Scanning Astra ID 1234567 (MYUSB)...
+[13:19:48] Astra ID 1234567: 2 files, 22.0 B
+[13:19:48] Astra ID 1234567:  45.5% | 1/2 files | 10.0 B/22.0 B | ETA 0:00 | video.mp4
+[13:19:48] Astra ID 1234567: 100.0% | 2/2 files | 22.0 B/22.0 B | ETA 0:00 | boot.txt
+  Auto-deleted 1 video file(s) from /run/tmps12mo1os
+[13:19:48] Done: Astra ID 1234567 (2 files, 22.0 B) -> /run/tmpg7q_wre4/Device1234567
+test_emits_progress_states_in_order (test_copy_task_integration.CopyTaskEndToEndTest.test_emits_progress_states_in_order) ... ok
+Ошибка регистрации sda1: ID регистратора не найден
+test_empty_drive_without_id_is_refused_without_backup_row (test_copy_task_integration.CopyTaskEndToEndTest.test_empty_drive_without_id_is_refused_without_backup_row) ... ok
+[13:19:48] Scanning Astra ID 1234567 (MYUSB)...
+[13:19:48] Astra ID 1234567: 4 files, 39.0 B
+  Безопасное извлечение: включено
+[13:19:48] Astra ID 1234567:  23.1% | 1/4 files | 9.0 B/39.0 B | ETA 0:00 | clip2.mp4
+[13:19:48] Копирование остановлено: Astra ID 1234567 (1 файлов) -> /run/tmpk5qcaoxd/Device1234567
+  Безопасное извлечение: снято
+test_operator_stop_is_not_reported_as_done (test_copy_task_integration.CopyTaskEndToEndTest.test_operator_stop_is_not_reported_as_done) ... ok
+[13:19:48] Scanning Astra ID 1234567 (MYUSB)...
+[13:19:48] Astra ID 1234567: 2 files, 22.0 B
+[13:19:48] Astra ID 1234567:  45.5% | 1/2 files | 10.0 B/22.0 B | ETA 0:00 | video.mp4
+[13:19:48] Astra ID 1234567: 100.0% | 2/2 files | 22.0 B/22.0 B | ETA 0:00 | boot.txt
+  Auto-deleted 1 video file(s) from /run/tmpb5311yeh
+[13:19:48] Done: Astra ID 1234567 (2 files, 22.0 B) -> /run/tmp6h5w1fun/Device1234567
+[13:19:48] Scanning Astra ID 1234567 · Kiosk-1 (MYUSB)...
+[13:19:48] Astra ID 1234567 · Kiosk-1: 2 files, 22.0 B
+[13:19:48] Astra ID 1234567 · Kiosk-1:  45.5% | 1/2 files | 10.0 B/22.0 B | ETA 0:00 | clip2.mp4
+  Auto-deleted 1 video file(s) from /run/tmpb5311yeh
+[13:19:48] Done: Astra ID 1234567 · Kiosk-1 (1 files, 10.0 B) -> /run/tmp6h5w1fun/Device1234567
+test_queue_carries_name_when_set_otherwise_id (test_copy_task_integration.CopyTaskEndToEndTest.test_queue_carries_name_when_set_otherwise_id) ... ok
+test_queue_reflects_rename_during_copy (test_copy_task_integration.CopyTaskEndToEndTest.test_queue_reflects_rename_during_copy)
+[13:19:48] Scanning Astra ID 1234567 (MYUSB)...
+[13:19:48] Astra ID 1234567: 2 files, 22.0 B
+[13:19:48] Astra ID 1234567:  45.5% | 1/2 files | 10.0 B/22.0 B | ETA 0:00 | video.mp4
+[13:19:48] Astra ID 1234567: 100.0% | 2/2 files | 22.0 B/22.0 B | ETA 0:00 | boot.txt
+  Auto-deleted 1 video file(s) from /run/tmpist0inif
+[13:19:48] Done: Astra ID 1234567 (2 files, 22.0 B) -> /run/tmpu1wy_zcs/Device1234567
+Переименование посреди копирования не должно затираться следующим ... ok
+test_refuses_when_configured_dest_has_no_marker (test_copy_task_integration.CopyTaskEndToEndTest.test_refuses_when_configured_dest_has_no_marker)
+[13:19:48] Диск архива недоступен или является системным: /run/tmpcgvco7xu/unmounted_disk — Astra ID 1234567 не скопирован
+Regression: destination disk unmounted -> its path is a plain shadow ... ok
+[13:19:48] Scanning Astra ID 1234567 (L)...
+[13:19:48] Astra ID 1234567: 1 files, 12.0 B
+[13:19:48] Astra ID 1234567: 100.0% | 1/1 files | 12.0 B/12.0 B | ETA 0:00 | boot.txt
+[13:19:48] Done: Astra ID 1234567 (1 files, 12.0 B) -> /run/tmpz7q2ys8f/Device1234567
+test_should_unmount_triggers_unmount (test_copy_task_integration.CopyTaskEndToEndTest.test_should_unmount_triggers_unmount) ... ok
+test_already_mounted_path_used_directly_without_unmount_flag (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_already_mounted_path_used_directly_without_unmount_flag) ... ok
+  Destination drive connected, keeping mounted: /run/tmpf0i6c9bu
+test_destination_drive_heals_marker_on_connect (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_destination_drive_heals_marker_on_connect) ... ok
+test_destination_drive_is_recognised_after_mountpoint_change (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_destination_drive_is_recognised_after_mountpoint_change)
+  Destination drive connected, keeping mounted: /run/tmpu7zk4ptm
+Native mode may mount the configured destination under our own ... ok
+test_destination_drive_is_skipped_and_kept_mounted (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_destination_drive_is_skipped_and_kept_mounted)
+  Destination drive connected, keeping mounted: /run/tmp6up0ays5
+Regression: the drive hosting the backup destination used to be ... ok
+[13:19:48] Mount failed: sda1
+test_mount_failure_returns_zero_tuple (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_mount_failure_returns_zero_tuple) ... ok
+test_mounts_when_not_already_mounted (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_mounts_when_not_already_mounted) ... ok
+test_reuses_system_mount_without_self_mounting_or_unmount (test_copy_task_integration.CopyTaskLinuxWrapperTest.test_reuses_system_mount_without_self_mounting_or_unmount)
+When the desktop auto-mounter already holds the device, reuse that ... ok
+test_builds_drive_path_and_delegates (test_copy_task_integration.CopyTaskWindowsWrapperTest.test_builds_drive_path_and_delegates) ... ok
+test_selects_platform_worker (test_copy_task_integration.MakeSubmitFnTest.test_selects_platform_worker) ... ok
+Очистка архива: удалено видео 1, освобождено 10.0 B
+test_deletes_only_videos_past_threshold (test_dest_and_cleanup.CleanupOldVideosTest.test_deletes_only_videos_past_threshold) ... ok
+test_missing_dest_dir_refuses_cleanup (test_dest_and_cleanup.CleanupOldVideosTest.test_missing_dest_dir_refuses_cleanup) ... ok
+Очистка архива: удалено видео 1, освобождено 10.0 B
+test_recurses_into_subdirectories (test_dest_and_cleanup.CleanupOldVideosTest.test_recurses_into_subdirectories) ... ok
+Очистка архива: удалено видео 1, освобождено 10.0 B
+test_uses_get_dest_base_when_dest_is_none (test_dest_and_cleanup.CleanupOldVideosTest.test_uses_get_dest_base_when_dest_is_none) ... ok
+test_dest_available_when_real_disk_is_resolved_under_new_mountpoint (test_dest_and_cleanup.DestMarkerTest.test_dest_available_when_real_disk_is_resolved_under_new_mountpoint) ... ok
+test_dest_available_with_marker (test_dest_and_cleanup.DestMarkerTest.test_dest_available_with_marker) ... ok
+test_dest_unavailable_on_system_disk_without_configured_dest (test_dest_and_cleanup.DestMarkerTest.test_dest_unavailable_on_system_disk_without_configured_dest) ... ok
+test_dest_unavailable_when_dir_missing (test_dest_and_cleanup.DestMarkerTest.test_dest_unavailable_when_dir_missing) ... ok
+test_dest_unavailable_when_marker_missing (test_dest_and_cleanup.DestMarkerTest.test_dest_unavailable_when_marker_missing) ... ok
+test_ensure_dest_marker_creates_file (test_dest_and_cleanup.DestMarkerTest.test_ensure_dest_marker_creates_file) ... ok
+test_ensure_dest_marker_fails_on_unwritable_path (test_dest_and_cleanup.DestMarkerTest.test_ensure_dest_marker_fails_on_unwritable_path) ... ok
+test_describe_dest_path_captures_relative_path_and_device_identity (test_dest_and_cleanup.GetDestBaseTest.test_describe_dest_path_captures_relative_path_and_device_identity) ... ok
+test_display_fallback_does_not_allow_backup_on_invalid_json (test_dest_and_cleanup.GetDestBaseTest.test_display_fallback_does_not_allow_backup_on_invalid_json) ... ok
+test_falls_back_to_env_when_config_has_no_dest_key (test_dest_and_cleanup.GetDestBaseTest.test_falls_back_to_env_when_config_has_no_dest_key) ... ok
+test_falls_back_to_env_when_config_missing (test_dest_and_cleanup.GetDestBaseTest.test_falls_back_to_env_when_config_missing) ... ok
+test_resolves_same_destination_disk_under_new_mountpoint (test_dest_and_cleanup.GetDestBaseTest.test_resolves_same_destination_disk_under_new_mountpoint) ... ok
+test_uses_config_when_present (test_dest_and_cleanup.GetDestBaseTest.test_uses_config_when_present) ... ok
+test_dest_inside_mountpoint (test_dest_and_cleanup.IsDestPathTest.test_dest_inside_mountpoint) ... ok
+test_exact_mountpoint_match (test_dest_and_cleanup.IsDestPathTest.test_exact_mountpoint_match) ... ok
+test_resolved_dest_under_app_mount_is_still_detected (test_dest_and_cleanup.IsDestPathTest.test_resolved_dest_under_app_mount_is_still_detected) ... ok
+test_sibling_name_prefix_is_not_a_match (test_dest_and_cleanup.IsDestPathTest.test_sibling_name_prefix_is_not_a_match) ... ok
+test_unrelated_path (test_dest_and_cleanup.IsDestPathTest.test_unrelated_path) ... ok
+test_completion_line_always_prints (test_dest_and_cleanup.LogProgressTest.test_completion_line_always_prints) ... ok
+test_first_update_for_a_device_always_prints (test_dest_and_cleanup.LogProgressTest.test_first_update_for_a_device_always_prints) ... ok
+test_rapid_small_progress_deltas_are_throttled (test_dest_and_cleanup.LogProgressTest.test_rapid_small_progress_deltas_are_throttled) ... ok
+test_repeated_completion_calls_print_only_once (test_dest_and_cleanup.LogProgressTest.test_repeated_completion_calls_print_only_once) ... ok
+test_repairs_only_direct_device_directories_with_numeric_suffix (test_dest_and_cleanup.RepairArchiveOwnershipTest.test_repairs_only_direct_device_directories_with_numeric_suffix) ... ok
+test_specific_path_must_be_direct_positive_device_directory (test_dest_and_cleanup.RepairArchiveOwnershipTest.test_specific_path_must_be_direct_positive_device_directory) ... ok
+test_specific_path_rejects_symlink_and_changed_realpath (test_dest_and_cleanup.RepairArchiveOwnershipTest.test_specific_path_rejects_symlink_and_changed_realpath) ... ok
+test_conflicting_log_and_recording_ids_are_rejected (test_device_registry.DeviceIdentityReaderTest.test_conflicting_log_and_recording_ids_are_rejected) ... ok
+test_empty_id_in_log_is_reported_as_missing (test_device_registry.DeviceIdentityReaderTest.test_empty_id_in_log_is_reported_as_missing) ... ok
+test_latest_log_without_id_does_not_reuse_older_id (test_device_registry.DeviceIdentityReaderTest.test_latest_log_without_id_does_not_reuse_older_id) ... ok
+test_reads_device_id_from_latest_recording_without_log (test_device_registry.DeviceIdentityReaderTest.test_reads_device_id_from_latest_recording_without_log) ... ok
+test_reads_device_id_from_log (test_device_registry.DeviceIdentityReaderTest.test_reads_device_id_from_log) ... ok
+test_unreadable_log_does_not_fall_back_to_recording (test_device_registry.DeviceIdentityReaderTest.test_unreadable_log_does_not_fall_back_to_recording) ... ok
+test_very_long_decimal_id_is_rejected_without_parser_crash (test_device_registry.DeviceIdentityReaderTest.test_very_long_decimal_id_is_rejected_without_parser_crash) ... ok
+test_custom_name_is_shown_after_astra_id (test_device_registry.FriendlyLabelTest.test_custom_name_is_shown_after_astra_id) ... ok
+test_without_name_shows_astra_id (test_device_registry.FriendlyLabelTest.test_without_name_shows_astra_id) ... ok
+test_creates_schema_and_is_idempotent (test_device_registry.InitDbTest.test_creates_schema_and_is_idempotent) ... ok
+test_corrupt_existing_marker_is_ignored_and_preserved (test_device_registry.ResolveDeviceIdTest.test_corrupt_existing_marker_is_ignored_and_preserved) ... ok
+test_device_id_wins_over_old_astra_marker (test_device_registry.ResolveDeviceIdTest.test_device_id_wins_over_old_astra_marker) ... ok
+test_missing_usb_serial_does_not_merge_different_ids (test_device_registry.ResolveDeviceIdTest.test_missing_usb_serial_does_not_merge_different_ids) ... ok
+test_new_device_creates_record_without_marker (test_device_registry.ResolveDeviceIdTest.test_new_device_creates_record_without_marker) ... ok
+test_old_database_row_with_same_number_is_not_reused (test_device_registry.ResolveDeviceIdTest.test_old_database_row_with_same_number_is_not_reused) ... ok
+test_old_marker_without_device_id_does_not_register (test_device_registry.ResolveDeviceIdTest.test_old_marker_without_device_id_does_not_register) ... ok
+test_rename_survives_reconnect_and_label_refresh (test_device_registry.ResolveDeviceIdTest.test_rename_survives_reconnect_and_label_refresh) ... ok
+test_same_serial_with_different_device_ids_gets_separate_rows (test_device_registry.ResolveDeviceIdTest.test_same_serial_with_different_device_ids_gets_separate_rows) ... ok
+test_device_with_taken_serial_still_gets_a_row (test_device_registry.SharedSerialTest.test_device_with_taken_serial_still_gets_a_row) ... ok
+test_recovers_devices_that_only_exist_in_backups (test_device_registry.SharedSerialTest.test_recovers_devices_that_only_exist_in_backups) ... ok
+test_name_without_decorations (test_device_registry.ShortLabelTest.test_name_without_decorations) ... ok
+test_without_name_shows_bare_id (test_device_registry.ShortLabelTest.test_without_name_shows_bare_id) ... ok
+test_missing_destination_refuses_reset (test_factory_reset.FactoryResetTest.test_missing_destination_refuses_reset) ... ok
+test_refuses_while_copying (test_factory_reset.FactoryResetTest.test_refuses_while_copying) ... ok
+test_removes_rows_archives_and_claims (test_factory_reset.FactoryResetTest.test_removes_rows_archives_and_claims) ... ok
+test_busy_while_scanning_or_copying (test_gui_config.BusyMarkerTest.test_busy_while_scanning_or_copying) ... ok
+test_idle_when_done_or_error (test_gui_config.BusyMarkerTest.test_idle_when_done_or_error) ... ok
+test_idle_when_no_workers (test_gui_config.BusyMarkerTest.test_idle_when_no_workers) ... ok
+test_ceiling_applies_even_while_identifying (test_gui_config.DetachedTileTest.test_ceiling_applies_even_while_identifying)
+Потолок обязателен: иначе зависшее опознание держит плитку вечно. ... ok
+test_pulled_device_clears_quickly (test_gui_config.DetachedTileTest.test_pulled_device_clears_quickly)
+Опознавать некого — карту просто вынули, серую плитку не держим. ... ok
+test_returned_device_is_not_purged (test_gui_config.DetachedTileTest.test_returned_device_is_not_purged) ... ok
+test_waits_while_station_identifies_returning_cards (test_gui_config.DetachedTileTest.test_waits_while_station_identifies_returning_cards)
+Идёт опознание — карты после сбоя ещё возвращаются, плитки держим. ... ok
+test_get_exit_password_defaults_from_env_and_persists (test_gui_config.GuiConfigTest.test_get_exit_password_defaults_from_env_and_persists) ... ok
+test_get_exit_password_prefers_saved_value_over_env (test_gui_config.GuiConfigTest.test_get_exit_password_prefers_saved_value_over_env) ... ok
+test_load_config_missing_file_returns_empty_dict (test_gui_config.GuiConfigTest.test_load_config_missing_file_returns_empty_dict) ... ok
+test_save_then_load_roundtrip (test_gui_config.GuiConfigTest.test_save_then_load_roundtrip) ... ok
+test_set_exit_password_overwrites_and_preserves_other_keys (test_gui_config.GuiConfigTest.test_set_exit_password_overwrites_and_preserves_other_keys) ... ok
+test_failed_start_reports_error (test_gui_config.UpdateCheckTest.test_failed_start_reports_error) ... ok
+test_missing_systemd_reports_gracefully (test_gui_config.UpdateCheckTest.test_missing_systemd_reports_gracefully) ... ok
+test_successful_start (test_gui_config.UpdateCheckTest.test_successful_start) ... ok
+test_python_install_preserves_independent_station (test_install_cleanup.PreserveStationTest.test_python_install_preserves_independent_station) ... ok
+test_export_creates_bundle_with_log_version_summary (test_log_export.LogExportTest.test_export_creates_bundle_with_log_version_summary) ... ok
+test_export_without_log_file_still_succeeds (test_log_export.LogExportTest.test_export_without_log_file_still_succeeds) ... ok
+marker-line-1
+marker-line-2
+test_file_logging_captures_prints_and_is_idempotent (test_log_export.LogExportTest.test_file_logging_captures_prints_and_is_idempotent) ... ok
+USB Monitor | Platform: Linux | Workers: 10 | DB: /run/tmpydcb4e0g/d.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Connected: sda1
+  Connected: sdb1
+  Connected: sdc1
+  Из опроса пропала вся линейка (3 устройств) — ждём возврата шины
+  Шина вернулась, устройства на месте
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_bus_gone_for_good_is_still_reported (test_monitor_loop.BusGlitchTest.test_bus_gone_for_good_is_still_reported) ... ok
+USB Monitor | Platform: Linux | Workers: 10 | DB: /run/tmpda8tmcog/d.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Connected: sda1
+  Connected: sdb1
+  Connected: sdc1
+  Из опроса пропала вся линейка (3 устройств) — ждём возврата шины
+  Шина вернулась, устройства на месте
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_whole_bus_blink_is_not_a_removal (test_monitor_loop.BusGlitchTest.test_whole_bus_blink_is_not_a_removal) ... ok
+USB Monitor | Platform: Linux | Workers: 10 | DB: /run/tmptz0mldzo/d.db
+Waiting for USB devices... (Ctrl+C to stop)
+  New USB: sda1
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_detects_new_device_then_confirms_removal_after_debounce (test_monitor_loop.MonitorLoopTest.test_detects_new_device_then_confirms_removal_after_debounce) ... ok
+test_flapping_device_is_not_removed_before_grace_period (test_monitor_loop.MonitorLoopTest.test_flapping_device_is_not_removed_before_grace_period)
+USB Monitor | Platform: Linux | Workers: 10 | DB: /run/tmpzd53h3ht/d.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Connected: sda1
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+A device that disappears for a single poll and immediately comes ... ok
+USB Monitor | Platform: Linux | Workers: 10 | DB: /mnt/host/c/Users/Best/.codex/worktrees/v115-review-fixes/AstraUsbInstaller/data/devices.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Безопасное извлечение: снято
+  New USB: existing
+  New USB: new
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_existing_and_new_cards_wait_for_explicit_resume (test_monitor_pause.MonitorPauseTest.test_existing_and_new_cards_wait_for_explicit_resume) ... ok
+USB Monitor | Platform: Linux | Workers: 10 | DB: /mnt/host/c/Users/Best/.codex/worktrees/v115-review-fixes/AstraUsbInstaller/data/devices.db
+Waiting for USB devices... (Ctrl+C to stop)
+  Безопасное извлечение: включено
+  Безопасное извлечение: включено
+test_initially_paused_mounted_source_requires_system_eject (test_monitor_pause.MonitorPauseTest.test_initially_paused_mounted_source_requires_system_eject) ... ok
+USB Monitor | Platform: Linux | Workers: 1 | DB: /run/tmpkydbk4gf/db
+Waiting for USB devices... (Ctrl+C to stop)
+  Connected: done
+  Connected: paused
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+  New USB: paused
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_resume_requeues_interrupted_card_but_not_completed_card (test_monitor_pause.MonitorPauseTest.test_resume_requeues_interrupted_card_but_not_completed_card) ... ok
+test_launcher_preserves_gui_exit_status (test_native_launcher.NativeLauncherTest.test_launcher_preserves_gui_exit_status) ... ok
+test_external_process_cannot_lock_during_copy (test_operation_guard.OperationGuardTest.test_external_process_cannot_lock_during_copy) ... ok
+test_shared_copy_excludes_cleanup_and_reset (test_operation_guard.OperationGuardTest.test_shared_copy_excludes_cleanup_and_reset) ... ok
+test_finds_label_for_matching_mountpoint (test_platform_helpers.DriveLabelLinuxTest.test_finds_label_for_matching_mountpoint) ... ok
+test_no_match_returns_empty_string (test_platform_helpers.DriveLabelLinuxTest.test_no_match_returns_empty_string) ... ok
+test_find_existing_mount_none_when_not_mounted (test_platform_helpers.ExistingMountReuseTest.test_find_existing_mount_none_when_not_mounted) ... ok
+test_find_existing_mount_returns_system_mountpoint (test_platform_helpers.ExistingMountReuseTest.test_find_existing_mount_returns_system_mountpoint) ... ok
+test_find_existing_mount_swallows_missing_proc (test_platform_helpers.ExistingMountReuseTest.test_find_existing_mount_swallows_missing_proc) ... ok
+test_is_own_mount (test_platform_helpers.ExistingMountReuseTest.test_is_own_mount) ... ok
+test_wait_returns_mount_as_soon_as_it_appears (test_platform_helpers.ExistingMountReuseTest.test_wait_returns_mount_as_soon_as_it_appears) ... ok
+test_wait_times_out_to_none (test_platform_helpers.ExistingMountReuseTest.test_wait_times_out_to_none) ... ok
+test_mount_device_falls_back_to_blkid_fstype (test_platform_helpers.MountUnmountTest.test_mount_device_falls_back_to_blkid_fstype) ... ok
+test_mount_device_success (test_platform_helpers.MountUnmountTest.test_mount_device_success) ... ok
+Mount error /dev/sda1: no medium found
+test_mount_device_total_failure_returns_none (test_platform_helpers.MountUnmountTest.test_mount_device_total_failure_returns_none) ... ok
+test_unmount_removes_dir_on_success (test_platform_helpers.MountUnmountTest.test_unmount_removes_dir_on_success) ... ok
+Не удалось размонтировать /nonexistent/path:
+test_unmount_swallows_errors (test_platform_helpers.MountUnmountTest.test_unmount_swallows_errors) ... ok
+test_get_linux_partitions_falls_back_to_sys_block (test_platform_helpers.PartitionDiscoveryTest.test_get_linux_partitions_falls_back_to_sys_block) ... ok
+test_get_linux_partitions_prefers_lsblk (test_platform_helpers.PartitionDiscoveryTest.test_get_linux_partitions_prefers_lsblk) ... ok
+test_get_lsblk_partitions_returns_empty_on_error (test_platform_helpers.PartitionDiscoveryTest.test_get_lsblk_partitions_returns_empty_on_error) ... ok
+test_get_lsblk_partitions_uses_parse_tree (test_platform_helpers.PartitionDiscoveryTest.test_get_lsblk_partitions_uses_parse_tree) ... ok
+test_get_sys_block_partitions_swallows_errors (test_platform_helpers.PartitionDiscoveryTest.test_get_sys_block_partitions_swallows_errors) ... ok
+test_falls_back_to_by_id_symlink (test_platform_helpers.SerialLookupLinuxTest.test_falls_back_to_by_id_symlink) ... ok
+test_falls_back_to_lsblk_when_udevadm_fails (test_platform_helpers.SerialLookupLinuxTest.test_falls_back_to_lsblk_when_udevadm_fails) ... ok
+test_returns_none_when_every_lookup_fails (test_platform_helpers.SerialLookupLinuxTest.test_returns_none_when_every_lookup_fails) ... ok
+test_udevadm_id_serial (test_platform_helpers.SerialLookupLinuxTest.test_udevadm_id_serial) ... ok
+test_udevadm_id_serial_short_fallback (test_platform_helpers.SerialLookupLinuxTest.test_udevadm_id_serial_short_fallback) ... ok
+test_get_device_serial_windows_fallback (test_platform_helpers.WindowsFallbackTest.test_get_device_serial_windows_fallback) ... ok
+test_get_drive_label_windows_fallback (test_platform_helpers.WindowsFallbackTest.test_get_drive_label_windows_fallback) ... ok
+test_get_removable_drives_is_empty_on_non_windows (test_platform_helpers.WindowsFallbackTest.test_get_removable_drives_is_empty_on_non_windows) ... ok
+test_invalid_cleanup_flag_and_destination_types_fail_closed (test_review_core.ConfigTypeReviewTest.test_invalid_cleanup_flag_and_destination_types_fail_closed) ... ok
+test_cleanup_refuses_system_destination_and_preserves_video (test_review_core.DestructiveArchiveReviewTest.test_cleanup_refuses_system_destination_and_preserves_video) ... ok
+Очистка архива: удалено видео 1, освобождено 4.0 B
+test_manual_cleanup_only_deletes_selected_device_videos (test_review_core.DestructiveArchiveReviewTest.test_manual_cleanup_only_deletes_selected_device_videos) ... ok
+test_latest_log_is_read_as_stream_and_last_id_wins (test_review_core.LogStreamingReviewTest.test_latest_log_is_read_as_stream_and_last_id_wins) ... ok
+test_config_updates_merge_and_remove_only_requested_keys (test_review_core.ReviewCoreTest.test_config_updates_merge_and_remove_only_requested_keys) ... ok
+test_corrupt_config_is_preserved (test_review_core.ReviewCoreTest.test_corrupt_config_is_preserved) ... ok
+test_reset_rejects_unmarked_destination_before_database_changes (test_review_core.ReviewCoreTest.test_reset_rejects_unmarked_destination_before_database_changes) ... ok
+test_explicit_config_repair_failure_preserves_corrupt_file (test_review_core.SafeRemovalReviewTest.test_explicit_config_repair_failure_preserves_corrupt_file) ... ok
+  Безопасное извлечение: снято
+  Безопасное извлечение: включено
+test_queued_worker_cannot_start_after_pause (test_review_core.SafeRemovalReviewTest.test_queued_worker_cannot_start_after_pause) ... ok
+  Безопасное извлечение: снято
+Не удалось размонтировать /mnt/test-busy: Command 'umount' returned non-zero exit status 32.
+  Безопасное извлечение: включено
+test_unmount_failure_blocks_safe_removal (test_review_core.SafeRemovalReviewTest.test_unmount_failure_blocks_safe_removal) ... ok
+  Безопасное извлечение: снято
+test_wait_for_return_obeys_pause (test_review_core.SafeRemovalReviewTest.test_wait_for_return_obeys_pause) ... ok
+  Безопасное извлечение: включено
+  Безопасное извлечение: снято
+test_broken_config_preserved_and_password_denied (test_review_gui.ReviewGuiTest.test_broken_config_preserved_and_password_denied) ... ok
+test_cleanup_lock_error_is_displayed (test_review_gui.ReviewGuiTest.test_cleanup_lock_error_is_displayed) ... ok
+test_failed_setting_save_preserves_runtime_value (test_review_gui.ReviewGuiTest.test_failed_setting_save_preserves_runtime_value) ... ok
+test_manual_device_cleanup_cannot_remove_copy_in_progress (test_review_gui.ReviewGuiTest.test_manual_device_cleanup_cannot_remove_copy_in_progress) ... ok
+test_reset_error_survives_deferred_callback (test_review_gui.ReviewGuiTest.test_reset_error_survives_deferred_callback) ... ok
+test_safe_removal_uses_engine_status_with_empty_tiles (test_review_gui.ReviewGuiTest.test_safe_removal_uses_engine_status_with_empty_tiles) ... ok
+test_search_cancels_during_directory_walk (test_review_gui.ReviewGuiTest.test_search_cancels_during_directory_walk) ... ok
+test_search_walks_each_directory_once_and_cancels_stale (test_review_gui.ReviewGuiTest.test_search_walks_each_directory_once_and_cancels_stale) ... ok
+test_settings_tab_builds_with_broken_config (test_review_gui.ReviewGuiTest.test_settings_tab_builds_with_broken_config) ... ok
+[13:20:00] Scanning Astra ID 1234567 (CAM)...
+[13:20:00] Astra ID 1234567: 1 files, 5.0 B
+[13:20:00] Astra ID 1234567: 100.0% | 1/1 files | 5.0 B/5.0 B | ETA 0:00 | A11_1234567_222222_20260915120000_0001.mp4
+  Auto-deleted 1 video file(s) from /run/tmp_ecvqr2y/first
+[13:20:00] Done: Astra ID 1234567 (1 files, 5.0 B) -> /run/tmp_ecvqr2y/archive/Device1234567
+Ошибка регистрации sdc1: Дубликат ID устройства 1234567
+test_duplicate_does_not_copy_or_delete_second_source (test_shared_camera_identity.ReenumeratedCardTest.test_duplicate_does_not_copy_or_delete_second_source) ... ok
+test_reconnect_after_release_keeps_device_id (test_shared_camera_identity.ReenumeratedCardTest.test_reconnect_after_release_keeps_device_id) ... ok
+test_removed_device_cannot_finish_late_id_read (test_shared_camera_identity.ReenumeratedCardTest.test_removed_device_cannot_finish_late_id_read) ... ok
+test_replaced_card_is_not_copied_under_previous_id (test_shared_camera_identity.ReenumeratedCardTest.test_replaced_card_is_not_copied_under_previous_id) ... ok
+[13:20:00] Scanning Astra ID 1234567 (CAM)...
+test_replacement_during_scan_aborts_before_archive_creation (test_shared_camera_identity.ReenumeratedCardTest.test_replacement_during_scan_aborts_before_archive_creation) ... ok
+  Карта вернулась под новым именем: sdb -> sdg
+test_same_card_under_new_name_takes_over_its_id (test_shared_camera_identity.ReenumeratedCardTest.test_same_card_under_new_name_takes_over_its_id) ... ok
+test_ten_distinct_device_ids_register_concurrently (test_shared_camera_identity.ReenumeratedCardTest.test_ten_distinct_device_ids_register_concurrently) ... ok
+test_two_connected_devices_with_same_id_are_not_merged (test_shared_camera_identity.ReenumeratedCardTest.test_two_connected_devices_with_same_id_are_not_merged) ... ok
+test_two_different_cards_with_same_id_still_rejected (test_shared_camera_identity.ReenumeratedCardTest.test_two_different_cards_with_same_id_still_rejected) ... ok
+test_unknown_uuid_falls_back_to_rejecting (test_shared_camera_identity.ReenumeratedCardTest.test_unknown_uuid_falls_back_to_rejecting) ... ok
+[13:20:00] Scanning Astra ID 1234567 (CAM)...
+[13:20:00] Astra ID 1234567: 1 files, 5.0 B
+[13:20:00] Astra ID 1234567: 100.0% | 1/1 files | 5.0 B/5.0 B | ETA 0:00 | A11_1234567_222222_20260915120000_0001.mp4
+  Auto-deleted 1 video file(s) from /run/tmpfcujjnhn/first
+[13:20:00] Done: Astra ID 1234567 (1 files, 5.0 B) -> /run/tmpfcujjnhn/archive/Device1234567
+Ошибка регистрации sdc1: Дубликат ID устройства 1234567
+test_duplicate_does_not_copy_or_delete_second_source (test_shared_camera_identity.SharedCameraIdentityTest.test_duplicate_does_not_copy_or_delete_second_source) ... ok
+test_reconnect_after_release_keeps_device_id (test_shared_camera_identity.SharedCameraIdentityTest.test_reconnect_after_release_keeps_device_id) ... ok
+test_removed_device_cannot_finish_late_id_read (test_shared_camera_identity.SharedCameraIdentityTest.test_removed_device_cannot_finish_late_id_read) ... ok
+test_replaced_card_is_not_copied_under_previous_id (test_shared_camera_identity.SharedCameraIdentityTest.test_replaced_card_is_not_copied_under_previous_id) ... ok
+[13:20:00] Scanning Astra ID 1234567 (CAM)...
+test_replacement_during_scan_aborts_before_archive_creation (test_shared_camera_identity.SharedCameraIdentityTest.test_replacement_during_scan_aborts_before_archive_creation) ... ok
+test_ten_distinct_device_ids_register_concurrently (test_shared_camera_identity.SharedCameraIdentityTest.test_ten_distinct_device_ids_register_concurrently) ... ok
+test_two_connected_devices_with_same_id_are_not_merged (test_shared_camera_identity.SharedCameraIdentityTest.test_two_connected_devices_with_same_id_are_not_merged) ... ok
+test_stopped_event_renders_neutral_tile_with_actual_progress (test_stopped_tile.StoppedTileTest.test_stopped_event_renders_neutral_tile_with_actual_progress) ... ok
+test_installer_refuses_busy_database_before_packages (test_update_guard.InstallerGuardTest.test_installer_refuses_busy_database_before_packages) ... ok
+test_installer_reuses_inherited_lock (test_update_guard.InstallerGuardTest.test_installer_reuses_inherited_lock) ... ok
+[updater] обновление отложено: busy
+test_busy_update_does_not_change_installation (test_update_guard.UpdateGuardTest.test_busy_update_does_not_change_installation) ... ok
+[updater] установка не удалась (сервис не поднялся после обновления)
+[updater] новая версия не поднялась — откат на предыдущую
+test_lock_covers_install_healthcheck_and_rollback (test_update_guard.UpdateGuardTest.test_lock_covers_install_healthcheck_and_rollback) ... ok
+[updater] установка не удалась (после установки VERSION даёт v1.1, а не v1.2)
+[updater] новая версия не поднялась — откат на предыдущую
+test_wrong_installed_version_restores_previous_code_and_preserves_data (test_updater.ApplyTest.test_wrong_installed_version_restores_previous_code_and_preserves_data) ... ok
+test_copy_excludes_data_and_backups_but_keeps_code (test_updater.BackupAppDirTest.test_copy_excludes_data_and_backups_but_keeps_code) ... ok
+test_removes_stale_previous_copy_first (test_updater.BackupAppDirTest.test_removes_stale_previous_copy_first) ... ok
+test_clear_missing_file_does_not_raise (test_updater.FailedTagTest.test_clear_missing_file_does_not_raise) ... ok
+test_clear_removes_file (test_updater.FailedTagTest.test_clear_removes_file) ... ok
+test_read_missing_file_returns_none (test_updater.FailedTagTest.test_read_missing_file_returns_none) ... ok
+test_read_unreadable_content_returns_none (test_updater.FailedTagTest.test_read_unreadable_content_returns_none) ... ok
+test_write_then_read_back (test_updater.FailedTagTest.test_write_then_read_back) ... ok
+[updater] идёт копирование — обновление отложено
+test_busy_skips_apply (test_updater.MainTest.test_busy_skips_apply) ... ok
+[updater] контрольная сумма не сошлась — архив не установлен
+test_checksum_mismatch_skips_apply (test_updater.MainTest.test_checksum_mismatch_skips_apply) ... ok
+test_copying_started_during_download_skips_install (test_updater.MainTest.test_copying_started_during_download_skips_install) ... /mnt/host/c/Users/Best/.codex/worktrees/v115-review-fixes/AstraUsbInstaller/updater.py:270: DeprecationWarning: Python 3.14 will, by default, filter extracted tar archives and reject files or modify their metadata. Use the filter argument to control this behavior.
+  tar.extractall(unpacked)
+[updater] копирование началось во время загрузки — обновление отложено
+ok
+[updater] релиз v1.2 уже откатывали — пропуск
+test_failed_tag_skips_without_further_fetch (test_updater.MainTest.test_failed_tag_skips_without_further_fetch) ... ok
+[updater] у релиза v1.2 нет архива с контрольной суммой
+test_no_assets_skips_apply (test_updater.MainTest.test_no_assets_skips_apply) ... ok
+[updater] ставим v1.2 (было v1.1)
+test_valid_release_calls_apply (test_updater.MainTest.test_valid_release_calls_apply) ... ok
+test_ignores_cross_platform_archives (test_updater.MixedAssetsTest.test_ignores_cross_platform_archives)
+В том же репозитории выходят релизы кроссплатформенной версии. ... ok
+test_ignores_release_without_tarball (test_updater.MixedAssetsTest.test_ignores_release_without_tarball) ... ok
+test_none_when_tarball_has_no_own_checksum (test_updater.MixedAssetsTest.test_none_when_tarball_has_no_own_checksum) ... ok
+test_picks_checksum_belonging_to_the_tarball (test_updater.MixedAssetsTest.test_picks_checksum_belonging_to_the_tarball) ... ok
+test_takes_own_archive_from_a_mixed_release (test_updater.MixedAssetsTest.test_takes_own_archive_from_a_mixed_release) ... ok
+test_different_tag_updates (test_updater.NeedsUpdateTest.test_different_tag_updates) ... ok
+test_missing_latest_never_updates (test_updater.NeedsUpdateTest.test_missing_latest_never_updates) ... ok
+test_same_tag_skips (test_updater.NeedsUpdateTest.test_same_tag_skips) ... ok
+test_unknown_local_version_updates (test_updater.NeedsUpdateTest.test_unknown_local_version_updates) ... ok
+test_archive_must_match_release_tag (test_updater.PickAssetTest.test_archive_must_match_release_tag) ... ok
+test_none_when_checksum_missing (test_updater.PickAssetTest.test_none_when_checksum_missing) ... ok
+test_none_when_no_assets (test_updater.PickAssetTest.test_none_when_no_assets) ... ok
+test_picks_tarball_and_checksum (test_updater.PickAssetTest.test_picks_tarball_and_checksum) ... ok
+test_rejects_foreign_or_unpublished_release (test_updater.PickAssetTest.test_rejects_foreign_or_unpublished_release) ... ok
+test_restores_code_without_touching_data_or_app_dir (test_updater.RestoreAppDirTest.test_restores_code_without_touching_data_or_app_dir) ... ok
+test_requires_successful_restart_count_query (test_updater.ServiceHealthTest.test_requires_successful_restart_count_query) ... ok
+test_matches_hashlib (test_updater.Sha256Test.test_matches_hashlib) ... ok
+test_parse_sha256_handles_bare_hex (test_updater.Sha256Test.test_parse_sha256_handles_bare_hex) ... ok
+test_reads_checksum_field_from_sha_file (test_updater.Sha256Test.test_reads_checksum_field_from_sha_file) ... ok
+  Copy failed /run/tmpsv13s90k/DCIM/A11_7_000_202609181200039_00039.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmpsv13s90k/DCIM/A11_7_000_202609181200038_00038.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmpsv13s90k/DCIM/A11_7_000_202609181200037_00037.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmpsv13s90k/DCIM/A11_7_000_202609181200036_00036.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmpsv13s90k/DCIM/A11_7_000_202609181200035_00035.mp4: [Errno 5] Input/output error
+test_device_lost_aborts_instead_of_grinding (test_usb_monitor.BusResetTest.test_device_lost_aborts_instead_of_grinding) ... ok
+[13:20:00] 1:   0.0% | 1/0 files | 16.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120009_0009.mp4
+[13:20:00] 1:   0.0% | 2/0 files | 32.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120008_0008.mp4
+[13:20:00] 1:   0.0% | 3/0 files | 48.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120007_0007.mp4
+[13:20:00] 1:   0.0% | 4/0 files | 64.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120006_0006.mp4
+[13:20:00] 1:   0.0% | 5/0 files | 80.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120005_0005.mp4
+[13:20:00] 1:   0.0% | 6/0 files | 96.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120004_0004.mp4
+  Copy failed /run/tmpxc40k_ms/DCIM/A11_7_000_20260918120003_0003.mp4: [Errno 5] Input/output error
+[13:20:00] 1:   0.0% | 7/0 files | 112.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120002_0002.mp4
+[13:20:00] 1:   0.0% | 8/0 files | 128.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120001_0001.mp4
+[13:20:00] 1:   0.0% | 9/0 files | 144.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120000_0000.mp4
+test_single_bad_file_does_not_abort (test_usb_monitor.BusResetTest.test_single_bad_file_does_not_abort) ... ok
+test_awaited_card_is_not_picked_up_twice (test_usb_monitor.CardReturnTest.test_awaited_card_is_not_picked_up_twice) ... ok
+test_card_without_uuid_is_never_awaited (test_usb_monitor.CardReturnTest.test_card_without_uuid_is_never_awaited) ... ok
+test_expired_wait_releases_card (test_usb_monitor.CardReturnTest.test_expired_wait_releases_card) ... ok
+test_wait_gives_up_when_card_does_not_return (test_usb_monitor.CardReturnTest.test_wait_gives_up_when_card_does_not_return) ... ok
+test_wait_returns_new_devname_of_same_card (test_usb_monitor.CardReturnTest.test_wait_returns_new_devname_of_same_card) ... ok
+[13:20:02] 1:   0.0% | 1/0 files | 4.0 B/0.0 B | ETA --:-- | video.mp4
+test_copy_files_reports_backed_up_paths (test_usb_monitor.CopyAndDeleteTest.test_copy_files_reports_backed_up_paths) ... ok
+test_delete_source_videos_only_allowed (test_usb_monitor.CopyAndDeleteTest.test_delete_source_videos_only_allowed) ... ok
+  Auto-deleted 1 video file(s) from /run/tmplj1mnj4k
+test_failed_copy_video_is_preserved (test_usb_monitor.CopyAndDeleteTest.test_failed_copy_video_is_preserved)
+  Copy failed /run/tmpkyvbtmot/bad.mp4: simulated copy failure
+[13:20:02] 1:   0.0% | 1/0 files | 4.0 B/0.0 B | ETA --:-- | good.mp4
+  Auto-deleted 1 video file(s) from /run/tmpkyvbtmot
+End-to-end: a video that fails to copy is not deleted from source. ... ok
+[13:20:02] 1:   0.0% | 1/0 files | 4.0 B/0.0 B | ETA --:-- | clip.mov
+test_identical_file_counts_as_backed_up (test_usb_monitor.CopyAndDeleteTest.test_identical_file_counts_as_backed_up) ... ok
+test_backup_after_upper_bound_excluded (test_usb_monitor.FilterDateTest.test_backup_after_upper_bound_excluded) ... ok
+test_same_day_backup_within_range (test_usb_monitor.FilterDateTest.test_same_day_backup_within_range) ... ok
+test_uses_T_separator (test_usb_monitor.FilterDateTest.test_uses_T_separator) ... ok
+test_format_size_units (test_usb_monitor.FormatHelpersTest.test_format_size_units) ... ok
+test_format_time (test_usb_monitor.FormatHelpersTest.test_format_time) ... ok
+test_mountpoint_extracted_when_present (test_usb_monitor.LsblkParseTest.test_mountpoint_extracted_when_present) ... ok
+test_non_usb_disk_ignored (test_usb_monitor.LsblkParseTest.test_non_usb_disk_ignored) ... ok
+test_partition_inherits_usb_from_parent (test_usb_monitor.LsblkParseTest.test_partition_inherits_usb_from_parent) ... ok
+test_usb_disk_with_partitions_not_duplicated (test_usb_monitor.LsblkParseTest.test_usb_disk_with_partitions_not_duplicated) ... ok
+test_usb_whole_disk_no_partitions (test_usb_monitor.LsblkParseTest.test_usb_whole_disk_no_partitions) ... ok
+test_usb_whole_disk_with_non_partition_child (test_usb_monitor.LsblkParseTest.test_usb_whole_disk_with_non_partition_child) ... ok
+[13:20:02] 1:   0.0% | 1/0 files | 8.0 B/0.0 B | ETA --:-- | clip5.mp4
+  Безопасное извлечение: включено
+[13:20:02] 1:   0.0% | 2/0 files | 16.0 B/0.0 B | ETA --:-- | clip4.mp4
+test_copying_stops_between_files (test_usb_monitor.SafeRemovalTest.test_copying_stops_between_files) ... ok
+test_flag_is_off_by_default (test_usb_monitor.SafeRemovalTest.test_flag_is_off_by_default) ... ok
+  Безопасное извлечение: снято
+  Безопасное извлечение: снято
+test_scan_skips_old_service_id_files (test_usb_monitor.ScanDriveTest.test_scan_skips_old_service_id_files) ... ok
+  Copy failed /run/tmp483scrkk/DCIM/A11_7_000_202609181200039_00039.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmp483scrkk/DCIM/A11_7_000_202609181200038_00038.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmp483scrkk/DCIM/A11_7_000_202609181200037_00037.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmp483scrkk/DCIM/A11_7_000_202609181200036_00036.mp4: [Errno 5] Input/output error
+  Copy failed /run/tmp483scrkk/DCIM/A11_7_000_202609181200035_00035.mp4: [Errno 5] Input/output error
+test_device_lost_aborts_instead_of_grinding (test_usb_monitor.SourceGoneTest.test_device_lost_aborts_instead_of_grinding) ... ok
+[13:20:02] 1:   0.0% | 1/0 files | 16.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120009_0009.mp4
+[13:20:02] 1:   0.0% | 2/0 files | 32.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120008_0008.mp4
+[13:20:02] 1:   0.0% | 3/0 files | 48.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120007_0007.mp4
+[13:20:02] 1:   0.0% | 4/0 files | 64.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120006_0006.mp4
+[13:20:02] 1:   0.0% | 5/0 files | 80.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120005_0005.mp4
+[13:20:02] 1:   0.0% | 6/0 files | 96.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120004_0004.mp4
+[13:20:02] 1:   0.0% | 7/0 files | 112.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120003_0003.mp4
+  Copy failed /run/tmp24c6n2k1/DCIM/A11_7_000_20260918120002_0002.mp4: [Errno 5] Input/output error
+[13:20:02] 1:   0.0% | 8/0 files | 128.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120001_0001.mp4
+[13:20:02] 1:   0.0% | 9/0 files | 144.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120000_0000.mp4
+test_missing_single_file_does_not_abort (test_usb_monitor.SourceGoneTest.test_missing_single_file_does_not_abort) ... ok
+[13:20:02] 1:   0.0% | 1/0 files | 16.0 B/0.0 B | ETA --:-- | A11_7_000_202609181200029_00029.mp4
+[13:20:02] 1:   0.0% | 2/0 files | 32.0 B/0.0 B | ETA --:-- | A11_7_000_202609181200028_00028.mp4
+  Copy failed /run/tmp61dmcuz7/DCIM/A11_7_000_202609181200027_00027.mp4: [Errno 2] No such file or directory: '/run/tmp61dmcuz7/DCIM/A11_7_000_202609181200027_00027.mp4'
+  Copy failed /run/tmp61dmcuz7/DCIM/A11_7_000_202609181200026_00026.mp4: [Errno 2] No such file or directory: '/run/tmp61dmcuz7/DCIM/A11_7_000_202609181200026_00026.mp4'
+  Copy failed /run/tmp61dmcuz7/DCIM/A11_7_000_202609181200025_00025.mp4: [Errno 2] No such file or directory: '/run/tmp61dmcuz7/DCIM/A11_7_000_202609181200025_00025.mp4'
+  Copy failed /run/tmp61dmcuz7/DCIM/A11_7_000_202609181200024_00024.mp4: [Errno 2] No such file or directory: '/run/tmp61dmcuz7/DCIM/A11_7_000_202609181200024_00024.mp4'
+  Copy failed /run/tmp61dmcuz7/DCIM/A11_7_000_202609181200023_00023.mp4: [Errno 2] No such file or directory: '/run/tmp61dmcuz7/DCIM/A11_7_000_202609181200023_00023.mp4'
+test_pulled_card_aborts (test_usb_monitor.SourceGoneTest.test_pulled_card_aborts) ... ok
+[13:20:02] 1:   0.0% | 1/0 files | 16.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120009_0009.mp4
+[13:20:02] 1:   0.0% | 2/0 files | 32.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120008_0008.mp4
+[13:20:02] 1:   0.0% | 3/0 files | 48.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120007_0007.mp4
+[13:20:02] 1:   0.0% | 4/0 files | 64.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120006_0006.mp4
+[13:20:02] 1:   0.0% | 5/0 files | 80.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120005_0005.mp4
+[13:20:02] 1:   0.0% | 6/0 files | 96.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120004_0004.mp4
+  Copy failed /run/tmpvycz5heq/DCIM/A11_7_000_20260918120003_0003.mp4: [Errno 5] Input/output error
+[13:20:02] 1:   0.0% | 7/0 files | 112.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120002_0002.mp4
+[13:20:02] 1:   0.0% | 8/0 files | 128.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120001_0001.mp4
+[13:20:02] 1:   0.0% | 9/0 files | 144.0 B/0.0 B | ETA --:-- | A11_7_000_20260918120000_0000.mp4
+test_single_bad_file_does_not_abort (test_usb_monitor.SourceGoneTest.test_single_bad_file_does_not_abort) ... ok
+test_absent_marker_means_idle (test_version.CopyingMarkerTest.test_absent_marker_means_idle) ... ok
+test_fresh_marker_means_busy (test_version.CopyingMarkerTest.test_fresh_marker_means_busy) ... ok
+test_stale_marker_means_idle (test_version.CopyingMarkerTest.test_stale_marker_means_idle) ... ok
+test_extra_whitespace_is_tolerated (test_version.ReadVersionTest.test_extra_whitespace_is_tolerated) ... ok
+test_garbage_returns_none (test_version.ReadVersionTest.test_garbage_returns_none) ... ok
+test_invalid_utf8_returns_none (test_version.ReadVersionTest.test_invalid_utf8_returns_none) ... ok
+test_missing_file_returns_none (test_version.ReadVersionTest.test_missing_file_returns_none) ... ok
+test_parses_tag_and_date (test_version.ReadVersionTest.test_parses_tag_and_date) ... ok
+
+----------------------------------------------------------------------
+Ran 257 tests in 14.141s
+
+OK

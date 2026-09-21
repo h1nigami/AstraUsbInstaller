@@ -103,6 +103,7 @@ class SharedCameraIdentityTest(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "отключено"):
                 future.result(timeout=2)
 
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def test_duplicate_does_not_copy_or_delete_second_source(self):
         first = self.mount("first", 1234567, b"first")
         second = self.mount("second", 1234567, b"second")
