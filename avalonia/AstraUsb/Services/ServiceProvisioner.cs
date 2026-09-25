@@ -14,31 +14,37 @@ public sealed class ServiceProvisioner(IServiceUsb usb)
     /// </summary>
     private bool _attempted;
 
-    /// <summary>Один шаг опроса. Пустой host выключает функцию совсем — USB не трогаем.</summary>
+    /// <summary>
+    /// Один шаг опроса. Пустой host выключает функцию совсем — USB не трогаем.
+    /// Само обращение к USB (в том числе <see cref="IServiceUsb.Count"/>) может
+    /// бросить что угодно, от нехватки прав до отсутствия libusb на станции —
+    /// это фоновый опрос, и такой сбой не должен ронять программу, поэтому вся
+    /// работа с <see cref="usb"/> идёт под одним try/catch.
+    /// </summary>
     public string? Step(Settings settings)
     {
         if (string.IsNullOrEmpty(settings.CmsServerHost))
             return null;
 
-        var count = usb.Count();
-        if (count == 0)
-        {
-            _attempted = false;
-            return null;
-        }
-
-        if (count > 1)
-            return "Для настройки подключите только один A11 по USB.";
-
-        if (_attempted)
-            return null;
-        _attempted = true;
-
-        if (!ServiceFrame.IsDottedIPv4(settings.CmsServerHost))
-            return "Адрес сервера в настройках неверен.";
-
         try
         {
+            var count = usb.Count();
+            if (count == 0)
+            {
+                _attempted = false;
+                return null;
+            }
+
+            if (count > 1)
+                return "Для настройки подключите только один A11 по USB.";
+
+            if (_attempted)
+                return null;
+            _attempted = true;
+
+            if (!ServiceFrame.IsDottedIPv4(settings.CmsServerHost))
+                return "Адрес сервера в настройках неверен.";
+
             var port = (ushort)settings.CmsServerPort;
             var wrote = usb.WriteServer(settings.CmsServerHost, port);
             return wrote

@@ -251,10 +251,18 @@ public sealed partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void SaveServiceUsb()
     {
-        _settings.CmsServerHost = CmsServerHost.Trim();
-        _settings.CmsServerPort = CmsServerPort is > 0 and < 65536 ? CmsServerPort : 6608;
-        CmsServerHost = _settings.CmsServerHost;
-        CmsServerPort = _settings.CmsServerPort;
+        var host = CmsServerHost.Trim();
+        var validHost = host.Length == 0 || ServiceFrame.IsDottedIPv4(host);
+        var validPort = CmsServerPort is >= 1 and <= 65535;
+        if (!validHost || !validPort)
+        {
+            Hint = "Адрес сервера должен быть IPv4, например 192.168.1.10";
+            return;
+        }
+
+        _settings.CmsServerHost = host;
+        _settings.CmsServerPort = CmsServerPort;
+        CmsServerHost = host;
 
         if (!_settings.Save())
         {

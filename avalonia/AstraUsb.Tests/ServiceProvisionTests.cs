@@ -18,10 +18,13 @@ public sealed class ServiceProvisionTests
         public int WriteCalls { get; private set; }
         public Func<string, ushort, bool>? OnWrite { get; set; }
         public Exception? ThrowOnWrite { get; set; }
+        public Exception? ThrowOnCount { get; set; }
 
         public int Count()
         {
             CountCalls++;
+            if (ThrowOnCount is not null)
+                throw ThrowOnCount;
             return DeviceCount;
         }
 
@@ -150,6 +153,18 @@ public sealed class ServiceProvisionTests
         Assert.Equal("USB: устройство не отвечает", first);
         Assert.Null(second);
         Assert.Equal(1, usb.WriteCalls);
+    }
+
+    [Fact]
+    public void A_libusb_failure_on_count_is_reported_as_a_usb_error_and_does_not_throw()
+    {
+        var usb = new FakeUsb { ThrowOnCount = new DllNotFoundException("libusb-1.0.so.0") };
+        var provisioner = new ServiceProvisioner(usb);
+
+        var status = provisioner.Step(HostSettings());
+
+        Assert.Equal("USB: libusb-1.0.so.0", status);
+        Assert.Equal(0, usb.WriteCalls);
     }
 
     [Fact]

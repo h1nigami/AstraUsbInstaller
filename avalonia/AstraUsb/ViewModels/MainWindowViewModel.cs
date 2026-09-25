@@ -327,14 +327,30 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         new Thread(() =>
         {
+            // Смена статуса — на экран и (кроме очистки) в журнал; повтор
+            // того же статуса не трогает ни то, ни другое.
+            void Report(string? status)
+            {
+                if (status == _lastServiceUsbStatus)
+                    return;
+                _lastServiceUsbStatus = status;
+                if (status is not null)
+                    _actions.Write(ActionLog.ServiceUsb, status);
+                Dispatcher.UIThread.Post(() => Settings.ServiceUsbStatus = status ?? "");
+            }
+
             while (!token.IsCancellationRequested)
             {
-                var status = provisioner.Step(Services.Settings.Load());
-                if (status is not null && status != _lastServiceUsbStatus)
+                try
                 {
-                    _lastServiceUsbStatus = status;
-                    _actions.Write(ActionLog.ServiceUsb, status);
-                    Dispatcher.UIThread.Post(() => Settings.ServiceUsbStatus = status);
+                    Report(provisioner.Step(Services.Settings.Load()));
+                }
+                catch (Exception e)
+                {
+                    // Поток фоновый: необработанное исключение отсюда убило бы
+                    // всю станцию. ServiceProvisioner уже ловит свои ошибки —
+                    // это защита от неучтённого сбоя (например, самих настроек).
+                    Report($"USB: {e.Message}");
                 }
 
                 token.WaitHandle.WaitOne(TimeSpan.FromSeconds(1.5));
