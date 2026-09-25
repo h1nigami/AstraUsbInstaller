@@ -166,7 +166,8 @@ public static class ServiceFrame
         return Encoding.ASCII.GetString(nul < 0 ? field : field[..nul]);
     }
 
-    private static bool IsDottedIPv4(string ip)
+    /// <summary>Правило адреса, общее с <see cref="ServiceProvisioner"/>: точечная IPv4.</summary>
+    internal static bool IsDottedIPv4(string ip)
     {
         var parts = ip.Split('.');
         if (parts.Length != 4)

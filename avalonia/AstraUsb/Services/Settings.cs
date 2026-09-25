@@ -128,6 +128,14 @@ public sealed class Settings
     /// </summary>
     public int BaysPerRow { get; set; } = 3;
 
+    /// <summary>
+    /// Адрес CMS-сервера, который станция сама прописывает в подключённый по
+    /// USB регистратор. Пусто выключает авто-настройку: USB вообще не трогаем.
+    /// </summary>
+    public string CmsServerHost { get; set; } = "";
+
+    public int CmsServerPort { get; set; } = 6608;
+
     public long MinFreeBytes => (long)MinFreeGb * 1024 * 1024 * 1024;
 
     private static readonly JsonSerializerOptions Json = new()

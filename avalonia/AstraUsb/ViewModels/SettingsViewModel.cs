@@ -139,6 +139,13 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _ftpState = "";
     [ObservableProperty] private bool _ftpTesting;
 
+    /// <summary>Адрес CMS-сервера, который станция сама пропишет в подключённый по USB A11.</summary>
+    [ObservableProperty] private string _cmsServerHost = "";
+    [ObservableProperty] private int _cmsServerPort = 6608;
+
+    /// <summary>Итог последнего опроса сервисного USB, показывается рядом с полями.</summary>
+    [ObservableProperty] private string _serviceUsbStatus = "";
+
     [ObservableProperty] private string _adminAccount = "";
     [ObservableProperty] private string _currentPassword = "";
     [ObservableProperty] private string _newPassword = "";
@@ -193,6 +200,8 @@ public sealed partial class SettingsViewModel : ObservableObject
         FtpPassword = _settings.FtpPassword;
         FtpFolder = _settings.FtpFolder;
         FtpSsl = _settings.FtpSsl;
+        CmsServerHost = _settings.CmsServerHost;
+        CmsServerPort = _settings.CmsServerPort;
 
         ReloadSlots();
     }
@@ -233,6 +242,31 @@ public sealed partial class SettingsViewModel : ObservableObject
             : KeepDays == 0
                 ? "настройки сохранены, записи хранятся бессрочно"
                 : $"настройки сохранены, записи хранятся {KeepDays} дн";
+    }
+
+    /// <summary>
+    /// Сохраняет адрес CMS-сервера для авто-настройки регистраторов по USB.
+    /// Сама настройка идёт фоновым опросом на станции, отдельно от сохранения.
+    /// </summary>
+    [RelayCommand]
+    private void SaveServiceUsb()
+    {
+        _settings.CmsServerHost = CmsServerHost.Trim();
+        _settings.CmsServerPort = CmsServerPort is > 0 and < 65536 ? CmsServerPort : 6608;
+        CmsServerHost = _settings.CmsServerHost;
+        CmsServerPort = _settings.CmsServerPort;
+
+        if (!_settings.Save())
+        {
+            Hint = "не удалось записать настройки, проверьте права на папку data";
+            return;
+        }
+
+        _actions.Write(ActionLog.Settings, string.IsNullOrEmpty(CmsServerHost)
+            ? "авто-настройка CMS-сервера по USB выключена"
+            : $"авто-настройка CMS-сервера по USB: {CmsServerHost}:{CmsServerPort}");
+
+        Hint = "адрес сервера сохранён";
     }
 
     // --- Разметка гнёзд -----------------------------------------------------

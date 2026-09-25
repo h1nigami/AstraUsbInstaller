@@ -866,6 +866,34 @@
                   <Button Classes="primary" Content="Сохранить" Height="52" Width="180"
                           HorizontalAlignment="Left"
                           Command="{Binding Settings.SaveStorageCommand}" />
+
+                  <Border Height="1" Background="{StaticResource LineBrush}" Margin="0,4" />
+
+                  <StackPanel>
+                    <TextBlock Text="CMS-СЕРВЕР РЕГИСТРАТОРА (USB)" Classes="section" />
+                    <TextBlock Classes="hint" Margin="0,4,0,10"
+                               Text="Станция сама пропишет адрес в подключённый по USB A11. Пустой адрес выключает эту настройку." />
+
+                    <UniformGrid Columns="2">
+                      <StackPanel Margin="0,0,12,0">
+                        <TextBlock Text="АДРЕС СЕРВЕРА" Classes="field" />
+                        <TextBox Classes="form" Text="{Binding Settings.CmsServerHost}"
+                                 Watermark="192.168.0.9" />
+                      </StackPanel>
+
+                      <StackPanel>
+                        <TextBlock Text="ПОРТ" Classes="field" />
+                        <TextBox Classes="form" Text="{Binding Settings.CmsServerPort}" />
+                      </StackPanel>
+                    </UniformGrid>
+
+                    <Button Classes="primary" Content="Сохранить" Height="52" Width="180"
+                            Margin="0,10,0,0" HorizontalAlignment="Left"
+                            Command="{Binding Settings.SaveServiceUsbCommand}" />
+
+                    <TextBlock Text="{Binding Settings.ServiceUsbStatus}" Classes="hint"
+                               Margin="0,10,0,0" Foreground="{StaticResource Accent700Brush}" />
+                  </StackPanel>
                 </StackPanel>
               </ScrollViewer>
 
