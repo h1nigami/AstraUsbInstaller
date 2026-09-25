@@ -1388,8 +1388,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        // Не Dispose: поток опроса может в этот момент ждать на WaitHandle, и
+        // ObjectDisposedException в фоновом потоке уронил бы выход из киоска.
         _serviceUsbCts?.Cancel();
-        _serviceUsbCts?.Dispose();
         _poll.Stop();
         _clock.Stop();
 
