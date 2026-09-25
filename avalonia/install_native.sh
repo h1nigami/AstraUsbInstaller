@@ -63,7 +63,7 @@ fi
 # в другой формат и достаёт кадры для просмотра по временной шкале (кадры
 # берёт ffprobe с ffmpeg, оба идут одним пакетом).
 # Ставим, если репозиторий доступен.
-OPTIONAL_PACKAGES="alsa-utils speech-dispatcher ffmpeg"
+OPTIONAL_PACKAGES="alsa-utils speech-dispatcher ffmpeg libusb-1.0-0"
 
 missing_libs() {
     local lib found=""

@@ -160,6 +160,56 @@ public sealed class SettingsViewModelTests : IDisposable
         Assert.Equal("MySQL", Settings.Load().SqlKind);
     }
 
+    [Theory]
+    [InlineData("не-адрес")]
+    [InlineData("192.168.0.999")]
+    [InlineData("192.168.0")]
+    public void An_invalid_cms_server_host_is_not_saved(string host)
+    {
+        var model = new SettingsViewModel(AppPaths.Database) { CmsServerHost = host, CmsServerPort = 6608 };
+
+        model.SaveServiceUsbCommand.Execute(null);
+
+        Assert.Equal("Адрес сервера должен быть IPv4, например 192.168.1.10", model.Hint);
+        Assert.Equal("", Settings.Load().CmsServerHost);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(65536)]
+    public void An_invalid_cms_server_port_is_not_saved(int port)
+    {
+        var model = new SettingsViewModel(AppPaths.Database) { CmsServerHost = "192.168.0.9", CmsServerPort = port };
+
+        model.SaveServiceUsbCommand.Execute(null);
+
+        Assert.Equal("Адрес сервера должен быть IPv4, например 192.168.1.10", model.Hint);
+        Assert.Equal("", Settings.Load().CmsServerHost);
+    }
+
+    [Fact]
+    public void A_valid_cms_server_address_is_saved()
+    {
+        var model = new SettingsViewModel(AppPaths.Database) { CmsServerHost = "192.168.0.9", CmsServerPort = 7000 };
+
+        model.SaveServiceUsbCommand.Execute(null);
+
+        Assert.Equal("192.168.0.9", Settings.Load().CmsServerHost);
+        Assert.Equal(7000, Settings.Load().CmsServerPort);
+    }
+
+    [Fact]
+    public void An_empty_cms_server_host_is_valid_and_turns_the_feature_off()
+    {
+        Assert.True(new Settings { CmsServerHost = "192.168.0.9" }.Save());
+        var model = new SettingsViewModel(AppPaths.Database) { CmsServerHost = "", CmsServerPort = 6608 };
+
+        model.SaveServiceUsbCommand.Execute(null);
+
+        Assert.Equal("", Settings.Load().CmsServerHost);
+        Assert.NotEqual("Адрес сервера должен быть IPv4, например 192.168.1.10", model.Hint);
+    }
+
     public void Dispose()
     {
         AppPaths.Root = _root;

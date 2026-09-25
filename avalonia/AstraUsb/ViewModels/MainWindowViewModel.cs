@@ -98,6 +98,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private readonly ActionLog _actions = new(AppPaths.Database);
 
+    /// <summary>Остановка фонового опроса сервисного USB, см. <see cref="StartServiceUsbLoop"/>.</summary>
+    private CancellationTokenSource? _serviceUsbCts;
+
+    /// <summary>Последний показанный статус: в журнал пишем только смену, не каждый опрос.</summary>
+    private string? _lastServiceUsbStatus;
+
     public ObservableCollection<PortViewModel> Ports { get; } = new();
 
     /// <summary>Вкладка «Устройства».</summary>
@@ -246,6 +252,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public MainWindowViewModel() : this(UsbWatcher.List)
     {
+        // Сервисный USB (libusb) только на станции и только на живом экране:
+        // конструктор с подставным listDevices (тесты) сюда не заходит.
+        if (OperatingSystem.IsLinux())
+            StartServiceUsbLoop();
     }
 
     /// <summary>Опрос носителей передаётся снаружи: так экран можно проверить без железа.</summary>
@@ -300,6 +310,53 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         Refresh();
         _poll.Tick += (_, _) => Refresh();
         _poll.Start();
+    }
+
+    /// <summary>
+    /// Фоновый опрос сервисного USB раз в 1.5 с: своим потоком, а не
+    /// <see cref="DispatcherTimer"/>, потому что обмен с регистратором —
+    /// блокирующий libusb со своими паузами, и в UI-поток его пускать нельзя.
+    /// Настройки перечитываются с диска на каждом шаге, чтобы новый адрес с
+    /// вкладки «Настройки» подхватывался без перезапуска программы.
+    /// </summary>
+    private void StartServiceUsbLoop()
+    {
+        _serviceUsbCts = new CancellationTokenSource();
+        var token = _serviceUsbCts.Token;
+        var provisioner = new ServiceProvisioner(new ServiceUsb());
+
+        new Thread(() =>
+        {
+            // Смена статуса — на экран и (кроме очистки) в журнал; повтор
+            // того же статуса не трогает ни то, ни другое.
+            void Report(string? status)
+            {
+                if (status == _lastServiceUsbStatus)
+                    return;
+                _lastServiceUsbStatus = status;
+                if (status is not null)
+                    _actions.Write(ActionLog.ServiceUsb, status);
+                Dispatcher.UIThread.Post(() => Settings.ServiceUsbStatus = status ?? "");
+            }
+
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    Report(provisioner.Step(Services.Settings.Load()));
+                }
+                catch (Exception e)
+                {
+                    // Поток фоновый: необработанное исключение отсюда убило бы
+                    // всю станцию. ServiceProvisioner уже ловит свои ошибки —
+                    // это защита от неучтённого сбоя (например, самих настроек).
+                    Report($"USB: {e.Message}");
+                }
+
+                token.WaitHandle.WaitOne(TimeSpan.FromSeconds(1.5));
+            }
+        })
+        { IsBackground = true }.Start();
     }
 
     /// <summary>
@@ -1331,6 +1388,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        // Не Dispose: поток опроса может в этот момент ждать на WaitHandle, и
+        // ObjectDisposedException в фоновом потоке уронил бы выход из киоска.
+        _serviceUsbCts?.Cancel();
         _poll.Stop();
         _clock.Stop();
 

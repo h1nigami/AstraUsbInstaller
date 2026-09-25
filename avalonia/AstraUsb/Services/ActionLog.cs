@@ -25,6 +25,7 @@ public sealed class ActionLog
     public const string Export = "выгрузка";
     public const string Cleanup = "уборка";
     public const string Backup = "загрузка";
+    public const string ServiceUsb = "регистратор";
 
     private readonly string _dbPath;
 
