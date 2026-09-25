@@ -120,14 +120,41 @@ public sealed class ServiceUsbTests
         Assert.Throws<IOException>(() => protocol.WriteServer("10.0.0.5", 7000));
     }
 
+    /// <summary>
+    /// Снято на A11 25.09.2026: сразу после команды IN может вернуть старый
+    /// ответ предыдущей команды, тут — битый кадр на месте подтверждения
+    /// записи. Запись из-за этого не повторяется и сама по себе не считается
+    /// ошибкой — судит уже чтение после записи (оно ретраится само).
+    /// </summary>
     [Fact]
-    public void WriteServer_does_not_retry_a_garbage_write_ack()
+    public void WriteServer_does_not_retry_a_garbage_write_ack_and_fails_when_read_after_write_does_not_confirm()
     {
-        var fake = new FakeUsb(LoginReply, ServerReplyFrame("192.168.0.9", 6608), [0xFF]);
+        var fake = new FakeUsb(
+            LoginReply,
+            ServerReplyFrame("192.168.0.9", 6608),
+            [0xFF],
+            ServerReplyFrame("192.168.0.9", 6608));
         var protocol = new ServiceProtocol(fake.Exchange, fake.Count);
 
-        Assert.Throws<InvalidDataException>(() => protocol.WriteServer("10.0.0.5", 7000));
-        Assert.Equal(3, fake.Sent.Count);
+        Assert.Throws<IOException>(() => protocol.WriteServer("10.0.0.5", 7000));
+        Assert.Equal(4, fake.Sent.Count);
+        Assert.Single(fake.Sent, f => CmdOf(f) == 0x0C);
+    }
+
+    [Fact]
+    public void WriteServer_does_not_retry_a_garbage_write_ack_and_succeeds_when_read_after_write_confirms()
+    {
+        var fake = new FakeUsb(
+            LoginReply,
+            ServerReplyFrame("192.168.0.9", 6608),
+            [0xFF],
+            ServerReplyFrame("10.0.0.5", 7000));
+        var protocol = new ServiceProtocol(fake.Exchange, fake.Count);
+
+        var written = protocol.WriteServer("10.0.0.5", 7000);
+
+        Assert.True(written);
+        Assert.Equal(4, fake.Sent.Count);
         Assert.Single(fake.Sent, f => CmdOf(f) == 0x0C);
     }
 

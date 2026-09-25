@@ -57,7 +57,17 @@ internal sealed class ServiceProtocol(Func<byte[], byte[]> exchange, Func<int> c
         if (Matches(current, ip, port))
             return false;
 
-        ExchangeOnce(CmdWriteServer, ServiceFrame.WriteServer(current, ip, port));
+        // Сразу после команды IN бывает отдаёт старый ответ предыдущей
+        // команды (A11, 25.09.2026): если подтверждение записи не
+        // разобралось, саму запись не повторяем и ошибкой это ещё не
+        // считаем — решает чтение ниже, оно уже ретраится само.
+        try
+        {
+            ExchangeOnce(CmdWriteServer, ServiceFrame.WriteServer(current, ip, port));
+        }
+        catch (InvalidDataException)
+        {
+        }
 
         var after = ReadCurrentServer();
         if (!Matches(after, ip, port))
