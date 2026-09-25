@@ -166,7 +166,11 @@ public static class ServiceFrame
         return Encoding.ASCII.GetString(nul < 0 ? field : field[..nul]);
     }
 
-    /// <summary>Правило адреса, общее с <see cref="ServiceProvisioner"/>: точечная IPv4.</summary>
+    /// <summary>
+    /// Правило адреса, общее с <see cref="ServiceProvisioner"/>: точечная IPv4.
+    /// Каждая часть — 1-3 ASCII-цифры без знака и пробелов (int.TryParse их
+    /// пропускает, а адрес с ними для регистратора не годится).
+    /// </summary>
     internal static bool IsDottedIPv4(string ip)
     {
         var parts = ip.Split('.');
@@ -175,9 +179,9 @@ public static class ServiceFrame
 
         foreach (var part in parts)
         {
-            if (part.Length is 0 or > 3)
+            if (part.Length is 0 or > 3 || part.Any(c => c is < '0' or > '9'))
                 return false;
-            if (!int.TryParse(part, out var value) || value is < 0 or > 255)
+            if (int.Parse(part) > 255)
                 return false;
         }
         return true;

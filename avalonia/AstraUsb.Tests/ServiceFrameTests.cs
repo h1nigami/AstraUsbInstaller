@@ -150,4 +150,51 @@ public sealed class ServiceFrameTests
 
         Assert.Throws<ArgumentException>(() => ServiceFrame.WriteServer(current, tooLong, 6608));
     }
+
+    [Theory]
+    [InlineData("1. 2.3.4", false)] // int.TryParse допускает пробелы вокруг числа
+    [InlineData("+1.2.3.4", false)] // и знак числа
+    [InlineData("-0.1.2.3", false)]
+    [InlineData("1", false)]
+    [InlineData("1.2.3", false)]
+    [InlineData("256.1.1.1", false)]
+    [InlineData("192.168.0.9", true)]
+    public void IsDottedIPv4_accepts_only_plain_ascii_digit_octets(string ip, bool expected)
+    {
+        Assert.Equal(expected, ServiceFrame.IsDottedIPv4(ip));
+    }
+
+    [Fact]
+    public void ParseReply_rejects_a_frame_not_starting_with_7E()
+    {
+        var broken = (byte[])LoginReply.Clone();
+        broken[0] = 0x00;
+
+        Assert.Throws<InvalidDataException>(() => ServiceFrame.ParseReply(CmdLogin, broken));
+    }
+
+    [Fact]
+    public void ParseReply_rejects_a_declared_length_larger_than_the_buffer()
+    {
+        var broken = (byte[])LoginReply.Clone();
+        broken[1] = 0xFF; // заявленная длина заведомо больше самого буфера
+
+        Assert.Throws<InvalidDataException>(() => ServiceFrame.ParseReply(CmdLogin, broken));
+    }
+
+    [Fact]
+    public void WriteServer_zeroes_bytes_60_and_61_when_raw_is_60_bytes_and_keeps_domains()
+    {
+        var current = ServiceFrame.ReadServer(ServiceFrame.ParseReply(CmdServer, ServerReply));
+        var server60 = current with { Raw = current.Raw[..60] };
+
+        var written = ServiceFrame.WriteServer(server60, "10.0.0.5", 6608);
+
+        Assert.Equal(62, written.Length);
+        Assert.Equal(0, written[60]);
+        Assert.Equal(0, written[61]);
+        var server = ServiceFrame.ReadServer(written);
+        Assert.Equal("uknown", server.Domain1);
+        Assert.Equal("uknown", server.Domain2);
+    }
 }
