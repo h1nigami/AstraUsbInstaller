@@ -109,7 +109,7 @@ public sealed class ServiceProvisionTests
     }
 
     [Fact]
-    public void A_second_step_with_the_device_still_present_does_not_write_again()
+    public void A_second_step_with_the_device_still_present_keeps_the_same_status_and_does_not_write_again()
     {
         var usb = new FakeUsb();
         var provisioner = new ServiceProvisioner(usb);
@@ -119,7 +119,7 @@ public sealed class ServiceProvisionTests
         var second = provisioner.Step(settings);
 
         Assert.NotNull(first);
-        Assert.Null(second);
+        Assert.Equal(first, second);
         Assert.Equal(1, usb.WriteCalls);
     }
 
@@ -141,7 +141,7 @@ public sealed class ServiceProvisionTests
     }
 
     [Fact]
-    public void An_exception_is_reported_once_and_not_retried_while_the_device_stays_present()
+    public void An_exception_is_kept_on_screen_and_not_retried_while_the_device_stays_present()
     {
         var usb = new FakeUsb { ThrowOnWrite = new IOException("устройство не отвечает") };
         var provisioner = new ServiceProvisioner(usb);
@@ -151,7 +151,7 @@ public sealed class ServiceProvisionTests
         var second = provisioner.Step(settings);
 
         Assert.Equal("USB: устройство не отвечает", first);
-        Assert.Null(second);
+        Assert.Equal(first, second);
         Assert.Equal(1, usb.WriteCalls);
     }
 
@@ -174,6 +174,20 @@ public sealed class ServiceProvisionTests
         var provisioner = new ServiceProvisioner(usb);
 
         var status = provisioner.Step(HostSettings("не-адрес"));
+
+        Assert.Equal("Адрес сервера в настройках неверен.", status);
+        Assert.Equal(0, usb.WriteCalls);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(65536)]
+    public void An_invalid_port_from_hand_edited_settings_is_reported_without_writing(int port)
+    {
+        var usb = new FakeUsb();
+        var provisioner = new ServiceProvisioner(usb);
+
+        var status = provisioner.Step(HostSettings(port: port));
 
         Assert.Equal("Адрес сервера в настройках неверен.", status);
         Assert.Equal(0, usb.WriteCalls);

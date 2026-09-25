@@ -15,6 +15,13 @@ public sealed class ServiceProvisioner(IServiceUsb usb)
     private bool _attempted;
 
     /// <summary>
+    /// Итог последней попытки для этого подключения. Пока устройство не
+    /// пропало, повторный опрос отдаёт его же — иначе строка на экране гасла
+    /// бы каждые 1.5 с, хотя ничего не изменилось.
+    /// </summary>
+    private string? _lastStatus;
+
+    /// <summary>
     /// Один шаг опроса. Пустой host выключает функцию совсем — USB не трогаем.
     /// Само обращение к USB (в том числе <see cref="IServiceUsb.Count"/>) может
     /// бросить что угодно, от нехватки прав до отсутствия libusb на станции —
@@ -32,6 +39,7 @@ public sealed class ServiceProvisioner(IServiceUsb usb)
             if (count == 0)
             {
                 _attempted = false;
+                _lastStatus = null;
                 return null;
             }
 
@@ -39,21 +47,22 @@ public sealed class ServiceProvisioner(IServiceUsb usb)
                 return "Для настройки подключите только один A11 по USB.";
 
             if (_attempted)
-                return null;
+                return _lastStatus;
             _attempted = true;
 
-            if (!ServiceFrame.IsDottedIPv4(settings.CmsServerHost))
-                return "Адрес сервера в настройках неверен.";
+            if (!ServiceFrame.IsDottedIPv4(settings.CmsServerHost)
+                || settings.CmsServerPort is < 1 or > 65535)
+                return _lastStatus = "Адрес сервера в настройках неверен.";
 
             var port = (ushort)settings.CmsServerPort;
             var wrote = usb.WriteServer(settings.CmsServerHost, port);
-            return wrote
+            return _lastStatus = wrote
                 ? $"Сервер {settings.CmsServerHost}:{port} записан. Отключите USB и перезагрузите A11."
                 : $"Сервер {settings.CmsServerHost}:{port} уже настроен.";
         }
         catch (Exception e)
         {
-            return $"USB: {e.Message}";
+            return _lastStatus = $"USB: {e.Message}";
         }
     }
 }
