@@ -29,7 +29,7 @@ Priority: optional
 Architecture: $ARCH
 Maintainer: Best Electronics <support@bestcam.local>
 Depends: libfontconfig1, libx11-6, libsm6, libice6, libicu76 | libicu72 | libicu71 | libicu70 | libicu67 | libicu63
-Recommends: ffmpeg, alsa-utils, speech-dispatcher
+Recommends: ffmpeg, alsa-utils, speech-dispatcher, libusb-1.0-0
 Description: BestCam Station, сбор записей с носимых регистраторов
  Программа станции BestCam BC-10: собирает записи с регистраторов при
  подключении, ведёт архив и журнал, показывает состояние гнёзд на экране
