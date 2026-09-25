@@ -98,6 +98,17 @@ public sealed class ServiceUsbTests
     }
 
     [Fact]
+    public void WriteServer_does_not_retry_a_garbage_write_ack()
+    {
+        var fake = new FakeUsb(LoginReply, ServerReplyFrame("192.168.0.9", 6608), [0xFF]);
+        var protocol = new ServiceProtocol(fake.Exchange, fake.Count);
+
+        Assert.Throws<InvalidDataException>(() => protocol.WriteServer("10.0.0.5", 7000));
+        Assert.Equal(3, fake.Sent.Count);
+        Assert.Single(fake.Sent, f => CmdOf(f) == 0x0C);
+    }
+
+    [Fact]
     public void ReadServer_returns_null_when_no_device_is_connected()
     {
         var fake = new FakeUsb { DeviceCount = 0 };

@@ -182,20 +182,32 @@ public sealed class ServiceUsb : IServiceUsb
             if (rc < 0)
                 throw new IOException($"Не удалось инициализировать USB: код {rc}");
 
-            var device = WithDeviceList(ctx, (list, n) => MatchingDevices(list, n).FirstOrDefault());
-            if (device == IntPtr.Zero)
+            // libusb_open принимает указатель из списка устройств, а
+            // libusb_free_device_list(unref=1) может его освободить — открываем
+            // устройство внутри того же прохода по списку, до освобождения.
+            var (foundOne, openRc, openHandle) = WithDeviceList(ctx, (list, n) =>
+            {
+                var matches = MatchingDevices(list, n).ToArray();
+                if (matches.Length != 1)
+                    return (false, 0, IntPtr.Zero);
+                var openResult = Libusb.libusb_open(matches[0], out var deviceHandle);
+                return (true, openResult, deviceHandle);
+            });
+
+            if (!foundOne)
             {
                 Libusb.libusb_exit(ctx);
-                throw new IOException("Регистратор не найден на шине USB");
+                throw new IOException("подключите один A11");
             }
-
-            rc = Libusb.libusb_open(device, out handle);
-            if (rc < 0)
+            if (openRc < 0)
             {
                 Libusb.libusb_exit(ctx);
-                throw new IOException($"Не удалось открыть USB-устройство: код {rc}");
+                throw new IOException($"Не удалось открыть USB-устройство: код {openRc}");
             }
+            handle = openHandle;
 
+            // Код возврата не проверяем: ядро может не поддерживать эту функцию
+            // или драйвер уже не занят — оба случая не мешают claim_interface.
             Libusb.libusb_set_auto_detach_kernel_driver(handle, 1);
 
             rc = Libusb.libusb_claim_interface(handle, 0);
@@ -230,11 +242,12 @@ public sealed class ServiceUsb : IServiceUsb
         private const ushort Value = 0xAA;
         private const uint TransferTimeoutMs = 1000;
         private const int MaxReadTransfers = 6;
+        private const int ErrorTimeout = -7; // LIBUSB_ERROR_TIMEOUT: ответа пока нет, не ошибка
 
         /// <summary>
         /// OUT-кадр команды, пауза 200 мс, затем IN по 1024 байт, пока не
-        /// накопится завершение 0D 0A (до 6 попыток, пауза 100 мс между
-        /// пустыми чтениями).
+        /// накопится целый кадр (по заявленной в заголовке длине, до 6 попыток,
+        /// пауза 100 мс между пустыми чтениями).
         /// </summary>
         public static byte[] Transfer(IntPtr handle, byte[] frame)
         {
@@ -253,30 +266,37 @@ public sealed class ServiceUsb : IServiceUsb
                 var buffer = new byte[1024];
                 var read = libusb_control_transfer(handle, RequestTypeIn, RequestIn, Value, 0,
                     buffer, (ushort)buffer.Length, TransferTimeoutMs);
-                if (read < 0)
+                if (read < 0 && read != ErrorTimeout)
                     throw new IOException($"Ошибка чтения ответа USB: код {read}");
 
                 if (read > 0)
                     reply.AddRange(buffer.AsSpan(0, read).ToArray());
 
-                if (ContainsCrlf(reply))
+                if (FrameComplete(reply))
                     return reply.ToArray();
 
-                if (read == 0)
+                if (read <= 0)
                     Thread.Sleep(100);
             }
 
             throw new IOException("Регистратор не ответил по USB");
         }
 
-        private static bool ContainsCrlf(List<byte> bytes)
+        /// <summary>
+        /// Кадр целиком получен, когда накоплено заявленных в заголовке
+        /// len16+6 байт (7E + len16(2) + [cmd+резерв+payload] + xor + 0D 0A)
+        /// и последние два байта на этой границе — 0D 0A.
+        /// </summary>
+        private static bool FrameComplete(List<byte> reply)
         {
-            for (var i = 1; i < bytes.Count; i++)
-            {
-                if (bytes[i - 1] == 0x0D && bytes[i] == 0x0A)
-                    return true;
-            }
-            return false;
+            if (reply.Count < 3 || reply[0] != 0x7E)
+                return false;
+
+            var len16 = reply[1] | (reply[2] << 8);
+            var frameLength = 3 + len16 + 3;
+            return reply.Count >= frameLength
+                && reply[frameLength - 2] == 0x0D
+                && reply[frameLength - 1] == 0x0A;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
