@@ -893,6 +893,9 @@
 
                     <TextBlock Text="{Binding Settings.ServiceUsbStatus}" Classes="hint"
                                Margin="0,10,0,0" Foreground="{StaticResource Accent700Brush}" />
+
+                    <TextBlock Classes="hint" Margin="0,4,0,0"
+                               Text="Новый адрес запишется при следующем подключении регистратора." />
                   </StackPanel>
                 </StackPanel>
               </ScrollViewer>

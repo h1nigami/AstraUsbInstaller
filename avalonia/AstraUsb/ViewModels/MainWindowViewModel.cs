@@ -1389,6 +1389,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _serviceUsbCts?.Cancel();
+        _serviceUsbCts?.Dispose();
         _poll.Stop();
         _clock.Stop();
 
