@@ -72,6 +72,29 @@ public sealed class ServiceUsbTests
         Assert.Equal([0x01, 0x0D, 0x0C, 0x0D], fake.Sent.Select(CmdOf).ToArray());
     }
 
+    /// <summary>
+    /// Снято на A11 25.09.2026: сразу после записи чтение может вернуть
+    /// старый ответ (на запись) или кадр чтения без данных — регистратор ещё
+    /// не обработал команду. Такое чтение повторяется, а не валит запись.
+    /// </summary>
+    [Fact]
+    public void WriteServer_retries_read_after_write_when_device_answers_stale_or_short()
+    {
+        var fake = new FakeUsb(
+            LoginReply,
+            ServerReplyFrame("192.168.0.9", 6608),
+            WriteAckReply,
+            WriteAckReply,
+            ServiceFrame.Build(0x0D, [0]),
+            ServerReplyFrame("10.0.0.5", 7000));
+        var protocol = new ServiceProtocol(fake.Exchange, fake.Count);
+
+        var written = protocol.WriteServer("10.0.0.5", 7000);
+
+        Assert.True(written);
+        Assert.Equal([0x01, 0x0D, 0x0C, 0x0D, 0x0D, 0x0D], fake.Sent.Select(CmdOf).ToArray());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(2)]

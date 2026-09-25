@@ -69,24 +69,26 @@ internal sealed class ServiceProtocol(Func<byte[], byte[]> exchange, Func<int> c
     private static bool Matches(ServiceFrame.CmsServer server, string ip, ushort port) =>
         server.Type == 2 && server.Enabled && server.Ip == ip && server.Port == port;
 
-    private void Login() => ReadWithRetry(CmdLogin, ReadOnlySpan<byte>.Empty);
+    private void Login() => ReadWithRetry(CmdLogin, ReadOnlySpan<byte>.Empty, data => data);
 
+    // Разбор структуры внутри повторов: сразу после записи регистратор бывает
+    // не готов и отдаёт старый ответ или кадр чтения без данных (A11, 25.09.2026).
     private ServiceFrame.CmsServer ReadCurrentServer() =>
-        ServiceFrame.ReadServer(ReadWithRetry(CmdReadServer, ReadOnlySpan<byte>.Empty));
+        ReadWithRetry(CmdReadServer, ReadOnlySpan<byte>.Empty, data => ServiceFrame.ReadServer(data));
 
     /// <summary>
     /// Как у viewer: если ответ не разобрался (устройство "не ответило"),
     /// повторяет чтение до 3 попыток с паузой в 1 секунду. Запись не
     /// повторяется — см. <see cref="ExchangeOnce"/>.
     /// </summary>
-    private byte[] ReadWithRetry(ushort cmd, ReadOnlySpan<byte> data)
+    private T ReadWithRetry<T>(ushort cmd, ReadOnlySpan<byte> data, Func<byte[], T> parse)
     {
         var request = ServiceFrame.Request(cmd, data);
         for (var attempt = 1; ; attempt++)
         {
             try
             {
-                return ServiceFrame.ParseReply(cmd, exchange(request));
+                return parse(ServiceFrame.ParseReply(cmd, exchange(request)));
             }
             catch (InvalidDataException) when (attempt < MaxReadAttempts)
             {
