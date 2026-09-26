@@ -102,6 +102,18 @@ class UpdateCheckTest(unittest.TestCase):
                          "Нет подключения к интернету")
         self.assertEqual(calls, [])
 
+    def test_offline_package_is_handed_over_without_network(self):
+        calls = []
+
+        def fake_runner(cmd, timeout):
+            calls.append(cmd)
+            return self._Result(0)
+
+        self.assertEqual(gui_mod._start_update_service(fake_runner, network_check=lambda: False,
+                                                       require_network=False),
+                         "Проверка обновления запущена")
+        self.assertEqual(calls, [["systemctl", "start", "astra-usb-update.service", "--no-block"]])
+
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
 class BusyMarkerTest(unittest.TestCase):
