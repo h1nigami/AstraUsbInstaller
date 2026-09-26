@@ -37,7 +37,7 @@ Four top-level modules:
 - Destination stability across mountpoints: a GUI-selected destination now stores not just the chosen path but also the filesystem UUID/serial plus the relative path inside that filesystem. If native mode later mounts the same disk under `/mnt/usb_backup/<dev>`, `get_dest_base()` resolves the live path there, so the destination disk is still recognised as destination (not as source) and backups keep landing on the real disk without requiring the desktop's old mountpoint.
 - Destination availability: a GUI-selected `backup_dest` is stamped with a `.astra_dest` marker (`ensure_dest_marker`) at selection time, and `copy_task` refuses to write (state `error`) while the marker is absent (`dest_available()`) — a missing marker means the destination disk is not mounted at that path, and `makedirs` would otherwise silently back up into a shadow directory on the root/overlay FS. The drive hosting the destination (`_is_dest_path`) is never treated as a backup source and is kept mounted (`copy_task_linux` skips it, `_mount_device` tolerates an existing mount); reconnecting it re-stamps the marker.
 - Each backup runs in its own `ThreadPoolExecutor` worker and opens its own SQLite connection via `_connect()` (sharing one connection across the pool is not safe for concurrent writes). `_init_db()` is called once at startup to create the schema / run migrations, then closed.
-- `_read_device_id()` читает положительный числовой ID из `#ID:` в `LOG` и свежего имени записи в `DCIM`; разные ID или отсутствие номера вызывают ошибку. `_resolve_device_id()` сохраняет тот же номер в `devices.id` с `id_source='device'`, отвергает старую строку с таким ключом и одновременно подключённый дубликат. `_connected_devices` хранит список подключений, `_connected_device_ids` сохраняет владельцев ID до подтверждённого отключения. USB-серийник остаётся служебным сведением. `.astra_id` и `.bestcam_id` не читаются, не записываются и исключаются из сканирования и копирования.
+- `_read_device_id()` читает положительный числовой ID: из последней строки `#ID:` в самом свежем по дате изменения журнале `LOG` (без номера берётся более старый журнал) и из самой свежей записи `DCIM` с корректным номером. При расхождении побеждает журнал, отсутствие номера вызывает ошибку. `DeviceIdentifier` в Avalonia следует тем же правилам. `_resolve_device_id()` сохраняет тот же номер в `devices.id` с `id_source='device'`, отвергает старую строку с таким ключом и одновременно подключённый дубликат. `_connected_devices` хранит список подключений, `_connected_device_ids` сохраняет владельцев ID до подтверждённого отключения. USB-серийник остаётся служебным сведением. `.astra_id` и `.bestcam_id` не читаются, не записываются и исключаются из сканирования и копирования.
 - `_parse_lsblk_tree()` — pure helper over parsed `lsblk -J` output (unit-tested); partitions of a USB disk are listed exactly once, a whole-disk filesystem yields the disk itself.
 - SQLite в `data/devices.db`: `devices` хранит ID регистратора, `id_source`, серийник, метку и человека; `backups` хранит статистику сеансов. Время `started_at` и `finished_at` записывается через `datetime.isoformat()` с разделителем `T`.
 - `format_filter_dt()` — builds search range bounds with the same `T` separator as stored `started_at` so lexicographic SQL comparisons are correct (a space would sort before `T` and wrongly exclude same-day backups).
@@ -162,6 +162,13 @@ Python и C#/Avalonia являются отдельными продуктами
   установкой. После проверки архива и запуска `--version` создаётся резервная
   копия, запускается установщик и проверяются служба, перезапуски и `VERSION`.
   Ошибка установки или неверная версия вызывают откат с сохранением сбойного тега.
+- **Ручная проверка и флешка (C#).** «Настройки → О программе»: «Проверить
+  обновления» только запускает `astra-usb-avalonia-update.service`
+  (`systemctl start --no-block`), без сети сразу пишет «Нет подключения к
+  интернету». «С флешки» ждёт носитель с `bestcam-station-<tag>-<rid>.tar.gz`
+  и `.sha256` в корне; новые носители в это время не выгружаются как камеры.
+  Архив проверяется и кладётся в спул `<APP_DIR>.offline`, а `--update`
+  ставит его первым делом, без сети, с теми же проверками и откатом.
 - `ASTRA_UPDATE_API` заменяет источник релизов для закрытых сетей; зеркало
   может вернуть список или один релиз. Windows и macOS обновляются вручную.
 - **Install paths.** Linux: `avalonia/install.sh` (one-liner that picks the
