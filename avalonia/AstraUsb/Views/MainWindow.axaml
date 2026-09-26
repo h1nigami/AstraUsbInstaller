@@ -1152,7 +1152,8 @@
               </ScrollViewer>
 
               <!-- О программе -->
-              <StackPanel Classes="fade" Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}">
+              <StackPanel Spacing="8">
                 <TextBlock Text="О программе" Classes="section" />
                 <Button Content="Показать все состояния окон" Height="52"
                         HorizontalAlignment="Left"
@@ -1164,7 +1165,22 @@
                 <TextBlock Text="{Binding Version}" Classes="mono" FontSize="12" />
                 <TextBlock Classes="hint"
                            Text="Записи собираются с регистраторов автоматически при подключении. Выход из программы и разделы, кроме сбора данных, закрыты учётной записью администратора." />
+
+                <TextBlock Text="Заводской сброс" Classes="h2" FontSize="16" Margin="0,12,0,0" />
+                <TextBlock Classes="hint" TextWrapping="Wrap"
+                           Text="Удаляет все устройства, историю выгрузок, файлы архива, пароль и настройки. Журнал действий, справочник сотрудников и разметка гнёзд остаются. После сброса программа перезапустится." />
+                <Button Classes="danger" Content="Сбросить до заводских" Height="52"
+                        HorizontalAlignment="Left" IsVisible="{Binding !Settings.ResetArmed}"
+                        IsEnabled="{Binding !Settings.ResetRunning}"
+                        Command="{Binding Settings.ArmFactoryResetCommand}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding Settings.ResetArmed}">
+                  <Button Classes="danger" Content="Да, удалить всё" Height="52"
+                          Command="{Binding Settings.RunFactoryResetCommand}" />
+                  <Button Content="Отмена" Height="52"
+                          Command="{Binding Settings.CancelFactoryResetCommand}" />
+                </StackPanel>
               </StackPanel>
+              </ScrollViewer>
 
               <TextBlock Grid.Row="1" Text="{Binding Settings.Hint}" Classes="hint"
                          Margin="0,10,0,0" Foreground="{StaticResource Accent700Brush}" />
