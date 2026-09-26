@@ -6,6 +6,7 @@
 убило бы само себя посреди подмены файлов.
 """
 
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -295,6 +296,16 @@ def _rollback():
 
 
 def _apply(src_dir, tag):
+    with ExitStack() as stack:
+        try:
+            fd = stack.enter_context(usb_monitor.operation_guard(exclusive=True))
+        except OSError as error:
+            _log(f"обновление отложено: {error}")
+            return 0
+        return _apply_locked(src_dir, tag, fd)
+
+
+def _apply_locked(src_dir, tag, lock_fd):
     """Снять копию текущей установки, запустить установщик, проверить,
     при неудаче откатиться.
 
@@ -307,7 +318,12 @@ def _apply(src_dir, tag):
     try:
         subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
         installer = os.path.join(src_dir, "install_native.sh")
-        result = subprocess.run(["bash", installer], cwd=src_dir, timeout=1800)
+        env = dict(os.environ, USB_DB_PATH=os.path.abspath(usb_monitor.DB_PATH))
+        env.pop("ASTRA_OPERATIONS_LOCK_FD", None)
+        if lock_fd is not None:
+            env["ASTRA_OPERATIONS_LOCK_FD"] = str(lock_fd)
+        result = subprocess.run(["bash", installer], cwd=src_dir, timeout=1800,
+                                env=env, pass_fds=(() if lock_fd is None else (lock_fd,)))
         if result.returncode != 0:
             raise RuntimeError(f"установщик вернул {result.returncode}")
 

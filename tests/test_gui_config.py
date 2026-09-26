@@ -11,14 +11,14 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import usb_monitor as um
-
 try:
-    import gui as gui_mod
-    _HAS_TK = True
-except Exception:
+    import tkinter
+except ImportError:
     gui_mod = None
     _HAS_TK = False
+else:
+    import gui as gui_mod
+    _HAS_TK = True
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
@@ -26,8 +26,7 @@ class GuiConfigTest(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         self.cfg_path = os.path.join(self.tmpdir.name, "config.json")
-        # GUI больше не хранит своей копии чтения-записи конфигурации.
-        self._patcher = mock.patch.object(um, "_CONFIG_PATH", self.cfg_path)
+        self._patcher = mock.patch.object(gui_mod, "CONFIG_PATH", self.cfg_path)
         self._patcher.start()
 
     def tearDown(self):
@@ -38,7 +37,7 @@ class GuiConfigTest(unittest.TestCase):
         self.assertEqual(gui_mod._load_config(), {})
 
     def test_save_then_load_roundtrip(self):
-        um._save_config({"a": 1})
+        gui_mod._save_config({"a": 1})
         self.assertEqual(gui_mod._load_config(), {"a": 1})
 
     def test_get_exit_password_defaults_from_env_and_persists(self):
@@ -48,12 +47,12 @@ class GuiConfigTest(unittest.TestCase):
         self.assertEqual(gui_mod._load_config()["exit_password"], "hunter2")
 
     def test_get_exit_password_prefers_saved_value_over_env(self):
-        um._save_config({"exit_password": "saved"})
+        gui_mod._save_config({"exit_password": "saved"})
         with mock.patch.dict(os.environ, {"APP_EXIT_PASSWORD": "other"}):
             self.assertEqual(gui_mod._get_exit_password(), "saved")
 
     def test_set_exit_password_overwrites_and_preserves_other_keys(self):
-        um._save_config({"backup_dest": "/x"})
+        gui_mod._save_config({"backup_dest": "/x"})
         gui_mod._set_exit_password("newpw")
         cfg = gui_mod._load_config()
         self.assertEqual(cfg["exit_password"], "newpw")
@@ -135,3 +134,35 @@ class BusyMarkerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+@unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
+class DetachedTileTest(unittest.TestCase):
+    """При сбросе хаба карта возвращается под другим именем за пару секунд.
+    Плитка обязана это пережить, иначе мигает вся стойка."""
+
+    def test_returned_device_is_not_purged(self):
+        data = {7: {"state_raw": "copying", "devname": "sdf"}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1000.0), [])
+
+    def test_waits_while_station_identifies_returning_cards(self):
+        """Идёт опознание — карты после сбоя ещё возвращаются, плитки держим."""
+        data = {
+            7: {"state_raw": "detached", "detached_at": 1000.0},
+            "identity:sdf": {"state_raw": "identifying"},
+        }
+        self.assertEqual(gui_mod._detached_too_long(data, now=1060.0), [])
+
+    def test_pulled_device_clears_quickly(self):
+        """Опознавать некого — карту просто вынули, серую плитку не держим."""
+        data = {7: {"state_raw": "detached", "detached_at": 1000.0}}
+        self.assertEqual(gui_mod._detached_too_long(data, now=1004.0), [])
+        self.assertEqual(gui_mod._detached_too_long(data, now=1007.0), [7])
+
+    def test_ceiling_applies_even_while_identifying(self):
+        """Потолок обязателен: иначе зависшее опознание держит плитку вечно."""
+        data = {
+            7: {"state_raw": "detached", "detached_at": 1000.0},
+            "identity:sdf": {"state_raw": "identifying"},
+        }
+        self.assertEqual(gui_mod._detached_too_long(data, now=1000.0 + 200), [7])

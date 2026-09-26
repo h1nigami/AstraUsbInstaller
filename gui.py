@@ -1,5 +1,6 @@
 import os
 import sys
+import usb_monitor
 import platform
 import queue
 import shutil
@@ -11,7 +12,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives, _load_config, update_config, remember_configured_dest, reset_config, _connect, GUI_DB_TIMEOUT
+from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
+from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status
 import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
@@ -24,37 +26,69 @@ except ImportError:
     _HAVE_PIL = False
 
 POLL_MS = 200
-# Чтение и запись config.json живут в usb_monitor: две независимые реализации
-# поверх одного файла затирали ключи друг друга.
+# Сколько плитка ждёт возвращения устройства, прежде чем погаснуть.
+# Фиксированный срок тут не работает: после сбоя шины карты возвращаются
+# кто через десять секунд, кто через минуту — станция успевает опознать их
+# только по очереди. Поэтому основной признак другой: пока идёт опознание,
+# карты ещё едут и плитки держатся. Сроки ниже — только границы.
+DETACH_GRACE_PULLED = 5    # опознавать некого, карту просто вынули
+DETACH_GRACE_MAX = 150     # потолок, чтобы плитка не висела вечно
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
+
+
+CONFIG_ERROR = "Настройки недоступны. Восстановите config.json через администратора станции."
+
+
+def _load_config():
+    return usb_monitor._load_config(path=CONFIG_PATH)
+
+
+def _save_config(cfg):
+    return usb_monitor._save_config(cfg, path=CONFIG_PATH)
+
+
+def _update_config(updates, remove_keys=()):
+    return usb_monitor.update_config(updates, remove_keys=remove_keys, path=CONFIG_PATH)
 
 
 def _get_exit_password():
-    pw = _load_config().get("exit_password")
+    cfg = _load_config()
+    if cfg.get("_config_unreadable"):
+        return None
+    pw = cfg.get("exit_password")
     if pw:
         return pw
     default = os.environ.get("APP_EXIT_PASSWORD", "exit")
-    update_config({"exit_password": default})
+    if not _update_config({"exit_password": default}):
+        return None
     return default
 
 
 def _set_exit_password(new_pw):
-    return _save_setting({"exit_password": new_pw})
+    return _update_config({"exit_password": new_pw})
 
 
-def _save_setting(changes):
-    """Записать настройки и сказать оператору, если файл не поддался.
+def _detached_too_long(workers_data, now, pulled_grace=None, max_grace=None):
+    """Номера устройств, чьи плитки пора погасить.
 
-    update_config отказывает, когда config.json не читается. Без этого
-    сообщения человек видел «Готово», а пароль или таймаут оставались
-    прежними — и узнавал об этом в худший момент.
+    Чистая функция ради тестов без окна. Пока станция кого-то опознаёт,
+    карты после сбоя шины ещё возвращаются — плитки держим, сколько бы это
+    ни заняло, но не дольше потолка. Опознавать некого: карту просто вынули,
+    и держать серую плитку незачем — оператор сам её достал.
     """
-    if update_config(changes):
-        return True
-    messagebox.showerror(
-        "Ошибка",
-        "Настройки не сохранены: файл data/config.json повреждён.\n\n"
-        "Выберите заново папку для резервных копий — это пересоздаст файл.")
-    return False
+    quick = DETACH_GRACE_PULLED if pulled_grace is None else pulled_grace
+    ceiling = DETACH_GRACE_MAX if max_grace is None else max_grace
+    returning = any(data.get("state_raw") == "identifying"
+                    for data in workers_data.values())
+    gone = []
+    for did, data in workers_data.items():
+        since = data.get("detached_at")
+        if not since:
+            continue
+        waited = now - since
+        if waited > ceiling or (not returning and waited > quick):
+            gone.append(did)
+    return gone
 
 
 def _is_busy(workers_data):
@@ -234,6 +268,14 @@ class App:
         ttk.Button(hdr, text="⏻ Выход", style="Danger.TButton",
                    command=self._on_close).pack(side="right", padx=16, pady=20)
 
+        # Безопасное извлечение: остановить копирование перед тем, как вынимать
+        # регистраторы. Выдёргивание под нагрузкой заставляет хаб сбрасывать
+        # соседние порты, и тогда рушатся выгрузки со всех карт сразу.
+        self.eject_text = tk.StringVar(value="▶ Возобновить копирование" if safe_removal_active() else "⏏ Остановить для извлечения")
+        self.eject_btn = ttk.Button(hdr, textvariable=self.eject_text,
+                                    command=self._toggle_safe_removal)
+        self.eject_btn.pack(side="right", padx=(0, 8), pady=20)
+
         tk.Frame(self.root, bg=C["brand"], height=2).pack(fill="x")
 
     def _build_statusbar(self):
@@ -290,7 +332,11 @@ class App:
                  fg="#f87171", bg=C["bg_panel"]).pack()
 
         def confirm():
-            if pw_var.get().strip() == _get_exit_password():
+            expected = _get_exit_password()
+            if expected is None:
+                err_var.set(CONFIG_ERROR)
+                return
+            if pw_var.get().strip() == expected:
                 result["ok"] = True
                 dlg.destroy()
             else:
@@ -668,6 +714,16 @@ class App:
         ttk.Label(cleanup_frame, textvariable=self._cleanup_status_var,
                   foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
 
+        logs_frame = ttk.LabelFrame(right, text="Диагностика", padding=10)
+        logs_frame.pack(fill="x", padx=10, pady=5)
+
+        ttk.Label(logs_frame, text="Журнал, версия и сводка — без имён и людей.",
+                  style="Panel.TLabel").pack(anchor="w")
+        self._logs_status_var = tk.StringVar(value="")
+        ttk.Label(logs_frame, textvariable=self._logs_status_var,
+                  foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(4, 8))
+        ttk.Button(logs_frame, text="Выгрузить логи", command=self._export_logs).pack(anchor="w")
+
         about = ttk.LabelFrame(left, text="О программе", padding=10)
         about.pack(fill="x", padx=10, pady=5)
         ttk.Label(about, text="BestCam USB Backup Manager", style="Panel.TLabel").pack(anchor="w")
@@ -869,7 +925,8 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число минут")
             return
-        if not _save_setting({"lock_timeout_minutes": minutes}):
+        if not _update_config({"lock_timeout_minutes": minutes}):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
             return
         self._lock_timeout = minutes * 60
         self._refresh_timeout_status()
@@ -882,22 +939,27 @@ class App:
         except ValueError:
             messagebox.showwarning("Ошибка", "Введите целое число дней (не менее 1)")
             return
-        if not _save_setting({"auto_cleanup_enabled": self._cleanup_enabled_var.get(),
-                              "auto_cleanup_days": days}):
+        enabled = self._cleanup_enabled_var.get()
+        if not _update_config({"auto_cleanup_enabled": enabled, "auto_cleanup_days": days}):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
             return
-        self._cleanup_enabled = self._cleanup_enabled_var.get()
+        self._cleanup_enabled = enabled
         self._cleanup_days = days
         self._cleanup_status_var.set("Настройки сохранены")
 
     def _run_startup_cleanup(self):
-        deleted, freed = cleanup_old_backup_videos(older_than_days=self._cleanup_days)
-        if deleted:
-            msg = f"Автоочистка при запуске: удалено {deleted} видео, освобождено {_format_size(freed)}"
-        else:
-            msg = "Автоочистка при запуске: старых видео не найдено"
+        self._cleanup_worker(self._cleanup_days, "Автоочистка при запуске: ")
+
+    def _cleanup_worker(self, days, prefix=""):
         try:
-            self._cleanup_status_var.set(msg)
-        except Exception:
+            deleted, freed = cleanup_old_backup_videos(older_than_days=days)
+            msg = (f"Удалено {deleted} видео, освобождено {_format_size(freed)}"
+                   if deleted else "Старых видео не найдено")
+        except OSError as error:
+            msg = f"Очистка не выполнена: {error}"
+        try:
+            self.root.after(0, self._cleanup_status_var.set, prefix + msg)
+        except tk.TclError:
             pass
 
     def _run_cleanup_now(self):
@@ -910,15 +972,26 @@ class App:
             return
         self._cleanup_status_var.set("Очистка...")
 
+        threading.Thread(target=self._cleanup_worker, args=(days,), daemon=True).start()
+
+    def _export_logs(self):
+        dest = filedialog.askdirectory(
+            title="Куда сохранить логи",
+            parent=self.root,
+        )
+        if not dest:
+            return
+        self._logs_status_var.set("Сбор логов...")
+
         def _do():
-            deleted, freed = cleanup_old_backup_videos(older_than_days=days)
-            if deleted:
-                msg = f"Удалено {deleted} видео, освобождено {_format_size(freed)}"
-            else:
-                msg = "Старых видео не найдено"
             try:
-                self._cleanup_status_var.set(msg)
-            except Exception:
+                bundle = export_logs(dest)
+                msg = f"Готово: {os.path.basename(bundle)}"
+            except Exception as e:
+                msg = f"Ошибка: {e}"
+            try:
+                self.root.after(0, lambda: self._logs_status_var.set(msg))
+            except tk.TclError:
                 pass
 
         threading.Thread(target=_do, daemon=True).start()
@@ -940,12 +1013,9 @@ class App:
 
         def _do():
             try:
-                result = factory_reset()
-                reset_config()
-            except Exception as e:
-                # Ловим всё: sqlite3.Error не наследник OSError, и раньше
-                # такой сбой убивал поток молча, оставляя статус «Сброс...».
-                self.root.after(0, lambda: self._finish_factory_reset(None, str(e)))
+                result = factory_reset(config_path=CONFIG_PATH)
+            except (OSError, sqlite3.Error) as e:
+                self.root.after(0, self._finish_factory_reset, None, str(e))
             else:
                 self.root.after(0, lambda: self._finish_factory_reset(result, None))
 
@@ -980,27 +1050,33 @@ class App:
         )
         if not new_path:
             return
-        # Пробная запись + файл-маркер. Маркер пишется на реально подключённый
-        # диск; если позже диск окажется не смонтирован, копирование остановится
-        # с ошибкой вместо тихой записи в пустую папку на системном диске.
+        # Системный диск не может быть назначением архива.
         if not ensure_dest_marker(new_path):
             messagebox.showerror(
                 "Ошибка",
-                f"Папка недоступна для записи:\n{new_path}\n\n"
-                f"Убедитесь, что диск подключён и смонтирован.")
+                f"Папка недоступна для архива:\n{new_path}\n\n"
+                "Выберите папку на отдельном подключённом диске. "
+                "Запись архива на системный диск запрещена.")
             return
-        if not remember_configured_dest(new_path, update_path=True):
-            messagebox.showerror("Ошибка", "Не удалось сохранить настройки")
+        if not _update_config(describe_dest_path(new_path), remove_keys=(
+                "backup_dest", "backup_mount_relpath", "backup_fs_uuid", "backup_device_serial")):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
             return
         self.backup_dest_var.set(new_path)
         messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
 
     def _refresh_pw_status(self):
         pw = _get_exit_password()
+        if pw is None:
+            self.pw_status.set(CONFIG_ERROR)
+            return
         self.pw_status.set(f"Текущий пароль: {'*' * len(pw)} (длина {len(pw)} симв.)")
 
     def _change_password(self):
         old = _get_exit_password()
+        if old is None:
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
+            return
         dlg = tk.Toplevel(self.root)
         dlg.title("Смена пароля")
         dlg.geometry("350x200")
@@ -1031,13 +1107,30 @@ class App:
                 err_var.set("Новый пароль не может быть пустым")
                 return
             if not _set_exit_password(new_var.get().strip()):
-                dlg.destroy()
+                err_var.set(CONFIG_ERROR)
                 return
             self._refresh_pw_status()
             dlg.destroy()
             messagebox.showinfo("Готово", "Пароль изменён")
 
         ttk.Button(dlg, text="Сохранить", command=submit).pack(pady=10)
+
+    def _toggle_safe_removal(self):
+        """Остановить копирование для извлечения карт — или продолжить работу."""
+        if safe_removal_active():
+            set_safe_removal(False)
+            self.eject_text.set("⏏ Остановить для извлечения")
+            self.mon_status.set("Автокопирование включено: новые устройства будут скопированы")
+            return
+        set_safe_removal(True)
+        self.eject_text.set("▶ Возобновить копирование")
+        self.mon_status.set("Останавливаю копирование, дождитесь разрешения...")
+
+    def _update_safe_removal_status(self):
+        """Показать подтверждённый движком результат остановки."""
+        state, message = safe_removal_status()
+        if state != "running":
+            self.mon_status.set(message)
 
     def _on_close(self):
         C = self.C
@@ -1074,7 +1167,15 @@ class App:
         def confirm():
             pw_in = pw_var.get().strip()
             expected = _get_exit_password()
+            if expected is None:
+                err_var.set(CONFIG_ERROR)
+                return
             if pw_in == expected:
+                # Без этой строки выход не оставляет в журнале ни следа, и
+                # потом не отличить «кто-то вышел по паролю» от «станция не
+                # запустилась»: systemd чистый выход намеренно не перезапускает.
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Выход по паролю — "
+                      f"станция остановлена оператором", flush=True)
                 dlg.destroy()
                 self.stop_event.set()
                 self.root.destroy()
@@ -1089,7 +1190,7 @@ class App:
 
     def _get_db(self):
         # Короткое ожидание: вызовы идут на потоке Tk, см. GUI_DB_TIMEOUT.
-        return _connect(timeout=GUI_DB_TIMEOUT)
+        return usb_monitor._connect(DB_PATH, timeout=usb_monitor.GUI_DB_TIMEOUT)
 
     def _device_label(self, dev_id):
         # Подпись вызывается до собственных try в обработчиках кнопок,
@@ -1146,11 +1247,13 @@ class App:
 
     def _search_worker(self, p, gen):
         results = []
+        if gen != self._search_gen:
+            return
         try:
             conn = self._get_db()
             try:
                 sql = """
-                    SELECT d.id, d.person, d.name, b.dest_path
+                    SELECT DISTINCT d.id, d.person, d.name, b.dest_path
                     FROM backups b
                     JOIN devices d ON d.id = b.device_id
                     WHERE 1=1
@@ -1176,11 +1279,24 @@ class App:
             fn_filter = p["filename"]
 
             seen_paths = set()
+            seen_dirs = set()
             for dev_id, person, dev_name, dest_path in sessions:
-                if not dest_path or not os.path.isdir(dest_path):
+                if gen != self._search_gen:
+                    return
+                if not dest_path:
+                    continue
+                directory = os.path.normcase(os.path.abspath(dest_path))
+                if directory in seen_dirs:
+                    continue
+                seen_dirs.add(directory)
+                if not os.path.isdir(dest_path):
                     continue
                 for root, _dirs, files in os.walk(dest_path):
+                    if gen != self._search_gen:
+                        return
                     for fname in files:
+                        if gen != self._search_gen:
+                            return
                         ext = os.path.splitext(fname)[1].lower()
                         if ft == "Фото" and ext not in IMAGE_EXTS:
                             continue
@@ -1352,6 +1468,11 @@ class App:
         )
         if not dest:
             return
+        if not _archive_path_allowed(dest):
+            messagebox.showerror("Выгрузка запрещена",
+                                 "Выберите папку на отдельном подключённом диске. "
+                                 "Запись архива на системный диск запрещена.", parent=self.root)
+            return
         count = len(self._search_results)
         if not messagebox.askyesno(
             "Подтверждение",
@@ -1373,7 +1494,7 @@ class App:
                     base, ext = os.path.splitext(r["filename"])
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     dst = os.path.join(dest, f"{base}_{ts}{ext}")
-                shutil.copy2(r["path"], dst)
+                _copy_archive_file(r["path"], dst)
                 ok += 1
             except Exception as e:
                 errors.append(str(e))
@@ -1472,7 +1593,7 @@ class App:
         if not dev_id:
             messagebox.showwarning("Ошибка", "Выберите устройство из списка")
             return
-        if not dev_id.isdigit():
+        if usb_monitor._positive_id(dev_id) is None:
             messagebox.showwarning("Ошибка", "Некорректный номер устройства")
             return
 
@@ -1507,22 +1628,12 @@ class App:
         ):
             return
 
-        deleted = 0
-        errors = []
-        for fp in videos:
-            try:
-                os.remove(fp)
-                deleted += 1
-            except OSError as e:
-                errors.append(f"{os.path.basename(fp)}: {e}")
-
-        msg = f"Удалено видеофайлов: {deleted} из {len(videos)}"
-        if errors:
-            shown = "\n".join(errors[:5])
-            more = f"\n...и ещё {len(errors) - 5}" if len(errors) > 5 else ""
-            messagebox.showwarning("Завершено с ошибками", f"{msg}\n\nОшибки:\n{shown}{more}")
-        else:
-            messagebox.showinfo("Готово", msg)
+        try:
+            deleted, _freed = cleanup_old_backup_videos(older_than_days=None, device_id=dev_id)
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Очистка не выполнена", str(error), parent=self.root)
+            return
+        messagebox.showinfo("Готово", f"Удалено видеофайлов: {deleted} из {len(videos)}")
 
     def _start_monitor(self):
         self.stop_event.clear()
@@ -1546,10 +1657,41 @@ class App:
                 devname = raw[6] if len(raw) > 6 else ""
 
                 if device_id == "_removed_":
-                    for did, data in list(self.workers_data.items()):
-                        if data.get("devname") == display_id:
-                            self.workers_data.pop(did, None)
+                    # Плитку сразу не убираем. При сбросе хаба карта уходит и
+                    # через пару секунд возвращается под другим именем: если
+                    # гасить экран на каждое такое исчезновение, оператор видит
+                    # мигание всей стойки и не понимает, что происходит.
+                    # Плитка держится за номер регистратора и переживает
+                    # переподключение; не вернулась за DETACH_GRACE — гаснет.
+                    marked = []
+                    for did, data in self.workers_data.items():
+                        if data.get("devname") == display_id and not data.get("detached_at"):
+                            data["state"] = "Переподключение"
+                            data["state_raw"] = "detached"
+                            data["message"] = "Устройство переподключается..."
+                            data["detached_at"] = time.time()
+                            data["detached_glitch"] = bool(getattr(self, "_bus_glitch", False))
+                            marked.append(did)
+                    if marked:
+                        print(f"  Плитка ждёт возвращения: {display_id} -> {marked}",
+                              flush=True)
                     self._refresh_workers()
+                    continue
+
+                if device_id == "_bus_":
+                    # Пока шина не вернулась, плитки не гаснут: карты придут
+                    # обратно под другими именами, и гасить их значит показать
+                    # оператору мигание всей стойки вместо работы. Когда шина
+                    # вернулась, отсчёт начинается заново — с этого момента,
+                    # а не с пропажи имени устройства.
+                    self._bus_glitch = (display_id == "glitch")
+                    if not self._bus_glitch:
+                        back = time.time()
+                        for data in self.workers_data.values():
+                            if data.get("detached_at") and data.get("detached_glitch"):
+                                data["detached_at"] = back
+                    print(f"  Плитки: шина {'сбоит' if self._bus_glitch else 'в порядке'}",
+                          flush=True)
                     continue
 
                 if device_id == "_status_":
@@ -1566,11 +1708,18 @@ class App:
                     pending_id = f"identity:{devname}"
                     self.workers_data.pop(pending_id, None)
                     if pending_id in self.port_assignment:
-                        self.port_assignment[device_id] = self.port_assignment.pop(pending_id)
+                        freed = self.port_assignment.pop(pending_id)
+                        # Если плитка этого устройства уже где-то есть, оставляем
+                        # её на месте: иначе гнездо переезжает, а в старом
+                        # остаётся вторая плитка с тем же номером — мёртвая.
+                        if device_id not in self.port_assignment:
+                            self.port_assignment[device_id] = freed
 
+                previous = self.workers_data.get(device_id, {})
                 self.workers_data[device_id] = {
                     "device": display_id,
-                    "state": {"identifying": "Определение ID", "scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка"}.get(state, state),
+                    "state": {"identifying": "Определение ID", "scanning": "Сканирование", "copying": "Копирование", "done": "Готово", "error": "Ошибка",
+                              "detached": "Переподключение", "stopped": "Остановлено"}.get(state, state),
                     "state_raw": state,
                     "progress": f"{pct}% ({self._fmt_size(current)} / {self._fmt_size(total)})" if total else msg,
                     "files": str(current) if state == "copying" else "",
@@ -1578,15 +1727,35 @@ class App:
                     "message": msg,
                     "devname": devname,
                 }
+                if state == "detached":
+                    # Отсчёт ожидания начинается с первой такой строки: если
+                    # отключение устройства так и не придёт, плитка всё равно
+                    # погаснет сама и не повиснет серой навсегда.
+                    row = self.workers_data[device_id]
+                    row["detached_at"] = previous.get("detached_at") or time.time()
+                    row["detached_glitch"] = previous.get(
+                        "detached_glitch", bool(getattr(self, "_bus_glitch", False)))
                 self._refresh_workers()
         except queue.Empty:
             pass
+
+        # Устройства, которые так и не вернулись за отведённое время, гаснут.
+        # Вернувшиеся сюда не попадают: их сообщения перезаписывают строку
+        # целиком, вместе с отметкой об отключении.
+        gone = [] if getattr(self, "_bus_glitch", False) else _detached_too_long(
+            self.workers_data, time.time())
+        for did in gone:
+            self.workers_data.pop(did, None)
+        if gone:
+            print(f"  Не вернулись, плитки погашены: {gone}", flush=True)
+            self._refresh_workers()
 
         # Выполняется на каждом тике (раз в 200мс) независимо от того, было ли
         # что-то в очереди — один большой файл может копироваться минутами без
         # единого сообщения в очереди, и маркер не должен за это время устареть.
         if _is_busy(self.workers_data):
             touch_copying_marker()
+        self._update_safe_removal_status()
 
         try:
             self.root.after(POLL_MS, self._poll_queue)
@@ -1609,7 +1778,11 @@ class App:
             port = self.ports[pi]
             port["device_id"] = dev_id
 
-            if state == "Сканирование":
+            if state == "Переподключение":
+                bg = self.C["bg_surface"]
+                preview_text = data["device"]
+                status_text = data.get("message", "Переподключение...")
+            elif state == "Сканирование":
                 bg = self.C["accent"]
                 preview_text = data["device"]
                 status_text = f"Сканирование... {data.get('message', '')}"
@@ -1617,6 +1790,10 @@ class App:
                 bg = self.C["accent_warn"]
                 preview_text = data["device"]
                 status_text = data.get("progress", "Копирование...")
+            elif state == "Остановлено":
+                bg = self.C["bg_surface"]
+                preview_text = data["device"]
+                status_text = f"Копирование остановлено • {data.get('progress', '')}"
             elif state == "Готово":
                 bg = self.C["accent_ok"]
                 preview_text = data["device"]

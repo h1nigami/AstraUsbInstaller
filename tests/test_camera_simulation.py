@@ -48,6 +48,7 @@ class CameraSimulationTest(unittest.TestCase):
                 "MOUNT_BASE": str(root / "mounts"),
                 "_CONFIG_PATH": str(root / "config.json"),
                 "MAX_WORKERS": 10,
+                "_require_archive_device": lambda device: None,
                 "_connected_devices": {},
                 "_connected_device_ids": {},
                 "_get_linux_partitions": partitions,

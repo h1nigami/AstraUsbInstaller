@@ -18,6 +18,40 @@ jobs:
       TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      # Релиз собирается только из того, что уже в master. v1.15 и v1.16
+      # собрали из отдельной ветки, отведённой от v1.13, и станции при
+      # обновлении потеряли всё, что вошло в v1.14. Тег на коммите вне
+      # master здесь останавливает сборку: ни одного архива к релизу не
+      # прикрепится, и апдейтеры его пропустят.
+      - name: Тег должен быть в master
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin master
+          COMMIT="$(git rev-parse "$TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$COMMIT" origin/master; then
+            echo "::error::Тег $TAG указывает на $COMMIT, которого нет в master. Влейте изменения в master и выпустите новый тег."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Проверить исходники перед сборкой
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+          python -c "import tkinter, gui"
+          python -m py_compile main.py gui.py usb_monitor.py updater.py
+          python -m unittest discover -s tests -v
+          for script in start_native.sh install_native.sh update.sh diagnose.sh; do
+            bash -n "$script"
+          done
 
       - name: Собрать VERSION и архив
         env:
@@ -26,18 +60,18 @@ jobs:
           DATE="${PUBLISHED_AT%%T*}"
           echo "$TAG $DATE" > VERSION
           NAME="astra-usb-monitor-${TAG}.tar.gz"
-          tar -czf "$NAME" \
+          tar --exclude='__pycache__' --exclude='*.pyc' -czf "$NAME" \
               main.py gui.py usb_monitor.py updater.py \
               start_native.sh install_native.sh update.sh diagnose.sh \
               requirements.txt \
-              99-astra-usb-monitor-udisks.rules VERSION data tests
+              99-astra-usb-monitor-udisks.rules VERSION data/LOGO-1.png tests
           sha256sum "$NAME" > "${NAME}.sha256"
           echo "ASSET=$NAME" >> "$GITHUB_ENV"
 
       - name: Прикрепить к релизу
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256" --clobber
+        run: gh release upload "$TAG" "$ASSET" "${ASSET}.sha256"
 
       # Инструкция по установке дописывается в конец описания каждого релиза,
       # чтобы её не приходилось копировать руками. Текст описания, набранный

@@ -51,9 +51,7 @@ class DeviceIdentityReaderTest(unittest.TestCase):
                     pass
             self.assertEqual(um._read_device_id(mount), 7654321)
 
-    def test_log_wins_when_log_and_recording_ids_disagree(self):
-        # Имена старых записей хранят прежний номер, пока регистратор не
-        # перезапишет карту, а журнал ведёт уже новый.
+    def test_conflicting_log_and_recording_ids_are_rejected(self):
         with tempfile.TemporaryDirectory() as mount:
             os.makedirs(os.path.join(mount, "LOG"))
             os.makedirs(os.path.join(mount, "DCIM"))
@@ -61,7 +59,8 @@ class DeviceIdentityReaderTest(unittest.TestCase):
                 out.write("#ID:1234567\n")
             with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
                 pass
-            self.assertEqual(um._read_device_id(mount), 1234567)
+            with self.assertRaisesRegex(OSError, "Разные ID"):
+                um._read_device_id(mount)
 
     def test_empty_id_in_log_is_reported_as_missing(self):
         with tempfile.TemporaryDirectory() as mount:
@@ -71,19 +70,16 @@ class DeviceIdentityReaderTest(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
                 um._read_device_id(mount)
 
-    def test_latest_log_without_id_falls_back_to_older_log(self):
+    def test_latest_log_without_id_does_not_reuse_older_id(self):
         with tempfile.TemporaryDirectory() as mount:
             log_dir = os.path.join(mount, "LOG")
             os.makedirs(log_dir)
-            older = os.path.join(log_dir, "20260914.txt")
-            newer = os.path.join(log_dir, "20260915.txt")
-            with open(older, "w", encoding="utf-8") as out:
+            with open(os.path.join(log_dir, "20260914.txt"), "w", encoding="utf-8") as out:
                 out.write("#ID:1111111\n")
-            with open(newer, "w", encoding="utf-8") as out:
+            with open(os.path.join(log_dir, "20260915.txt"), "w", encoding="utf-8") as out:
                 out.write("Запуск регистратора\n")
-            os.utime(older, (1_000_000, 1_000_000))
-            os.utime(newer, (2_000_000, 2_000_000))
-            self.assertEqual(um._read_device_id(mount), 1111111)
+            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                um._read_device_id(mount)
 
     def test_latest_log_is_chosen_by_mtime_and_last_id_in_it_wins(self):
         with tempfile.TemporaryDirectory() as mount:
@@ -99,7 +95,7 @@ class DeviceIdentityReaderTest(unittest.TestCase):
             os.utime(fresh, (2_000_000, 2_000_000))
             self.assertEqual(um._read_device_id(mount), 1234567)
 
-    def test_garbage_log_falls_back_to_recording(self):
+    def test_unreadable_log_does_not_fall_back_to_recording(self):
         with tempfile.TemporaryDirectory() as mount:
             os.makedirs(os.path.join(mount, "LOG"))
             os.makedirs(os.path.join(mount, "DCIM"))
@@ -107,7 +103,8 @@ class DeviceIdentityReaderTest(unittest.TestCase):
                 out.write(b"\xff")
             with open(os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"), "wb"):
                 pass
-            self.assertEqual(um._read_device_id(mount), 7654321)
+            with self.assertRaisesRegex(OSError, "Не удалось прочитать журнал"):
+                um._read_device_id(mount)
 
     def test_very_long_decimal_id_is_rejected_without_parser_crash(self):
         with tempfile.TemporaryDirectory() as mount:
