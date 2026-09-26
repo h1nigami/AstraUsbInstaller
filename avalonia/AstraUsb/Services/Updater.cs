@@ -3,6 +3,7 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace AstraUsb.Services;
 
@@ -141,6 +142,11 @@ public static class Updater
         }
 
         var installed = InstalledTag();
+
+        // Архив с флешки, оставленный киоском, ставится без сети.
+        if (TakeOfflineSpool() is { } offline)
+            return RunOffline(installed, offline.Tag, offline.Archive);
+
         var answer = Ask(Source());
         if (answer is null)
             return 0;
@@ -211,6 +217,12 @@ public static class Updater
             return 0;
         }
 
+        return InstallArchive(release.Tag, archive, work);
+    }
+
+    /// <summary>Ставит проверенный архив: распаковка, пробный запуск, установщик, проверка, откат.</summary>
+    private static int InstallArchive(string tag, string archive, string work)
+    {
         var unpacked = Path.Combine(work, "unpacked");
         Directory.CreateDirectory(unpacked);
         Unpack(archive, unpacked);
@@ -220,7 +232,7 @@ public static class Updater
         if (!File.Exists(installer))
         {
             Say("в архиве нет установщика");
-            RememberFailed(release.Tag);
+            RememberFailed(tag);
             return 1;
         }
 
@@ -229,7 +241,7 @@ public static class Updater
         if (!Starts(Path.Combine(root, "AstraUsb")))
         {
             Say("новая сборка не запускается, оставляем прежнюю");
-            RememberFailed(release.Tag);
+            RememberFailed(tag);
             return 1;
         }
 
@@ -240,14 +252,14 @@ public static class Updater
         }
 
         Snapshot();
-        Say($"ставим {release.Tag}");
+        Say($"ставим {tag}");
         try
         {
             if (!Shell("/bin/systemctl", "reset-failed", null, Service))
                 throw new IOException("не удалось сбросить счётчик перезапусков службы");
             if (!Shell("/bin/sh", installer, root))
                 throw new IOException("установщик завершился с ошибкой");
-            if (InstalledTag() != release.Tag)
+            if (InstalledTag() != tag)
                 throw new IOException("версия после установки не совпала с тегом релиза");
             if (!Healthy())
                 throw new IOException("новая служба работает со сбоями");
@@ -256,13 +268,239 @@ public static class Updater
         {
             Say(e.Message);
             // Сначала сохраняем сбойный тег: даже неудачный откат не должен потерять его.
-            RememberFailed(release.Tag);
+            RememberFailed(tag);
             Rollback();
             return 1;
         }
 
-        Say($"обновились до {release.Tag}");
+        Say($"обновились до {tag}");
         return 0;
+    }
+
+    // --- Обновление с флешки ---------------------------------------------------
+
+    /// <summary>
+    /// Спул: сюда киоск складывает архив с флешки, служба обновления
+    /// забирает его без сети. Сам киоск не ставит: установщик в конце
+    /// перезапускает его службу и убил бы киоск посреди подмены файлов.
+    /// </summary>
+    public static string OfflineSpoolDir => AppDir + ".offline";
+
+    private static Regex OfflineArchivePattern(string platform) => new(
+        $@"\Abestcam-station-(?<tag>.+)-{Regex.Escape(platform)}\.tar\.gz\z");
+
+    /// <summary>
+    /// Архивы обновления в корне каталога, сначала новее. Имена строго по
+    /// маске релизов C# под эту платформу; архивы Python и чужих платформ
+    /// не берутся.
+    /// </summary>
+    public static IReadOnlyList<(string Tag, string Archive)> FindOfflineArchives(string directory,
+        string platform)
+    {
+        var pattern = OfflineArchivePattern(platform);
+        try
+        {
+            return Directory.EnumerateFiles(directory)
+                .Select(path => (Path: path, Match: pattern.Match(Path.GetFileName(path))))
+                .Where(item => item.Match.Success && Release.IsStationTag(item.Match.Groups["tag"].Value))
+                .Select(item => (Tag: item.Match.Groups["tag"].Value, Archive: item.Path))
+                .OrderByDescending(item => VersionKey(item.Tag))
+                .ThenByDescending(item => item.Tag, StringComparer.Ordinal)
+                .ToList();
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return [];
+        }
+    }
+
+    /// <summary>Числовая часть тега для сравнения: v2.10 новее v2.9.</summary>
+    private static Version VersionKey(string tag)
+    {
+        var numbers = tag[1..].Split('-')[0].Split('.')
+            .Select(part => int.TryParse(part, out var value) ? value : 0)
+            .Concat([0, 0, 0]).Take(4).ToArray();
+        return new Version(numbers[0], numbers[1], numbers[2], numbers[3]);
+    }
+
+    /// <summary>Null, если сумма рядом с архивом сошлась, иначе текст для оператора.</summary>
+    public static string? VerifyChecksumFile(string archive, string sums)
+    {
+        string expected;
+        try
+        {
+            expected = File.ReadAllText(sums);
+        }
+        catch (Exception)
+        {
+            return "рядом нет файла контрольной суммы (.sha256)";
+        }
+
+        if (expected.Trim().Length == 0)
+            return "файл контрольной суммы пуст";
+
+        try
+        {
+            return ChecksumMatches(archive, expected) ? null : "контрольная сумма не сошлась — архив битый";
+        }
+        catch (Exception e)
+        {
+            return $"архив не читается: {e.Message}";
+        }
+    }
+
+    /// <summary>Копирует архив и сумму с флешки в спул. Возвращает тег или текст ошибки.</summary>
+    public static (string? Tag, string? Error) StageOffline(string archive, string platform,
+        string? spoolDir = null)
+    {
+        var match = OfflineArchivePattern(platform).Match(Path.GetFileName(archive));
+        if (!match.Success || !Release.IsStationTag(match.Groups["tag"].Value))
+            return (null, "это не архив обновления для этой станции");
+
+        var tag = match.Groups["tag"].Value;
+        if (VerifyChecksumFile(archive, archive + ".sha256") is { } error)
+            return (null, error);
+
+        var spool = spoolDir ?? OfflineSpoolDir;
+        try
+        {
+            Wipe(spool);
+            Directory.CreateDirectory(spool);
+            File.Copy(archive, Path.Combine(spool, "release.tar.gz"));
+            File.Copy(archive + ".sha256", Path.Combine(spool, "release.tar.gz.sha256"));
+            // Тег пишется последним: служба берёт спул только целиком.
+            File.WriteAllText(Path.Combine(spool, "tag"), tag, Encoding.UTF8);
+        }
+        catch (Exception e)
+        {
+            Wipe(spool);
+            return (null, $"не удалось подготовить обновление: {e.Message}");
+        }
+
+        // Копия с флешки могла побиться по дороге.
+        if (VerifyChecksumFile(Path.Combine(spool, "release.tar.gz"),
+                Path.Combine(spool, "release.tar.gz.sha256")) is { } copied)
+        {
+            Wipe(spool);
+            return (null, copied);
+        }
+        return (tag, null);
+    }
+
+    /// <summary>Тег и архив из спула или null, если там ничего готового нет.</summary>
+    public static (string Tag, string Archive)? TakeOfflineSpool(string? spoolDir = null)
+    {
+        var spool = spoolDir ?? OfflineSpoolDir;
+        try
+        {
+            var tagFile = Path.Combine(spool, "tag");
+            var archive = Path.Combine(spool, "release.tar.gz");
+            if (!File.Exists(tagFile) || !File.Exists(archive))
+                return null;
+            var tag = File.ReadAllText(tagFile).Trim();
+            return Release.IsStationTag(tag) ? (tag, archive) : null;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    public static void ClearOfflineSpool(string? spoolDir = null) => Wipe(spoolDir ?? OfflineSpoolDir);
+
+    private static int RunOffline(string installed, string tag, string archive)
+    {
+        if (VerifyChecksumFile(archive, archive + ".sha256") is { } error)
+        {
+            Say($"архив с флешки битый ({error}), пропускаем");
+            ClearOfflineSpool();
+            return 0;
+        }
+
+        if (!NeedsUpdate(installed, tag))
+        {
+            Say($"архив с флешки {tag} уже установлен");
+            ClearOfflineSpool();
+            return 0;
+        }
+
+        if (AlreadyFailed(tag))
+        {
+            Say($"релиз {tag} с флешки уже не встал, второй раз не пробуем");
+            ClearOfflineSpool();
+            return 0;
+        }
+
+        // Спул остаётся: поставим при следующей проверке.
+        if (BusyMarker.Busy())
+        {
+            Say("станция сейчас собирает записи, обновление с флешки отложено");
+            return 0;
+        }
+
+        var work = Directory.CreateTempSubdirectory("astra-update-").FullName;
+        Say($"ставим {tag} с флешки (было {installed})");
+        try
+        {
+            return InstallArchive(tag, archive, work);
+        }
+        catch (Exception e)
+        {
+            Say($"обновление с флешки сорвалось: {e.Message}");
+            RememberFailed(tag);
+            return 1;
+        }
+        finally
+        {
+            Wipe(work);
+            ClearOfflineSpool();
+        }
+    }
+
+    // --- Запуск проверки из киоска --------------------------------------------
+
+    /// <summary>Служба обновления, которую киоск только запускает.</summary>
+    public const string UpdateUnit = Service + "-update.service";
+
+    public const string UpdateStarted = "Проверка обновления запущена";
+    public const string NoNetwork = "Нет подключения к интернету";
+
+    /// <summary>
+    /// Быстрая проверка, что до источника релизов можно достучаться. Сама
+    /// служба при отсутствии сети молча выходит с нулём (иначе таймер
+    /// ругался бы каждые шесть часов), и без этой проверки кнопка не
+    /// отличила бы «сети нет» от «всё в порядке».
+    /// </summary>
+    public static bool HasNetwork(TimeSpan? timeout = null)
+    {
+        try
+        {
+            var uri = new Uri(Source());
+            using var client = new System.Net.Sockets.TcpClient();
+            return client.ConnectAsync(uri.Host, uri.Port).Wait(timeout ?? TimeSpan.FromSeconds(5))
+                   && client.Connected;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Запускает службу обновления, не дожидаясь её конца. Возвращает текст
+    /// для оператора. Сама установка идёт вне киоска.
+    /// </summary>
+    public static string StartService(bool checkNetwork = true)
+    {
+        if (!OperatingSystem.IsLinux())
+            return "На этой платформе программа обновляется вручную";
+        if (checkNetwork && !HasNetwork())
+            return NoNetwork;
+        if (!Directory.Exists("/run/systemd/system"))
+            return "Проверка недоступна: нет systemd";
+        return Shell("/bin/systemctl", "start", null, "--no-block", UpdateUnit)
+            ? UpdateStarted
+            : "Не удалось запустить проверку обновлений";
     }
 
     /// <summary>
@@ -462,7 +700,7 @@ public static class Updater
     }
 
     private static bool Shell(string command, string first, string? workingDir,
-        string? second = null)
+        string? second = null, string? third = null)
     {
         try
         {
@@ -471,6 +709,8 @@ public static class Updater
             info.ArgumentList.Add(first);
             if (second is not null)
                 info.ArgumentList.Add(second);
+            if (third is not null)
+                info.ArgumentList.Add(third);
 
             if (workingDir is not null)
                 info.WorkingDirectory = workingDir;

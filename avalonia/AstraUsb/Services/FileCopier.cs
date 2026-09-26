@@ -38,7 +38,11 @@ public static class FileCopier
         var failed = 0;
         var backedUp = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        foreach (var dir in EnumerateDirectories(sourceRoot))
+        // Каталог, который не удалось прочитать, считается неудачей: иначе
+        // выдернутый посреди копирования носитель давал бы зелёное «Готово»
+        // с неполным числом файлов.
+        var walkErrors = 0;
+        foreach (var dir in EnumerateDirectories(sourceRoot, () => walkErrors++))
         {
             var relative = Path.GetRelativePath(sourceRoot, dir);
             var destDir = relative == "." ? destRoot : Path.Combine(destRoot, relative);
@@ -50,6 +54,7 @@ public static class FileCopier
             }
             catch (Exception)
             {
+                walkErrors++;
                 continue;
             }
 
@@ -107,7 +112,7 @@ public static class FileCopier
             }
         }
 
-        return new CopyResult(copiedFiles, copiedBytes, backedUp, failed);
+        return new CopyResult(copiedFiles, copiedBytes, backedUp, failed + walkErrors);
     }
 
     private static bool SameFile(string source, string target)
@@ -118,20 +123,31 @@ public static class FileCopier
                && (a.LastWriteTimeUtc - b.LastWriteTimeUtc).Duration() < SameTime;
     }
 
-    private static IEnumerable<string> EnumerateDirectories(string root)
+    /// <summary>Обход в глубину, где каждый нечитаемый каталог отмечается через onError.</summary>
+    private static IEnumerable<string> EnumerateDirectories(string root, Action onError)
     {
-        yield return root;
-        IEnumerable<string> nested;
-        try
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
         {
-            nested = Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories);
-        }
-        catch (Exception)
-        {
-            yield break;
-        }
-
-        foreach (var dir in nested)
+            var dir = pending.Pop();
             yield return dir;
+
+            string[] nested;
+            try
+            {
+                nested = Directory.GetDirectories(dir);
+            }
+            catch (Exception)
+            {
+                onError();
+                continue;
+            }
+
+            // Ссылки на каталоги не обходим: петля ссылок копировала бы без конца.
+            for (var index = nested.Length - 1; index >= 0; index--)
+                if (new DirectoryInfo(nested[index]).LinkTarget is null)
+                    pending.Push(nested[index]);
+        }
     }
 }

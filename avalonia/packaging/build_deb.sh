@@ -62,6 +62,11 @@ if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
     rm -f /etc/systemd/system/astra-usb-avalonia-update.service
     rm -f /etc/systemd/system/astra-usb-avalonia-update.timer
     rm -f /etc/udev/rules.d/99-astra-usb-avalonia-udisks.rules
+    # Ярлык на столе без службы только выдавал бы ошибку pkexec.
+    rm -f /root/Desktop/BestCam-Station.desktop "/root/Рабочий стол/BestCam-Station.desktop"
+    for home in /home/*; do
+        rm -f "$home/Desktop/BestCam-Station.desktop" "$home/Рабочий стол/BestCam-Station.desktop"
+    done
     systemctl daemon-reload 2>/dev/null || true
 fi
 POSTRM

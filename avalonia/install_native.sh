@@ -13,6 +13,8 @@
 #   5. Ставит systemd-сервис, который ждёт графическую сессию и запускает
 #      приложение. Автозапуск через сессию (XDG autostart) в Astra срабатывает
 #      не во всех конфигурациях, systemd надёжнее.
+#   6. Кладёт на рабочий стол ярлык «BestCam Station»: поднять службу после
+#      выхода из киоска по паролю.
 #
 # Запускать из каталога, собранного publish.sh.
 set -e
@@ -220,6 +222,66 @@ if [ -d /run/systemd/system ]; then
     $SUDO systemctl daemon-reload
     $SUDO systemctl enable --now "$SERVICE_NAME-update.timer"
 fi
+
+# --- 7. Ярлык на рабочем столе -----------------------------------------------
+# Ярлык «BestCam Station» поднимает службу после выхода из киоска по паролю
+# (systemctl start уже запущенную службу не трогает; restart тут нельзя:
+# убил бы копирование). Без каталога рабочего стола ничего не делает.
+# ASTRA_ROOT задаёт префикс путей, ASTRA_DESKTOP_DIR готовый каталог стола:
+# в бою они пусты, в тестах ведут во временный каталог.
+install_desktop_shortcut() {
+    local root="${ASTRA_ROOT:-}"
+    local desktop_dir="${ASTRA_DESKTOP_DIR:-}"
+    if [ -z "$desktop_dir" ]; then
+        local target_user="${SUDO_USER:-$(whoami)}"
+        local user_home
+        if [ "$target_user" = "root" ]; then
+            user_home="$root/root"
+        else
+            user_home="$root/home/$target_user"
+        fi
+        local candidate
+        for candidate in "$user_home/Desktop" "$user_home/Рабочий стол"; do
+            if [ -d "$candidate" ]; then
+                desktop_dir="$candidate"
+                break
+            fi
+        done
+        if [ -z "$desktop_dir" ] && command -v xdg-user-dir >/dev/null 2>&1; then
+            desktop_dir="$(HOME="$user_home" xdg-user-dir DESKTOP 2>/dev/null || true)"
+            [ "$desktop_dir" = "$user_home" ] && desktop_dir=""
+        fi
+    fi
+    [ -n "$desktop_dir" ] && [ -d "$desktop_dir" ] || return 0
+
+    local shortcut="$desktop_dir/BestCam-Station.desktop"
+    # Имена зашиты буквально, а не из переменных скрипта: функция обязана
+    # работать и отдельно от него (так её гоняют тесты).
+    $SUDO tee "$shortcut" > /dev/null << EOF
+[Desktop Entry]
+Type=Application
+Name=BestCam Station
+Comment=Поднять программу станции BestCam
+Exec=pkexec systemctl start astra-usb-avalonia
+TryExec=pkexec
+Icon=/opt/astra-usb-avalonia/logo.png
+Terminal=false
+Categories=Utility;
+EOF
+    $SUDO chmod +x "$shortcut"
+    if command -v gio >/dev/null 2>&1 && [ -n "${SUDO_USER:-}" ]; then
+        # «Доверенный» запуск без лишнего вопроса при первом клике.
+        if [ -n "$SUDO" ]; then
+            $SUDO -u "$SUDO_USER" gio set "$shortcut" metadata::trusted true 2>/dev/null || true
+        else
+            su -s /bin/sh "$SUDO_USER" -c "gio set '$shortcut' metadata::trusted true" 2>/dev/null || true
+        fi
+    fi
+    echo "  ярлык на рабочем столе: $shortcut"
+}
+
+echo "--- Ярлык на рабочем столе..."
+install_desktop_shortcut
 
 if [ ! -f "$APP_DIR/VERSION" ]; then
     echo

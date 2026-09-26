@@ -22,6 +22,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Карты, которые сейчас опознаются в стороне от интерфейса.</summary>
     private readonly HashSet<string> _identifying = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Диспетчер окна, запомненный при создании. Фоновые задачи отвечают в
+    /// него, а не в Dispatcher.UIThread: статическое свойство создаёт
+    /// диспетчер заново, если его сбросили (так делает сессия тестов
+    /// Avalonia между тестами), и поздний ответ задачи мог подменить
+    /// диспетчер следующего теста.
+    /// </summary>
+    private readonly Dispatcher _ui = Dispatcher.UIThread;
+
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
@@ -81,6 +90,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, (UsbDevice Device, DateTime Seen)> _recent =
         new(StringComparer.Ordinal);
 
+    /// <summary>Имена устройств из последнего опроса: подпись на плитке вместо номера.</summary>
+    private IReadOnlyDictionary<long, string> _deviceNames = new Dictionary<long, string>();
+
     /// <summary>Открыт ли доступ к закрытым разделам и до каких пор.</summary>
     private AccessGuard _access = new(0);
 
@@ -138,6 +150,162 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void DismissError() => ErrorMessage = "";
+
+    // --- Обновление с флешки ------------------------------------------------
+
+    /// <summary>
+    /// Станция ждёт флешку с архивом обновления. Новые носители в это время
+    /// не считаются камерами: их монтируем и ищем в корне архив релиза.
+    /// </summary>
+    [ObservableProperty]
+    private bool _offlineWaiting;
+
+    [ObservableProperty]
+    private string _offlineStatus = "";
+
+    /// <summary>Носители, подключённые до начала ожидания: с ними всё как обычно.</summary>
+    private HashSet<string>? _offlineKnown;
+
+    /// <summary>Носители, которые не выгружаются как камеры, пока их не вынут.</summary>
+    private readonly HashSet<string> _offlineMedia = new(StringComparer.Ordinal);
+
+    private bool _offlineChecking;
+
+    [RelayCommand]
+    private void StartOfflineUpdate()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            Settings.Hint = "на этой платформе программа обновляется вручную";
+            return;
+        }
+        if (_running.Count > 0 || BusyMarker.Busy())
+        {
+            Settings.Hint = "дождитесь конца сканирования или копирования";
+            return;
+        }
+
+        _offlineKnown = _recent.Keys.ToHashSet(StringComparer.Ordinal);
+        OfflineStatus = "Вставьте флешку с файлом обновления…";
+        OfflineWaiting = true;
+    }
+
+    [RelayCommand]
+    private void CancelOfflineUpdate() => StopOfflineWaiting(keep: null);
+
+    private void StopOfflineWaiting(string? keep)
+    {
+        OfflineWaiting = false;
+        _offlineKnown = null;
+        // Флешка с обновлением так и остаётся не камерой, пока её не вынут;
+        // остальные носители, пришедшие во время ожидания, выгружаются как обычно.
+        _offlineMedia.RemoveWhere(name => name != keep);
+    }
+
+    /// <summary>
+    /// Отделяет носители, пришедшие во время ожидания обновления, от камер.
+    /// Возвращает то, что раскладывается по окнам как обычно.
+    /// </summary>
+    private IReadOnlyList<UsbDevice> SplitOfflineMedia(IReadOnlyList<UsbDevice> devices)
+    {
+        var names = devices.Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
+        _offlineMedia.RemoveWhere(name => !names.Contains(name));
+
+        if (OfflineWaiting && _offlineKnown is not null)
+            foreach (var device in devices)
+                if (!_offlineKnown.Contains(device.Name))
+                    _offlineMedia.Add(device.Name);
+
+        if (OfflineWaiting)
+            WatchOfflineMedia(devices.Where(d => _offlineMedia.Contains(d.Name)).ToList());
+
+        return _offlineMedia.Count == 0
+            ? devices
+            : devices.Where(d => !_offlineMedia.Contains(d.Name)).ToList();
+    }
+
+    private void WatchOfflineMedia(IReadOnlyList<UsbDevice> media)
+    {
+        if (_offlineChecking)
+            return;
+
+        if (media.Count == 0)
+        {
+            OfflineStatus = "Вставьте флешку с файлом обновления…";
+            return;
+        }
+
+        var targets = media
+            .Select(device => (device.Name, Mount: MountPointFor(device)))
+            .Where(target => target.Mount is not null)
+            .Select(target => (target.Name, Mount: target.Mount!))
+            .ToList();
+        if (targets.Count == 0)
+        {
+            OfflineStatus = "Флешка подключена, открываем…";
+            return;
+        }
+
+        _offlineChecking = true;
+        _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform()))
+            .ContinueWith(task => _ui.Post(() =>
+            {
+                _offlineChecking = false;
+                var (done, status, tag, name, kick) = task.IsCompletedSuccessfully
+                    ? task.Result
+                    : (false, "Флешка не читается", "", "", "");
+
+                if (!done)
+                {
+                    if (OfflineWaiting)
+                        OfflineStatus = status;
+                    return;
+                }
+
+                StopOfflineWaiting(keep: name);
+                if (kick == Updater.UpdateStarted)
+                {
+                    _actions.Write(ActionLog.Settings, $"обновление {tag} с флешки передано установщику");
+                    Settings.Hint = $"обновление {tag} передано установщику, программа скоро перезапустится";
+                }
+                else
+                {
+                    Updater.ClearOfflineSpool();
+                    Settings.Hint = kick;
+                }
+            }));
+    }
+
+    /// <summary>Ищет архив на флешках и готовит его для службы обновления. Идёт в стороне от интерфейса.</summary>
+    private static (bool Done, string Status, string Tag, string Name, string Kick) CheckOfflineMedia(
+        IReadOnlyList<(string Name, string Mount)> targets, string installed, string platform)
+    {
+        var status = "На подключённой флешке обновление не найдено";
+        foreach (var (name, mount) in targets)
+        {
+            var found = Updater.FindOfflineArchives(mount, platform);
+            if (found.Count == 0)
+                continue;
+
+            var (tag, archive) = found[0];
+            if (!Updater.NeedsUpdate(installed, tag))
+            {
+                status = $"Версия {tag} уже установлена";
+                continue;
+            }
+
+            var (staged, error) = Updater.StageOffline(archive, platform);
+            if (error is not null)
+            {
+                status = $"Архив {tag}: {error}";
+                continue;
+            }
+
+            // Сеть здесь не нужна: архив уже на станции.
+            return (true, "", staged!, name, Updater.StartService(checkNetwork: false));
+        }
+        return (false, status, "", "", "");
+    }
 
     /// <summary>
     /// Сводка по отсекам в шапке: сколько копируется, сколько готово, сколько
@@ -697,10 +865,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             var storage = StorageState.Read(archiveRoot);
+            var names = DeviceRegistry.ReadNames(AppPaths.Database);
 
-            Dispatcher.UIThread.Post(() =>
+            _ui.Post(() =>
             {
                 _polling = false;
+                _deviceNames = names;
 
                 if (!_demonstrating)
                     Apply(found, storage);
@@ -714,7 +884,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private void Apply(IReadOnlyList<UsbDevice> found, StorageState storage)
     {
-        var devices = HoldBriefly(found);
+        var all = HoldBriefly(found);
+        var devices = SplitOfflineMedia(all);
         var present = devices.Select(MountPointFor).Where(m => !string.IsNullOrEmpty(m))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var id in _astraOwners.Keys.Where(id => !present.Contains(_astraOwners[id])).ToArray())
@@ -743,7 +914,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             if (mount is not null && Identify(device, mount) is { } card)
             {
-                cameraId = card.CameraId;
+                // Имя, если оператор его задал, иначе номер, как в Python-версии.
+                cameraId = _deviceNames.TryGetValue(card.DeviceId, out var named) ? named : card.CameraId;
                 detail = card.Origin;
                 personnel = card.PersonnelNo;
                 employee = card.Employee;
@@ -803,7 +975,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_priority is { } waiting && !present.Contains(waiting))
             _priority = null;
 
-        ReleaseGoneMedia(devices);
+        // Флешка с обновлением остаётся смонтированной, пока её не вынут.
+        ReleaseGoneMedia(all);
 
         Status = devices.Count == 0
             ? "носители не подключены"
@@ -865,7 +1038,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             _ = Task.Run(() =>
             {
                 var mounted = MountManager.Ensure(name, grace);
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     if (mounted is not null)
                         _mounted[name] = mounted;
@@ -911,7 +1084,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             {
                 var info = ReadCard(name, mount);
 
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     if (info is not null && StillConnected(name))
                         _identified[mount] = info;
@@ -1032,7 +1205,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
             finally
             {
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     _running.Remove(mountPoint);
                     _cancels.Remove(mountPoint);
@@ -1120,7 +1293,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                         ? $"в очереди {waiting}"
                         : "очередь пуста";
 
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     FtpLabel = label;
                     _sending = false;

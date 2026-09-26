@@ -1152,7 +1152,8 @@
               </ScrollViewer>
 
               <!-- О программе -->
-              <StackPanel Classes="fade" Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}" Spacing="8">
+              <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}">
+              <StackPanel Spacing="8">
                 <TextBlock Text="О программе" Classes="section" />
                 <Button Content="Показать все состояния окон" Height="52"
                         HorizontalAlignment="Left"
@@ -1164,7 +1165,33 @@
                 <TextBlock Text="{Binding Version}" Classes="mono" FontSize="12" />
                 <TextBlock Classes="hint"
                            Text="Записи собираются с регистраторов автоматически при подключении. Выход из программы и разделы, кроме сбора данных, закрыты учётной записью администратора." />
+
+                <TextBlock Text="Обновление" Classes="h2" FontSize="16" Margin="0,12,0,0" />
+                <TextBlock Classes="hint" TextWrapping="Wrap"
+                           Text="Станция сама проверяет обновления раз в шесть часов. Без интернета обновление ставится с флешки: в её корне должны лежать архив bestcam-station-…tar.gz для этой станции и файл .sha256 рядом." />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                  <Button Content="Проверить обновления" Height="52"
+                          IsEnabled="{Binding !Settings.UpdateChecking}"
+                          Command="{Binding Settings.CheckUpdatesCommand}" />
+                  <Button Content="С флешки" Height="52"
+                          Command="{Binding StartOfflineUpdateCommand}" />
+                </StackPanel>
+
+                <TextBlock Text="Заводской сброс" Classes="h2" FontSize="16" Margin="0,12,0,0" />
+                <TextBlock Classes="hint" TextWrapping="Wrap"
+                           Text="Удаляет все устройства, историю выгрузок, файлы архива, пароль и настройки. Журнал действий, справочник сотрудников и разметка гнёзд остаются. После сброса программа перезапустится." />
+                <Button Classes="danger" Content="Сбросить до заводских" Height="52"
+                        HorizontalAlignment="Left" IsVisible="{Binding !Settings.ResetArmed}"
+                        IsEnabled="{Binding !Settings.ResetRunning}"
+                        Command="{Binding Settings.ArmFactoryResetCommand}" />
+                <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding Settings.ResetArmed}">
+                  <Button Classes="danger" Content="Да, удалить всё" Height="52"
+                          Command="{Binding Settings.RunFactoryResetCommand}" />
+                  <Button Content="Отмена" Height="52"
+                          Command="{Binding Settings.CancelFactoryResetCommand}" />
+                </StackPanel>
               </StackPanel>
+              </ScrollViewer>
 
               <TextBlock Grid.Row="1" Text="{Binding Settings.Hint}" Classes="hint"
                          Margin="0,10,0,0" Foreground="{StaticResource Accent700Brush}" />
@@ -1429,6 +1456,22 @@
         </StackPanel>
       </Border>
     </Border>
+    <!-- Ожидание флешки с обновлением: доска закрыта, пока станция ищет архив -->
+    <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding OfflineWaiting}"
+            Background="{StaticResource BgAppBrush}" AutomationProperties.Name="Обновление с флешки">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14" MaxWidth="720">
+        <TextBlock Text="Обновление с флешки" Classes="h2" FontSize="26" HorizontalAlignment="Center" />
+        <TextBlock Text="Вставьте флешку с обновлением, дальше всё произойдёт само" Classes="hint"
+                   FontSize="15" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
+        <TextBlock Text="{Binding OfflineStatus}" FontSize="18" FontWeight="SemiBold"
+                   Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"
+                   TextWrapping="Wrap" TextAlignment="Center" />
+        <Button Content="Отмена" Height="52" Width="180" HorizontalAlignment="Center"
+                HorizontalContentAlignment="Center" Margin="0,10,0,0"
+                Command="{Binding CancelOfflineUpdateCommand}" />
+      </StackPanel>
+    </Border>
+
     <Border Grid.Row="0" Grid.RowSpan="4" IsVisible="{Binding ErrorVisible}"
             VerticalAlignment="Top" Margin="12" Padding="18" CornerRadius="16"
             Background="{StaticResource BgPanelBrush}"

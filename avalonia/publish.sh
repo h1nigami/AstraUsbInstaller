@@ -24,6 +24,8 @@ dotnet publish AstraUsb/AstraUsb.csproj \
 chmod +x "$OUT/AstraUsb" 2>/dev/null || true
 cp start_native.sh install_native.sh 99-astra-usb-avalonia-udisks.rules "$OUT/" 2>/dev/null || true
 chmod +x "$OUT/start_native.sh" "$OUT/install_native.sh" 2>/dev/null || true
+# Значок ярлыка на рабочем столе: в сборке логотип зашит ресурсом.
+cp AstraUsb/Assets/logo.png "$OUT/logo.png" 2>/dev/null || true
 
 if [ -f ../VERSION ]; then
     cp ../VERSION "$OUT/VERSION"

@@ -72,19 +72,25 @@ UPDATE_STARTED = "Проверка обновления запущена"
 NO_NETWORK = "Нет подключения к интернету"
 
 
-def _start_update_service(runner=subprocess.run, network_check=updater.has_network):
+def _start_update_service(runner=subprocess.run, network_check=updater.has_network,
+                          require_network=True):
     """Пнуть внешний юнит проверки обновлений (oneshot, вне сервиса GUI).
 
     Саму установку GUI не выполняет: установщик в конце перезапускает сервис
     приложения и убил бы себя посреди подмены файлов. Сеть проверяется здесь
     же — без неё сам updater.py молча завершится "успешно" (чтобы таймер не
     ругался каждые 6 часов), и кнопка иначе показала бы то же самое "Проверка
-    обновления запущена", что и при настоящей проверке. Возвращает текст статуса.
+    обновления запущена", что и при настоящей проверке. Архиву с флешки сеть
+    не нужна (require_network=False): он уже в спуле, и отказ «нет сети»
+    стирал бы его на станции без интернета. Возвращает текст статуса.
     """
-    if not network_check():
+    if require_network and not network_check():
         return NO_NETWORK
     try:
-        result = runner(["systemctl", "start", UPDATE_SERVICE], timeout=60)
+        # --no-block: ждать конца проверки незачем, а установка с флешки идёт
+        # минутами. Блокирующий вызов морозил окно и по таймауту считался
+        # отказом, после чего спул стирался прямо под работающей службой.
+        result = runner(["systemctl", "start", UPDATE_SERVICE, "--no-block"], timeout=60)
     except FileNotFoundError:
         return "Проверка недоступна: нет systemd"
     except Exception as e:
@@ -830,7 +836,7 @@ class App:
                 dlg.destroy()
             except Exception:
                 pass
-        msg = _start_update_service()
+        msg = _start_update_service(require_network=False)
         if msg == UPDATE_STARTED:
             self._about_status_var.set(
                 f"Обновление {tag} передано установщику — программа скоро перезапустится")

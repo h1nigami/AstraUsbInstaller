@@ -160,10 +160,94 @@ public sealed class BackupServiceTests : IDisposable
         Assert.Equal("старое", File.ReadAllText(original));
     }
 
+    [Fact]
+    public async Task Card_replaced_during_copy_keeps_source_videos()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "copy-replacement")).FullName;
+        var recording = Path.Combine(source, "clip.mp4");
+        File.WriteAllText(recording, "запись");
+        var log = Directory.CreateDirectory(Path.Combine(source, "LOG")).FullName;
+        var logFile = Path.Combine(log, "20260915.txt");
+        File.WriteAllText(logFile, "#ID:1\n");
+        var settings = new Settings
+        {
+            BackupRoot = Path.Combine(_root, "archive"),
+            MinFreeGb = 0,
+            DeleteVideoAfterCopy = true,
+        };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        var progress = new CapturedProgress
+        {
+            OnReport = update =>
+            {
+                if (update.Stage == BackupStage.Copying)
+                    File.WriteAllText(logFile, "#ID:2\n");
+            },
+        };
+
+        await new BackupService(Path.Combine(_root, "devices.db"), settings).RunAsync(1, source, progress);
+
+        Assert.Equal(BackupStage.Failed, progress.Updates.Last().Stage);
+        Assert.Contains("носитель сменился", progress.Updates.Last().Detail);
+        Assert.True(File.Exists(recording));
+    }
+
+    [Fact]
+    public async Task Unreadable_settings_stop_the_backup()
+    {
+        Directory.CreateDirectory(AppPaths.DataDir);
+        File.WriteAllText(Settings.FilePath, "{ обрезанный файл");
+        var settings = Settings.Load();
+        Assert.True(settings.Unreadable);
+        settings.MinFreeGb = 0;
+        settings.DeleteVideoAfterCopy = true;
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        var source = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        var recording = Path.Combine(source, "clip.mp4");
+        File.WriteAllText(recording, "запись");
+        var log = Directory.CreateDirectory(Path.Combine(source, "LOG")).FullName;
+        File.WriteAllText(Path.Combine(log, "20260915.txt"), "#ID:1\n");
+        var progress = new CapturedProgress();
+
+        await new BackupService(Path.Combine(_root, "devices.db"), settings).RunAsync(1, source, progress);
+
+        Assert.Equal(BackupStage.Failed, progress.Updates.Last().Stage);
+        Assert.True(File.Exists(recording));
+        Assert.False(Directory.Exists(Path.Combine(settings.BackupRoot, "Device1")));
+    }
+
+    [Fact]
+    public void Unreadable_settings_are_not_overwritten_silently()
+    {
+        Directory.CreateDirectory(AppPaths.DataDir);
+        File.WriteAllText(Settings.FilePath, "{ обрезанный файл");
+        var settings = Settings.Load();
+
+        Assert.False(settings.Save());
+        Assert.Equal("{ обрезанный файл", File.ReadAllText(Settings.FilePath));
+
+        settings.BackupRoot = Path.Combine(_root, "archive");
+        Assert.True(settings.Save(replaceUnreadable: true));
+        var reloaded = Settings.Load();
+        Assert.False(reloaded.Unreadable);
+        Assert.Equal(settings.BackupRoot, reloaded.BackupRoot);
+        Assert.False(File.Exists(Settings.FilePath + ".tmp"));
+    }
+
+    [Fact]
+    public void Missing_settings_file_is_not_unreadable()
+    {
+        Assert.False(File.Exists(Settings.FilePath));
+        Assert.False(Settings.Load().Unreadable);
+    }
+
     public void Dispose()
     {
         AppPaths.Root = _appRoot;
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        Directory.Delete(_root, recursive: true);
+        // Поздняя фоновая запись прошлых тестов может попасть в каталог
+        // прямо во время удаления; остаток временного каталога не ошибка.
+        try { Directory.Delete(_root, true); }
+        catch (IOException) { }
     }
 }

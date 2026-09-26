@@ -45,6 +45,11 @@ public sealed partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _version = "";
     [ObservableProperty] private string _hint = "";
 
+    /// <summary>Нажата кнопка заводского сброса, ждём подтверждения.</summary>
+    [ObservableProperty] private bool _resetArmed;
+
+    [ObservableProperty] private bool _resetRunning;
+
     /// <summary>
     /// Открытый подраздел настроек. Разделы разведены по боковому меню, как в
     /// прототипе: одной простынёй с прокруткой на экране станции не
@@ -195,6 +200,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         FtpSsl = _settings.FtpSsl;
 
         ReloadSlots();
+
+        if (_settings.Unreadable)
+            Hint = "файл настроек испорчен: выгрузка остановлена. Выберите папку архива и сохраните хранилище";
     }
 
     [RelayCommand]
@@ -219,7 +227,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.AlarmSound = AlarmSound;
         _settings.VoiceHints = VoiceHints;
 
-        var stored = _settings.Save();
+        var stored = _settings.Save(replaceUnreadable: true);
         if (stored)
             _actions.Write(ActionLog.Settings,
                 $"хранилище: {BackupRoot}, порог {MinFreeGb} ГБ, "
@@ -718,6 +726,82 @@ public sealed partial class SettingsViewModel : ObservableObject
         catch (Exception e)
         {
             Hint = UserError.Report("Не удалось снять разметку гнёзд", e);
+        }
+    }
+
+    // --- Обновления ---------------------------------------------------------
+
+    [ObservableProperty] private bool _updateChecking;
+
+    /// <summary>
+    /// Запускает внешнюю службу проверки обновлений. Сам киоск не ставит:
+    /// установщик в конце перезапускает его службу.
+    /// </summary>
+    [RelayCommand]
+    private async Task CheckUpdates()
+    {
+        if (UpdateChecking)
+            return;
+        if (BusyMarker.Busy())
+        {
+            Hint = "дождитесь конца сканирования или копирования";
+            return;
+        }
+
+        UpdateChecking = true;
+        Hint = "запуск проверки…";
+        try
+        {
+            Hint = await Task.Run(() => Updater.StartService());
+        }
+        finally
+        {
+            UpdateChecking = false;
+        }
+    }
+
+    // --- Заводской сброс ----------------------------------------------------
+
+    [RelayCommand]
+    private void ArmFactoryReset()
+    {
+        if (BusyMarker.Busy())
+        {
+            Hint = "дождитесь конца сканирования или копирования и повторите сброс";
+            return;
+        }
+        ResetArmed = true;
+    }
+
+    [RelayCommand]
+    private void CancelFactoryReset() => ResetArmed = false;
+
+    [RelayCommand]
+    private async Task RunFactoryReset()
+    {
+        if (ResetRunning)
+            return;
+        ResetArmed = false;
+        ResetRunning = true;
+        Hint = "сброс...";
+        try
+        {
+            var root = _settings.BackupRoot;
+            var result = await Task.Run(() => FactoryReset.Run(_dbPath, root));
+            _actions.Write(ActionLog.Settings,
+                $"заводской сброс: устройств {result.Devices}, выгрузок {result.Backups}, "
+                + $"записей архива {result.Entries}");
+            Hint = $"удалено: устройств {result.Devices}, выгрузок {result.Backups}, "
+                   + $"записей архива {result.Entries}. Программа перезапускается";
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            AppRestart.Now();
+        }
+        catch (Exception e)
+        {
+            ResetRunning = false;
+            Hint = e is InvalidOperationException
+                ? e.Message
+                : UserError.Report("Не удалось выполнить заводской сброс", e);
         }
     }
 }
