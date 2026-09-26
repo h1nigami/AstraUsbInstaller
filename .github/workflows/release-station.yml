@@ -144,7 +144,11 @@ jobs:
             printf '\n' >> /tmp/body.md
             sed -e "s/TAG_HERE/$TAG/g" -e "s/VERSION_HERE/${TAG#v}/g" \
               .github/release-station-install.md >> /tmp/body.md
-            gh release edit "$TAG" --notes-file /tmp/body.md
+            # Только тело описания. `gh release edit` заодно переставляет
+            # метку latest на редактируемый релиз, а релиз станции C# latest
+            # получать не должен: его увидели бы апдейтеры Python.
+            ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" -q .id)
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat /tmp/body.md)" > /dev/null
           fi
 
   # Установщик для Windows собирается отдельно: Inno Setup идёт только на
