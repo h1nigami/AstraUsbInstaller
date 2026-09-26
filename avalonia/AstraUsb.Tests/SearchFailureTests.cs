@@ -158,6 +158,9 @@ public sealed class SearchFailureTests : IDisposable
     {
         AppPaths.Root = _previous;
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        Directory.Delete(_root, true);
+        // Поздняя фоновая запись прошлых тестов может попасть в каталог
+        // прямо во время удаления; остаток временного каталога не ошибка.
+        try { Directory.Delete(_root, true); }
+        catch (IOException) { }
     }
 }

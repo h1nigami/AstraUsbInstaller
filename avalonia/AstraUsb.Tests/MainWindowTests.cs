@@ -13,6 +13,12 @@ using Xunit;
 
 [assembly: AvaloniaTestApplication(typeof(AstraUsb.Tests.TestAppBuilder))]
 
+// Сессия Avalonia перед каждым тестом сбрасывает Dispatcher.UIThread и лишь
+// затем регистрирует платформу. Модели из параллельных коллекций пишут в
+// Dispatcher.UIThread из фоновых задач; попав в это окно, они создавали
+// диспетчер без цикла, и тест падал в PushFrame с PlatformNotSupportedException.
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 namespace AstraUsb.Tests;
 
 public static class TestAppBuilder

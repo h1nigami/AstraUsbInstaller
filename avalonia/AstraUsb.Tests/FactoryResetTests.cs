@@ -16,7 +16,10 @@ public sealed class FactoryResetTests : IDisposable
     {
         AppPaths.Root = _appRoot;
         SqliteConnection.ClearAllPools();
-        Directory.Delete(_root, recursive: true);
+        // Поздняя фоновая запись прошлых тестов может попасть в каталог
+        // прямо во время удаления; остаток временного каталога не ошибка.
+        try { Directory.Delete(_root, true); }
+        catch (IOException) { }
     }
 
     private string Archive()

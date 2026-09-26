@@ -22,6 +22,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Карты, которые сейчас опознаются в стороне от интерфейса.</summary>
     private readonly HashSet<string> _identifying = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Диспетчер окна, запомненный при создании. Фоновые задачи отвечают в
+    /// него, а не в Dispatcher.UIThread: статическое свойство создаёт
+    /// диспетчер заново, если его сбросили (так делает сессия тестов
+    /// Avalonia между тестами), и поздний ответ задачи мог подменить
+    /// диспетчер следующего теста.
+    /// </summary>
+    private readonly Dispatcher _ui = Dispatcher.UIThread;
+
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
@@ -239,7 +248,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         _offlineChecking = true;
         _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform()))
-            .ContinueWith(task => Dispatcher.UIThread.Post(() =>
+            .ContinueWith(task => _ui.Post(() =>
             {
                 _offlineChecking = false;
                 var (done, status, tag, name, kick) = task.IsCompletedSuccessfully
@@ -858,7 +867,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var storage = StorageState.Read(archiveRoot);
             var names = DeviceRegistry.ReadNames(AppPaths.Database);
 
-            Dispatcher.UIThread.Post(() =>
+            _ui.Post(() =>
             {
                 _polling = false;
                 _deviceNames = names;
@@ -1029,7 +1038,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             _ = Task.Run(() =>
             {
                 var mounted = MountManager.Ensure(name, grace);
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     if (mounted is not null)
                         _mounted[name] = mounted;
@@ -1075,7 +1084,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             {
                 var info = ReadCard(name, mount);
 
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     if (info is not null && StillConnected(name))
                         _identified[mount] = info;
@@ -1196,7 +1205,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
             finally
             {
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     _running.Remove(mountPoint);
                     _cancels.Remove(mountPoint);
@@ -1284,7 +1293,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                         ? $"в очереди {waiting}"
                         : "очередь пуста";
 
-                Dispatcher.UIThread.Post(() =>
+                _ui.Post(() =>
                 {
                     FtpLabel = label;
                     _sending = false;

@@ -48,6 +48,15 @@ public sealed partial class FoundFile : ObservableObject
 /// </summary>
 public sealed partial class SearchViewModel : ObservableObject
 {
+    /// <summary>
+    /// Диспетчер окна, запомненный при создании. Фоновые задачи отвечают в
+    /// него, а не в Dispatcher.UIThread: статическое свойство создаёт
+    /// диспетчер заново, если его сбросили (так делает сессия тестов
+    /// Avalonia между тестами), и поздний ответ задачи мог подменить
+    /// диспетчер следующего теста.
+    /// </summary>
+    private readonly Dispatcher _ui = Dispatcher.UIThread;
+
     private readonly string _dbPath;
 
     /// <summary>Поколение запроса: ответ прежнего не должен перебить новый.</summary>
@@ -185,7 +194,7 @@ public sealed partial class SearchViewModel : ObservableObject
                 return;
             }
 
-            Dispatcher.UIThread.Post(() =>
+            _ui.Post(() =>
             {
                 if (mine != _frameRequest)
                     return;
@@ -753,7 +762,7 @@ public sealed partial class SearchViewModel : ObservableObject
         {
             var result = await Task.Run(() => FileExporter.Export(
                 paths, target, DateTime.Now,
-                (done, total) => Dispatcher.UIThread.Post(
+                (done, total) => _ui.Post(
                     () => Hint = $"выгружено {done} из {total}")));
 
             var parts = new List<string>

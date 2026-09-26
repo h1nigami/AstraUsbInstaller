@@ -245,6 +245,9 @@ public sealed class BackupServiceTests : IDisposable
     {
         AppPaths.Root = _appRoot;
         Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-        Directory.Delete(_root, recursive: true);
+        // Поздняя фоновая запись прошлых тестов может попасть в каталог
+        // прямо во время удаления; остаток временного каталога не ошибка.
+        try { Directory.Delete(_root, true); }
+        catch (IOException) { }
     }
 }
