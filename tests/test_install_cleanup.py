@@ -218,5 +218,61 @@ class DesktopShortcutTest(unittest.TestCase):
         self.assertEqual(self.desktops(), [])
 
 
+AVALONIA_INSTALLER = os.path.join(REPO, "avalonia", "install_native.sh")
+
+
+@unittest.skipUnless(BASH, "нужен работающий bash")
+class AvaloniaDesktopShortcutTest(unittest.TestCase):
+    """Тот же ярлык в установщике C#: своя служба и свой файл ярлыка."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+
+    def run_shortcut(self, extra_env=None):
+        text = pathlib.Path(AVALONIA_INSTALLER).read_text(encoding="utf-8")
+        match = re.search(r"^install_desktop_shortcut\(\) \{$.*?^\}$", text, re.M | re.S)
+        self.assertIsNotNone(match, "в установщике C# нет install_desktop_shortcut")
+        script = os.path.join(self.root, "shortcut.sh")
+        with open(script, "w", newline="\n", encoding="utf-8") as f:
+            f.write('set -e\nPATH="$PWD/bin:$PATH"\n' + match.group(0)
+                    + "\ninstall_desktop_shortcut\n")
+        env = {**os.environ, "ASTRA_ROOT": self.root, "SUDO": "",
+               "HOME": self.root, "SUDO_USER": ""}
+        env.update(extra_env or {})
+        result = subprocess.run(
+            [BASH, "shortcut.sh"], cwd=self.root, capture_output=True,
+            text=True, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def shortcuts(self):
+        return [os.path.join(dirpath, "BestCam-Station.desktop")
+                for dirpath, _dirnames, filenames in os.walk(self.root)
+                if "BestCam-Station.desktop" in filenames]
+
+    def test_creates_launcher_for_avalonia_service(self):
+        desktop = os.path.join(self.root, "Desktop")
+        os.makedirs(desktop)
+        self.run_shortcut({"ASTRA_DESKTOP_DIR": desktop})
+
+        found = self.shortcuts()
+        self.assertEqual(found, [os.path.join(desktop, "BestCam-Station.desktop")])
+        text = pathlib.Path(found[0]).read_text(encoding="utf-8")
+        self.assertIn("Exec=pkexec systemctl start astra-usb-avalonia\n", text)
+        self.assertIn("Icon=/opt/astra-usb-avalonia/logo.png", text)
+        self.assertNotIn("astra-usb-monitor", text)
+        self.assertTrue(os.access(found[0], os.X_OK))
+
+    def test_uses_russian_desktop_of_sudo_user(self):
+        desktop = os.path.join(self.root, "home", "operator", "Рабочий стол")
+        os.makedirs(desktop)
+        self.run_shortcut({"SUDO_USER": "operator"})
+        self.assertEqual(self.shortcuts(), [os.path.join(desktop, "BestCam-Station.desktop")])
+
+    def test_no_desktop_changes_nothing(self):
+        self.run_shortcut()
+        self.assertEqual(self.shortcuts(), [])
+
+
 if __name__ == "__main__":
     sys.exit(unittest.main())

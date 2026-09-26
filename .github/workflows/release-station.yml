@@ -57,6 +57,8 @@ jobs:
               linux-*)
                 cp avalonia/start_native.sh avalonia/install_native.sh \
                    avalonia/99-astra-usb-avalonia-udisks.rules "$OUT/"
+                # Значок ярлыка на рабочем столе.
+                cp avalonia/AstraUsb/Assets/logo.png "$OUT/logo.png"
                 chmod +x "$OUT/AstraUsb" "$OUT/start_native.sh" "$OUT/install_native.sh"
                 ;;
             esac
