@@ -175,6 +175,70 @@ public sealed class UpdateTests : IDisposable
         Assert.Equal(expected, Updater.NeedsUpdate(installed, latest));
     }
 
+    private string OfflineArchive(string directory, string tag, string platform = "linux-x64",
+        bool withSum = true, string? wrongSum = null)
+    {
+        Directory.CreateDirectory(directory);
+        var archive = Path.Combine(directory, $"bestcam-station-{tag}-{platform}.tar.gz");
+        File.WriteAllText(archive, "архив " + tag);
+        if (withSum)
+            File.WriteAllText(archive + ".sha256",
+                (wrongSum ?? Updater.Sha256(archive)) + "  " + Path.GetFileName(archive) + "\n");
+        return archive;
+    }
+
+    [Fact]
+    public void Offline_archives_are_found_newest_first_for_own_platform_only()
+    {
+        var usb = Path.Combine(_dir, "usb");
+        OfflineArchive(usb, "v2.9");
+        OfflineArchive(usb, "v2.10");
+        OfflineArchive(usb, "v2.11", "linux-arm64");
+        File.WriteAllText(Path.Combine(usb, "astra-usb-monitor-v1.9.tar.gz"), "python");
+
+        var found = Updater.FindOfflineArchives(usb, "linux-x64");
+
+        Assert.Equal(["v2.10", "v2.9"], found.Select(item => item.Tag));
+    }
+
+    [Fact]
+    public void Offline_archive_is_staged_only_with_a_matching_checksum()
+    {
+        var usb = Path.Combine(_dir, "usb");
+        var spool = Path.Combine(_dir, "spool");
+        var bad = OfflineArchive(usb, "v2.3", wrongSum: new string('0', 64));
+        var missing = OfflineArchive(Path.Combine(_dir, "usb2"), "v2.3", withSum: false);
+
+        Assert.Contains("не сошлась", Updater.StageOffline(bad, "linux-x64", spool).Error);
+        Assert.Contains(".sha256", Updater.StageOffline(missing, "linux-x64", spool).Error);
+        Assert.Null(Updater.TakeOfflineSpool(spool));
+
+        var good = OfflineArchive(Path.Combine(_dir, "usb3"), "v2.4");
+        var (tag, error) = Updater.StageOffline(good, "linux-x64", spool);
+
+        Assert.Null(error);
+        Assert.Equal("v2.4", tag);
+        var taken = Updater.TakeOfflineSpool(spool);
+        Assert.Equal("v2.4", taken?.Tag);
+        Assert.Null(Updater.VerifyChecksumFile(taken!.Value.Archive, taken.Value.Archive + ".sha256"));
+
+        Updater.ClearOfflineSpool(spool);
+        Assert.Null(Updater.TakeOfflineSpool(spool));
+    }
+
+    [Fact]
+    public void Foreign_archive_is_not_staged()
+    {
+        var usb = Path.Combine(_dir, "usb");
+        var arm = OfflineArchive(usb, "v2.4", "linux-arm64");
+        var python = Path.Combine(usb, "astra-usb-monitor-v1.4.tar.gz");
+        File.WriteAllText(python, "python");
+        File.WriteAllText(python + ".sha256", Updater.Sha256(python));
+
+        Assert.NotNull(Updater.StageOffline(arm, "linux-x64", Path.Combine(_dir, "spool")).Error);
+        Assert.NotNull(Updater.StageOffline(python, "linux-x64", Path.Combine(_dir, "spool")).Error);
+    }
+
     [Fact]
     public void A_tag_that_already_failed_is_skipped()
     {

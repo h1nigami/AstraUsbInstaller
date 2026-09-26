@@ -729,6 +729,37 @@ public sealed partial class SettingsViewModel : ObservableObject
         }
     }
 
+    // --- Обновления ---------------------------------------------------------
+
+    [ObservableProperty] private bool _updateChecking;
+
+    /// <summary>
+    /// Запускает внешнюю службу проверки обновлений. Сам киоск не ставит:
+    /// установщик в конце перезапускает его службу.
+    /// </summary>
+    [RelayCommand]
+    private async Task CheckUpdates()
+    {
+        if (UpdateChecking)
+            return;
+        if (BusyMarker.Busy())
+        {
+            Hint = "дождитесь конца сканирования или копирования";
+            return;
+        }
+
+        UpdateChecking = true;
+        Hint = "запуск проверки…";
+        try
+        {
+            Hint = await Task.Run(() => Updater.StartService());
+        }
+        finally
+        {
+            UpdateChecking = false;
+        }
+    }
+
     // --- Заводской сброс ----------------------------------------------------
 
     [RelayCommand]

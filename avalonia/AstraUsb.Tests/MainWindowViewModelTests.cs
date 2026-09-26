@@ -398,6 +398,31 @@ public sealed class MainWindowViewModelTests : IDisposable
         }
     }
 
+    [Fact]
+    public void Media_inserted_while_waiting_for_offline_update_is_not_treated_as_camera()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+        using var model = new MainWindowViewModel(() => []);
+        var camera = Directory.CreateDirectory(Path.Combine(_dir, "camera")).FullName;
+        var usb = Directory.CreateDirectory(Path.Combine(_dir, "usb")).FullName;
+        // Носитель без выгрузки: при идущем копировании ожидание не начинается.
+        Field<HashSet<string>>(model, "_chargeOnly").Add(camera);
+        ApplyDevices(model, new UsbDevice("camera", camera));
+
+        model.StartOfflineUpdateCommand.Execute(null);
+        Assert.True(model.OfflineWaiting);
+        ApplyDevices(model, new("camera", camera), new("usb", usb));
+
+        Assert.Contains(model.Ports, port => port.MountPoint == camera);
+        Assert.DoesNotContain(model.Ports, port => port.MountPoint == usb);
+
+        model.CancelOfflineUpdateCommand.Execute(null);
+        Assert.False(model.OfflineWaiting);
+        ApplyDevices(model, new("camera", camera), new("usb", usb));
+        Assert.Contains(model.Ports, port => port.MountPoint == usb);
+    }
+
     private static T Field<T>(MainWindowViewModel model, string name) =>
         (T)typeof(MainWindowViewModel).GetField(name, PrivateFields)!.GetValue(model)!;
 
