@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace AstraUsb.Services;
 
@@ -137,39 +138,105 @@ public sealed class Settings
 
     public static string FilePath => Path.Combine(AppPaths.DataDir, "settings.json");
 
+    /// <summary>
+    /// Файл настроек есть, но не читается. Принять такие настройки за
+    /// отсутствующие опаснее всего для архива: запись пошла бы в папку по
+    /// умолчанию на системном разделе, а оригиналы удалились бы с карты.
+    /// Поэтому выгрузка ждёт починки, а сохранение не затирает файл молча.
+    /// </summary>
+    [JsonIgnore]
+    public bool Unreadable { get; private set; }
+
+    /// <summary>Чтение и запись файла идут по очереди: иначе позднее сохранение затирает чужие ключи.</summary>
+    private static readonly object FileLock = new();
+
     public static Settings Load()
     {
-        try
+        lock (FileLock)
         {
-            var text = File.ReadAllText(FilePath);
-            var loaded = JsonSerializer.Deserialize<Settings>(text);
-            if (loaded is not null)
+            try
             {
-                if (string.IsNullOrEmpty(loaded.BackupRoot))
-                    loaded.BackupRoot = AppPaths.BackupsRoot;
-                return loaded;
+                var text = File.ReadAllText(FilePath);
+                var loaded = JsonSerializer.Deserialize<Settings>(text);
+                if (loaded is not null)
+                {
+                    if (string.IsNullOrEmpty(loaded.BackupRoot))
+                        loaded.BackupRoot = AppPaths.BackupsRoot;
+                    return loaded;
+                }
             }
-        }
-        catch (Exception)
-        {
-            // Файла нет или он испорчен, берём значения по умолчанию.
-            // Из-за настроек станция запускаться не перестаёт.
-        }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+            {
+                // Файла ещё нет: станция не настраивалась, берём значения по умолчанию.
+                return new Settings { BackupRoot = AppPaths.BackupsRoot };
+            }
+            catch (Exception)
+            {
+                // Испорчен или не читается: см. Unreadable.
+            }
 
-        return new Settings { BackupRoot = AppPaths.BackupsRoot };
+            // Из-за настроек станция запускаться не перестаёт, но и писать
+            // в архив по умолчанию не начинает.
+            return new Settings { BackupRoot = AppPaths.BackupsRoot, Unreadable = true };
+        }
     }
 
-    public bool Save()
+    /// <summary>
+    /// Записывает файл целиком через временный и замену: обрыв питания
+    /// посреди записи оставляет прежний файл, а не обрезанный.
+    /// </summary>
+    /// <param name="replaceUnreadable">
+    /// Разрешить перезаписать нечитаемый файл. Только при явном выборе папки
+    /// архива оператором: он сам задаёт потерянное главное значение.
+    /// </param>
+    public bool Save(bool replaceUnreadable = false)
     {
-        try
-        {
-            AppPaths.EnsureCreated();
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Json));
-            return true;
-        }
-        catch (Exception)
-        {
+        if (Unreadable && !replaceUnreadable)
             return false;
+
+        lock (FileLock)
+        {
+            var temp = FilePath + ".tmp";
+            try
+            {
+                AppPaths.EnsureCreated();
+                using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+                {
+                    JsonSerializer.Serialize(stream, this, Json);
+                    stream.Flush(flushToDisk: true);
+                }
+                File.Move(temp, FilePath, overwrite: true);
+                Unreadable = false;
+                return true;
+            }
+            catch (Exception)
+            {
+                try
+                {
+                    File.Delete(temp);
+                }
+                catch (Exception)
+                {
+                    // Остаток временного файла не мешает следующей записи.
+                }
+                return false;
+            }
+        }
+    }
+
+    /// <summary>Удаляет файл настроек при заводском сбросе, под тем же замком.</summary>
+    public static void Reset()
+    {
+        lock (FileLock)
+        {
+            try
+            {
+                File.Delete(FilePath);
+            }
+            catch (Exception)
+            {
+                // Нет файла, значит и сбрасывать нечего.
+            }
         }
     }
 }

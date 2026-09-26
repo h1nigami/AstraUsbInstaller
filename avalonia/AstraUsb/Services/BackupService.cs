@@ -51,6 +51,15 @@ public sealed class BackupService
                 throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
             progress.Report(new BackupProgress(BackupStage.Scanning, 0, "считаем объём"));
 
+            if (_settings.Unreadable)
+            {
+                progress.Report(new BackupProgress(BackupStage.Failed, 0,
+                    "настройки станции не читаются"));
+                new ActionLog(_dbPath).Write(ActionLog.Cleanup,
+                    "выгрузка остановлена: файл настроек испорчен, папка архива неизвестна");
+                return;
+            }
+
             // Том архива мог не смонтироваться. Записать в его прежний путь
             // означало бы создать пустой каталог на системном разделе и
             // отчитаться об успехе, потеряв записи.
@@ -86,23 +95,38 @@ public sealed class BackupService
                     $"{files} из {total.Files}"))), token);
 
             ArchiveGuard.RepairOwnership(_settings.BackupRoot, destination);
-            RecordCollected(deviceId, result, started);
+            var recorded = RecordCollected(deviceId, result, started);
             QueueForServer(result);
 
-            if (_settings.DeleteVideoAfterCopy && result.Failed == 0)
+            // Карту могли подменить прямо во время копирования: пути из
+            // BackedUp тогда относятся к ушедшей карте, и удаление пошло бы
+            // по совпадающим путям уже на новой.
+            var sameDevice = StillSameDevice(mountPoint, deviceId);
+
+            // Без записи в журнале поиск копию не найдёт, поэтому оригиналы
+            // на карте остаются, пока сеанс не запишется.
+            if (_settings.DeleteVideoAfterCopy && result.Failed == 0 && sameDevice && recorded)
                 SourceCleaner.DeleteBackedUpVideos(mountPoint, result.BackedUp);
 
-            progress.Report(result.Failed == 0
-                ? new BackupProgress(BackupStage.Done, 1,
-                    $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}")
-                : new BackupProgress(BackupStage.Failed, 1,
-                    $"не скопировано: {Numerals.Plural(result.Failed, "файл", "файла", "файлов")}"));
+            var (stage, detail, logLine) =
+                result.Failed > 0
+                    ? (BackupStage.Failed,
+                        $"не скопировано: {Numerals.Plural(result.Failed, "файл", "файла", "файлов")}",
+                        $"камера {deviceId}: не скопировано "
+                        + $"{Numerals.Plural(result.Failed, "файл", "файла", "файлов")}")
+                : !sameDevice
+                    ? (BackupStage.Failed, "носитель сменился, файлы сохранены",
+                        $"камера {deviceId}: носитель сменился во время копирования, исходные файлы сохранены")
+                : !recorded
+                    ? (BackupStage.Failed, "копия сделана, но не записана в журнал",
+                        $"камера {deviceId}: копия сделана, но не записана в журнал")
+                : (BackupStage.Done,
+                    $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}",
+                    $"камера {deviceId}: загружено "
+                    + $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}");
 
-            new ActionLog(_dbPath).Write(ActionLog.Backup, result.Failed == 0
-                ? $"камера {deviceId}: загружено "
-                  + $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}"
-                : $"камера {deviceId}: не скопировано "
-                  + $"{Numerals.Plural(result.Failed, "файл", "файла", "файлов")}");
+            progress.Report(new BackupProgress(stage, 1, detail));
+            new ActionLog(_dbPath).Write(ActionLog.Backup, logLine);
         }
         catch (OperationCanceledException)
         {
@@ -194,11 +218,25 @@ public sealed class BackupService
         }
     }
 
+    /// <summary>На карте всё ещё тот же регистратор, что и при начале выгрузки.</summary>
+    private static bool StillSameDevice(string mountPoint, long deviceId)
+    {
+        try
+        {
+            return DeviceIdentifier.Read(mountPoint) == deviceId;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// Заносит в журнал то, что действительно лежит в хранилище. Время загрузки
-    /// ставит станция: часам камеры доверия нет.
+    /// ставит станция: часам камеры доверия нет. false, если записать не
+    /// вышло: без журнала поиск копию не найдёт, и оператор должен это увидеть.
     /// </summary>
-    private void RecordCollected(long deviceId, CopyResult result, DateTime collectedAt)
+    private bool RecordCollected(long deviceId, CopyResult result, DateTime collectedAt)
     {
         try
         {
@@ -223,10 +261,11 @@ public sealed class BackupService
                 }
                 return new CollectedFile(deviceId, dest, size, shot, collectedAt);
             }));
+            return true;
         }
         catch (Exception)
         {
-            // Журнал не главнее данных: копии уже на месте.
+            return false;
         }
     }
 

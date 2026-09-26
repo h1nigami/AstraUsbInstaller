@@ -195,6 +195,9 @@ public sealed partial class SettingsViewModel : ObservableObject
         FtpSsl = _settings.FtpSsl;
 
         ReloadSlots();
+
+        if (_settings.Unreadable)
+            Hint = "файл настроек испорчен: выгрузка остановлена. Выберите папку архива и сохраните хранилище";
     }
 
     [RelayCommand]
@@ -219,7 +222,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         _settings.AlarmSound = AlarmSound;
         _settings.VoiceHints = VoiceHints;
 
-        var stored = _settings.Save();
+        var stored = _settings.Save(replaceUnreadable: true);
         if (stored)
             _actions.Write(ActionLog.Settings,
                 $"хранилище: {BackupRoot}, порог {MinFreeGb} ГБ, "
