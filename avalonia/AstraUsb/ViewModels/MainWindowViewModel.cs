@@ -81,6 +81,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly Dictionary<string, (UsbDevice Device, DateTime Seen)> _recent =
         new(StringComparer.Ordinal);
 
+    /// <summary>Имена устройств из последнего опроса: подпись на плитке вместо номера.</summary>
+    private IReadOnlyDictionary<long, string> _deviceNames = new Dictionary<long, string>();
+
     /// <summary>Открыт ли доступ к закрытым разделам и до каких пор.</summary>
     private AccessGuard _access = new(0);
 
@@ -853,10 +856,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             var storage = StorageState.Read(archiveRoot);
+            var names = DeviceRegistry.ReadNames(AppPaths.Database);
 
             Dispatcher.UIThread.Post(() =>
             {
                 _polling = false;
+                _deviceNames = names;
 
                 if (!_demonstrating)
                     Apply(found, storage);
@@ -900,7 +905,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             if (mount is not null && Identify(device, mount) is { } card)
             {
-                cameraId = card.CameraId;
+                // Имя, если оператор его задал, иначе номер, как в Python-версии.
+                cameraId = _deviceNames.TryGetValue(card.DeviceId, out var named) ? named : card.CameraId;
                 detail = card.Origin;
                 personnel = card.PersonnelNo;
                 employee = card.Employee;

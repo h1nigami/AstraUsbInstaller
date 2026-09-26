@@ -423,6 +423,41 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.Contains(model.Ports, port => port.MountPoint == usb);
     }
 
+    [Fact]
+    public void Tile_shows_device_name_when_set_and_number_otherwise()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var named = Directory.CreateDirectory(Path.Combine(_dir, "named")).FullName;
+        var plain = Directory.CreateDirectory(Path.Combine(_dir, "plain")).FullName;
+        CacheCard(model, named, 7);
+        CacheCard(model, plain, 8);
+        var charging = Field<HashSet<string>>(model, "_chargeOnly");
+        charging.UnionWith([named, plain]);
+        typeof(MainWindowViewModel).GetField("_deviceNames", PrivateFields)!
+            .SetValue(model, new Dictionary<long, string> { [7] = "Патруль-3" });
+
+        ApplyDevices(model, new("named", named), new("plain", plain));
+
+        Assert.Equal("Патруль-3", model.Ports.Single(p => p.MountPoint == named).CameraId);
+        Assert.Equal("8", model.Ports.Single(p => p.MountPoint == plain).CameraId);
+    }
+
+    [Fact]
+    public void Device_names_are_read_from_the_shared_database()
+    {
+        var db = Path.Combine(_dir, "names.db");
+        var card = Directory.CreateDirectory(Path.Combine(_dir, "card", "LOG")).Parent!.FullName;
+        File.WriteAllText(Path.Combine(card, "LOG", "20260915.txt"), "#ID:42\n");
+        using (var registry = new DeviceRegistry(db))
+        {
+            registry.ResolveByCard(card, 1, "CAM", "sdb1");
+            registry.Rename(42, "Патруль-3");
+        }
+
+        Assert.Equal("Патруль-3", DeviceRegistry.ReadNames(db)[42]);
+        Assert.Empty(DeviceRegistry.ReadNames(Path.Combine(_dir, "missing.db")));
+    }
+
     private static T Field<T>(MainWindowViewModel model, string name) =>
         (T)typeof(MainWindowViewModel).GetField(name, PrivateFields)!.GetValue(model)!;
 

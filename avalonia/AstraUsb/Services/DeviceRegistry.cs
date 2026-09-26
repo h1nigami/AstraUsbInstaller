@@ -133,6 +133,34 @@ public sealed class DeviceRegistry : IDisposable
     public bool DeviceExists(long id) =>
         Scalar("SELECT 1 FROM devices WHERE id = $id", ("$id", id)) is not null;
 
+    /// <summary>
+    /// Заданные имена устройств. Лёгкий запрос без создания схемы: доска
+    /// перечитывает его при каждом опросе, чтобы переименование было видно
+    /// на плитке сразу, даже посреди копирования.
+    /// </summary>
+    public static IReadOnlyDictionary<long, string> ReadNames(string dbPath)
+    {
+        var names = new Dictionary<long, string>();
+        if (!File.Exists(dbPath))
+            return names;
+
+        try
+        {
+            using var db = new SqliteConnection($"Data Source={dbPath};Mode=ReadOnly");
+            db.Open();
+            using var command = db.CreateCommand();
+            command.CommandText = "SELECT id, name FROM devices WHERE name IS NOT NULL AND TRIM(name) <> ''";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                names[reader.GetInt64(0)] = reader.GetString(1).Trim();
+        }
+        catch (SqliteException)
+        {
+            // Базы или колонки ещё нет: плитки покажут номера.
+        }
+        return names;
+    }
+
     public string? GetDeviceName(long id) =>
         Scalar("SELECT name FROM devices WHERE id = $id", ("$id", id)) as string;
 
