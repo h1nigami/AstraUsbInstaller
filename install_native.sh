@@ -254,10 +254,17 @@ Terminal=false
 Categories=Utility;
 EOF
     $SUDO chmod +x "$shortcut"
-    if command -v gio >/dev/null 2>&1; then
-        # «Доверенный» запуск без лишнего вопроса при первом клике.
-        if [ -n "$SUDO" ]; then
-            $SUDO -u "${SUDO_USER:-root}" gio set "$shortcut" metadata::trusted true 2>/dev/null || true
+    # Установщик работает от root (перезапускает себя через sudo), поэтому
+    # ярлык отдаём пользователю, а «доверенным» его отмечаем от его имени:
+    # иначе рабочий стол Fly переспрашивает или отказывается запускать.
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+        $SUDO chown "$SUDO_USER": "$shortcut" 2>/dev/null || true
+        if command -v gio >/dev/null 2>&1; then
+            if command -v runuser >/dev/null 2>&1; then
+                $SUDO runuser -u "$SUDO_USER" -- gio set "$shortcut" metadata::trusted true 2>/dev/null || true
+            else
+                $SUDO su -s /bin/sh "$SUDO_USER" -c "gio set '$shortcut' metadata::trusted true" 2>/dev/null || true
+            fi
         fi
     fi
     echo "  ярлык на рабочем столе: $shortcut"

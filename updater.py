@@ -296,13 +296,20 @@ def _rollback():
 
 
 def _apply(src_dir, tag):
+    return _try_apply(src_dir, tag)[0]
+
+
+def _try_apply(src_dir, tag):
+    """(код выхода, отложено ли). Отложенная установка ничего не меняла:
+    вызывающий не должен считать её попыткой — иначе офлайн-пакет стирался
+    бы, так и не встав, пока станция занята опознанием или монтированием."""
     with ExitStack() as stack:
         try:
             fd = stack.enter_context(usb_monitor.operation_guard(exclusive=True))
         except OSError as error:
             _log(f"обновление отложено: {error}")
-            return 0
-        return _apply_locked(src_dir, tag, fd)
+            return 0, True
+        return _apply_locked(src_dir, tag, fd), False
 
 
 def _apply_locked(src_dir, tag, lock_fd):
@@ -385,8 +392,12 @@ def main(spool_dir=None):
                 _log("копирование началось — офлайн-обновление отложено")
                 return 0
             _log(f"ставим офлайн {tag} (было {current_tag})")
-            rc = _apply(src_dir, tag)
-            _clear_offline_spool(spool_dir)
+            rc, deferred = _try_apply(src_dir, tag)
+            if not deferred:
+                # Установка состоялась (успешно или с откатом и записью
+                # сбойного тега) — спул больше не нужен. Отложенную же
+                # повторим на следующем тике таймера.
+                _clear_offline_spool(spool_dir)
             return rc
 
     try:

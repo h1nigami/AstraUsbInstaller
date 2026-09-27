@@ -35,6 +35,9 @@ jobs:
       - name: Тег должен быть в master
         # Пробная сборка по кнопке ничего не публикует, её не ограничиваем.
         if: github.event_name == 'release'
+        # На windows-latest оболочка по умолчанию PowerShell: без явного bash
+        # шаг падал бы на каждом релизе и установщик не прикреплялся бы.
+        shell: bash
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
@@ -172,6 +175,9 @@ jobs:
       - name: Тег должен быть в master
         # Пробная сборка по кнопке ничего не публикует, её не ограничиваем.
         if: github.event_name == 'release'
+        # На windows-latest оболочка по умолчанию PowerShell: без явного bash
+        # шаг падал бы на каждом релизе и установщик не прикреплялся бы.
+        shell: bash
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |

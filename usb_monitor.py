@@ -418,6 +418,10 @@ _operation_readers = 0
 _operation_writer = False
 
 
+class StationBusy(OSError):
+    """Общая блокировка занята: операцию можно повторить позже."""
+
+
 @contextmanager
 def operation_guard(exclusive=False):
     """Не допускать обслуживания архива одновременно с копированием."""
@@ -425,7 +429,7 @@ def operation_guard(exclusive=False):
     fd = None
     with _operations_lock:
         if _operation_writer or (exclusive and _operation_readers):
-            raise OSError("Станция занята другой операцией")
+            raise StationBusy("Станция занята другой операцией")
         if os.name != "nt":
             import fcntl
             path = DB_PATH + ".operations.lock"
@@ -433,6 +437,9 @@ def operation_guard(exclusive=False):
             fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
             try:
                 fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                os.close(fd)
+                raise StationBusy("Станция занята другой операцией") from error
             except OSError:
                 os.close(fd)
                 raise
@@ -1726,6 +1733,10 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
     # not safe for concurrent writes.
     conn = _connect()
     friendly = None
+    # Метка карты, запомненная до копирования. В finally по ней снимается
+    # отметка «ждём возврата»: к концу работы имя устройства могло уже
+    # исчезнуть или смениться, и спрашивать метку по имени поздно.
+    fs_uuid = None
     try:
         if progress_queue is not None:
             progress_queue.put_nowait((f"identity:{devname}", "", "identifying", 0, 0,
@@ -1970,7 +1981,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
         if friendly is not None:
             _log_progress_cache.pop(friendly, None)
         if is_linux:
-            _await_card_clear(_get_filesystem_uuid(f"/dev/{devname}"))
+            _await_card_clear(fs_uuid or _get_filesystem_uuid(f"/dev/{devname}"))
         conn.close()
 
 
@@ -2112,8 +2123,13 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     _update_connected_devices(known)
     if _safe_removal:
         known = {} if is_linux else set()
+    # Метка файловой системы принятых карт. По ней после сбоя шины отличаем
+    # вернувшуюся карту от новой, вставленной под тем же именем устройства.
+    known_fs = {}
     for dev in sorted(known):
         mp = known[dev] if is_linux else None
+        if is_linux:
+            known_fs[dev] = _get_filesystem_uuid(f"/dev/{dev}")
         print(f"  Connected: {dev}", flush=True)
         active[dev] = submit(executor, dev, mp, None, None)
 
@@ -2121,6 +2137,24 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     pending_removals = {}
     # Когда из опроса пропала вся линейка разом; None — шина в порядке.
     bus_glitch_since = None
+
+    def _forget(dev):
+        """Подтвердить отключение: забыть устройство и сообщить интерфейсу."""
+        with _operations_lock:
+            _interrupted_devices.discard(dev)
+        pending_removals.pop(dev, None)
+        known_fs.pop(dev, None)
+        _release_device_id(dev)
+        if is_linux:
+            known.pop(dev, None)
+        else:
+            known.discard(dev)
+        dn = os.path.basename(dev)
+        if progress_queue is not None:
+            try:
+                progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
+            except Exception:
+                pass
 
     try:
         while True:
@@ -2168,6 +2202,19 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                         progress_queue.put_nowait(("_bus_", "ok", "", 0, 0, "", ""))
                     except Exception:
                         pass
+                # «Сбоем шины» считается и честная замена всей линейки: оператор
+                # вынул все камеры и за время ожидания вставил новые, а ядро
+                # выдало им те же имена. Такие карты — новые, а не вернувшиеся:
+                # иначе их не выгрузили бы, а плитки показывали бы старые.
+                if is_linux:
+                    for dev in sorted(current_keys & set(known)):
+                        was = known_fs.get(dev)
+                        now = _get_filesystem_uuid(f"/dev/{dev}")
+                        if was and now and was != now:
+                            print(f"  Под именем {dev} уже другая карта — "
+                                  f"прежняя отключена", flush=True)
+                            _forget(dev)
+                    known_keys = set(known)
 
             _update_connected_devices(current)
 
@@ -2190,20 +2237,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                                  if now_t - t >= grace}
 
             for dev in confirmed_removed:
-                with _operations_lock:
-                    _interrupted_devices.discard(dev)
-                pending_removals.pop(dev, None)
-                _release_device_id(dev)
-                if is_linux:
-                    known.pop(dev, None)
-                else:
-                    known.discard(dev)
-                dn = os.path.basename(dev)
-                if progress_queue is not None:
-                    try:
-                        progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
-                    except Exception:
-                        pass
+                _forget(dev)
 
             # New devices: present in current but not yet in known
             with _operations_lock:
@@ -2224,6 +2258,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     _interrupted_devices.discard(dev)
                 if is_linux:
                     known[dev] = current[dev]
+                    known_fs[dev] = _get_filesystem_uuid(f"/dev/{dev}")
                 else:
                     known.add(dev)
                 pending_removals.pop(dev, None)

@@ -166,3 +166,45 @@ class DetachedTileTest(unittest.TestCase):
             "identity:sdf": {"state_raw": "identifying"},
         }
         self.assertEqual(gui_mod._detached_too_long(data, now=1000.0 + 200), [7])
+
+
+@unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
+class StartupCleanupTest(unittest.TestCase):
+    """Автоочистка при запуске идёт один раз и ей нужна эксклюзивная
+    блокировка: занятая выгрузкой станция откладывает её, а не отменяет."""
+
+    def _fake_app(self):
+        app = mock.Mock()
+        app._cleanup_days = 30
+        app.root.after = lambda _delay, fn, *args: fn(*args)
+        app._cleanup_worker = lambda *a, **kw: gui_mod.App._cleanup_worker(app, *a, **kw)
+        return app
+
+    def test_busy_station_retries_until_cleanup_runs(self):
+        app = self._fake_app()
+        results = [gui_mod.usb_monitor.StationBusy("Станция занята"),
+                   gui_mod.usb_monitor.StationBusy("Станция занята"),
+                   (2, 2048)]
+        sleeps = []
+
+        def cleanup(**kwargs):
+            outcome = results.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        with mock.patch.object(gui_mod, "cleanup_old_backup_videos", side_effect=cleanup):
+            gui_mod.App._run_startup_cleanup(app, attempts=5, pause=7, sleep=sleeps.append)
+
+        self.assertEqual(results, [])
+        self.assertEqual(sleeps, [7, 7])
+        self.assertIn("Удалено 2 видео", app._cleanup_status_var.set.call_args[0][0])
+
+    def test_other_errors_are_not_retried(self):
+        app = self._fake_app()
+        sleeps = []
+        with mock.patch.object(gui_mod, "cleanup_old_backup_videos",
+                               side_effect=OSError("диск архива недоступен")) as cleanup:
+            gui_mod.App._run_startup_cleanup(app, attempts=5, pause=7, sleep=sleeps.append)
+        cleanup.assert_called_once()
+        self.assertEqual(sleeps, [])

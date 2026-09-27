@@ -947,20 +947,35 @@ class App:
         self._cleanup_days = days
         self._cleanup_status_var.set("Настройки сохранены")
 
-    def _run_startup_cleanup(self):
-        self._cleanup_worker(self._cleanup_days, "Автоочистка при запуске: ")
+    def _run_startup_cleanup(self, attempts=60, pause=60, sleep=time.sleep):
+        # Автоочистка запускается один раз, при старте, а ей нужна
+        # эксклюзивная блокировка. В это же время выгружаются камеры,
+        # оставленные в гнёздах, или ставится обновление, поэтому занятую
+        # станцию пережидаем, а не отказываемся от очистки до перезапуска.
+        for _ in range(attempts):
+            if not self._cleanup_worker(self._cleanup_days, "Автоочистка при запуске: ",
+                                        retry_busy=True):
+                return
+            sleep(pause)
 
-    def _cleanup_worker(self, days, prefix=""):
+    def _cleanup_worker(self, days, prefix="", retry_busy=False):
+        """Очистить архив. True — станция занята и очистку стоит повторить."""
+        busy = False
         try:
             deleted, freed = cleanup_old_backup_videos(older_than_days=days)
             msg = (f"Удалено {deleted} видео, освобождено {_format_size(freed)}"
                    if deleted else "Старых видео не найдено")
+        except usb_monitor.StationBusy as error:
+            busy = retry_busy
+            msg = ("отложена до конца копирования" if busy
+                   else f"Очистка не выполнена: {error}")
         except OSError as error:
             msg = f"Очистка не выполнена: {error}"
         try:
             self.root.after(0, self._cleanup_status_var.set, prefix + msg)
         except tk.TclError:
             pass
+        return busy
 
     def _run_cleanup_now(self):
         try:

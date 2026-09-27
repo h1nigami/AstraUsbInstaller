@@ -205,18 +205,24 @@ class BusGlitchTest(unittest.TestCase):
     линейку. Разовая пропажа всех портов — сбой шины, а не десять
     отключений: иначе станция очищает экран и роняет все выгрузки."""
 
-    def _run(self, gap_polls, bus_grace):
+    def _run(self, gap_polls, bus_grace, swap_cards=False, started=None):
         interval = 0.05
         devs = ["sda1", "sdb1", "sdc1"]
         present = list(devs)
         polls = {"n": 0}
+        generation = {"n": 1}
 
         def fake_get_partitions():
             polls["n"] += 1
             return {d: None for d in present}
 
+        def fake_uuid(devpath):
+            return f"{devpath}-card{generation['n']}"
+
         def fake_copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
-            time.sleep(5)
+            if started is not None:
+                started.append(devname)
+            time.sleep(0.1)
             return (0, 0, 0)
 
         pq = queue.Queue()
@@ -230,6 +236,7 @@ class BusGlitchTest(unittest.TestCase):
                  mock.patch.object(um, "MOUNT_BASE", mount_base), \
                  mock.patch.object(um, "DB_PATH", os.path.join(data_dir, "d.db")), \
                  mock.patch.object(um, "_get_linux_partitions", side_effect=fake_get_partitions), \
+                 mock.patch.object(um, "_get_filesystem_uuid", side_effect=fake_uuid), \
                  mock.patch.object(um, "copy_task_linux", fake_copy_task_linux):
                 t = threading.Thread(target=um.monitor_usb,
                                      args=(interval, stop_event, pq), daemon=True)
@@ -237,6 +244,8 @@ class BusGlitchTest(unittest.TestCase):
                 time.sleep(interval * 6)
                 present.clear()                      # вся линейка пропала разом
                 time.sleep(interval * gap_polls)
+                if swap_cards:
+                    generation["n"] = 2              # вставили другие карты
                 present.extend(devs)                 # шина вернулась целиком
                 time.sleep(interval * 8)
                 stop_event.set()
@@ -259,3 +268,12 @@ class BusGlitchTest(unittest.TestCase):
     def test_bus_gone_for_good_is_still_reported(self):
         removed = self._run(gap_polls=8, bus_grace=0.1)
         self.assertTrue(removed, "если линейки нет долго, отключения подтверждаются")
+
+    def test_cards_swapped_during_bus_wait_are_new_devices(self):
+        """Оператор вынул все камеры и за время ожидания шины вставил другие:
+        ядро выдало им те же имена. Это новые карты — их надо выгрузить."""
+        started = []
+        removed = self._run(gap_polls=8, bus_grace=5.0, swap_cards=True, started=started)
+        self.assertEqual(sorted(removed), ["sda1", "sdb1", "sdc1"])
+        for dev in ("sda1", "sdb1", "sdc1"):
+            self.assertEqual(started.count(dev), 2, f"{dev}: новая карта не выгружена")

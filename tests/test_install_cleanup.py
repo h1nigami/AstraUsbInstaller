@@ -127,6 +127,19 @@ class PreserveStationTest(unittest.TestCase):
         self.assertNotIn("astra-usb-avalonia", self.calls())
 
 
+def _stub_trust_tools(root):
+    """Заглушки chown/runuser/gio: пишут вызовы в лог вместо системы."""
+    bin_dir = os.path.join(root, "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    log = os.path.join(root, "calls.log")
+    for name in ("chown", "runuser", "gio"):
+        path = os.path.join(bin_dir, name)
+        with open(path, "w", newline="\n") as f:
+            f.write(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n')
+        os.chmod(path, 0o755)
+    return log
+
+
 @unittest.skipUnless(BASH, "нужен работающий bash")
 class DesktopShortcutTest(unittest.TestCase):
     FUNC = "install_desktop_shortcut"
@@ -177,6 +190,17 @@ class DesktopShortcutTest(unittest.TestCase):
         self.run_shortcut({"SUDO_USER": "operator"})
 
         self.assertEqual(self.desktops(), [os.path.join(home, "BestCam-USB.desktop")])
+
+    def test_shortcut_is_given_to_user_and_trusted(self):
+        home = os.path.join(self.root, "home", "operator", "Desktop")
+        os.makedirs(home)
+        log = _stub_trust_tools(self.root)
+        self.run_shortcut({"SUDO_USER": "operator"})
+
+        calls = pathlib.Path(log).read_text(encoding="utf-8")
+        shortcut = os.path.join(home, "BestCam-USB.desktop")
+        self.assertIn(f"chown operator: {shortcut}", calls)
+        self.assertIn(f"runuser -u operator -- gio set {shortcut} metadata::trusted true", calls)
 
     def test_no_desktop_changes_nothing(self):
         self.run_shortcut()
@@ -233,6 +257,17 @@ class AvaloniaDesktopShortcutTest(unittest.TestCase):
         os.makedirs(desktop)
         self.run_shortcut({"SUDO_USER": "operator"})
         self.assertEqual(self.shortcuts(), [os.path.join(desktop, "BestCam-Station.desktop")])
+
+    def test_shortcut_is_given_to_user_and_trusted(self):
+        desktop = os.path.join(self.root, "home", "operator", "Desktop")
+        os.makedirs(desktop)
+        log = _stub_trust_tools(self.root)
+        self.run_shortcut({"SUDO_USER": "operator"})
+
+        calls = pathlib.Path(log).read_text(encoding="utf-8")
+        shortcut = os.path.join(desktop, "BestCam-Station.desktop")
+        self.assertIn(f"chown operator: {shortcut}", calls)
+        self.assertIn(f"runuser -u operator -- gio set {shortcut} metadata::trusted true", calls)
 
     def test_no_desktop_changes_nothing(self):
         self.run_shortcut()

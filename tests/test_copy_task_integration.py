@@ -181,6 +181,31 @@ class CopyTaskEndToEndTest(unittest.TestCase):
             self.assertEqual(last[2], "error")
             self.assertIn("не записана в базу", last[5])
 
+    def test_awaited_card_flag_is_cleared_by_saved_uuid(self):
+        """К концу копирования имя устройства могло исчезнуть: отметку
+        «ждём возврата» снимаем по метке, запомненной до копирования."""
+        with tempfile.TemporaryDirectory() as src, \
+             tempfile.TemporaryDirectory() as dest, \
+             tempfile.TemporaryDirectory() as data_dir:
+            self._id_log(src)
+            with open(os.path.join(src, "photo.jpg"), "wb") as f:
+                f.write(b"abc")
+            calls = {"n": 0}
+
+            def uuid_until_gone(devpath):
+                calls["n"] += 1
+                return "CARD-UUID" if calls["n"] <= 2 else None
+
+            um._await_card_register("CARD-UUID", 120)
+            try:
+                with mock.patch.object(um, "DB_PATH", os.path.join(data_dir, "d.db")), \
+                     mock.patch.object(um, "_get_filesystem_uuid", side_effect=uuid_until_gone):
+                    um._init_db().close()
+                    self._run(src, dest)
+                self.assertFalse(um._card_is_awaited("CARD-UUID"))
+            finally:
+                um._await_card_clear("CARD-UUID")
+
     def test_queue_carries_name_when_set_otherwise_id(self):
         import queue
         with tempfile.TemporaryDirectory() as src, \

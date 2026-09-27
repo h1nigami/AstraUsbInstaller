@@ -4,6 +4,7 @@ downloading and applying are exercised on the dock station."""
 import hashlib
 import io
 import json
+import contextlib
 import os
 import sys
 import tarfile
@@ -465,9 +466,9 @@ class OfflineSpoolTest(unittest.TestCase):
             applied["tag"] = tag
             applied["has_installer"] = os.path.isfile(
                 os.path.join(src_dir, "install_native.sh"))
-            return 0
+            return 0, False
 
-        with mock.patch.object(updater, "_apply", side_effect=fake_apply), \
+        with mock.patch.object(updater, "_try_apply", side_effect=fake_apply), \
              mock.patch.object(updater.usb_monitor, "read_version",
                                return_value=("v1.12", "2026-09-15")), \
              mock.patch.object(updater.usb_monitor, "is_copying", return_value=False):
@@ -495,6 +496,26 @@ class OfflineSpoolTest(unittest.TestCase):
             self.assertEqual(updater.main(spool_dir=self.spool), 0)
         apply_mock.assert_not_called()
         self.assertTrue(os.path.isfile(os.path.join(self.spool, "release.tar.gz")))
+
+    def test_main_keeps_spool_when_install_lock_is_busy(self):
+        """Занятая общая блокировка (опознание, монтирование, ожидание
+        карты) откладывает установку — спул должен дождаться следующего тика."""
+        self._stage()
+
+        @contextlib.contextmanager
+        def busy(**kwargs):
+            raise OSError("Станция занята")
+            yield
+
+        with mock.patch.object(updater.usb_monitor, "operation_guard", busy), \
+             mock.patch.object(updater.usb_monitor, "read_version",
+                               return_value=("v1.12", "2026-09-15")), \
+             mock.patch.object(updater.usb_monitor, "is_copying", return_value=False), \
+             mock.patch.object(updater.subprocess, "run",
+                               side_effect=AssertionError("установка не должна начаться")):
+            self.assertEqual(updater.main(spool_dir=self.spool), 0)
+        self.assertTrue(os.path.isfile(os.path.join(self.spool, "release.tar.gz")))
+        self.assertEqual(updater._take_offline_spool(self.spool)[0], "v1.13")
 
     def test_main_skips_failed_tag(self):
         self._stage()
