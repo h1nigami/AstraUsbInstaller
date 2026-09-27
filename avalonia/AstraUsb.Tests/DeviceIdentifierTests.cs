@@ -42,11 +42,11 @@ public sealed class DeviceIdentifierTests : IDisposable
     }
 
     [Fact]
-    public void Latest_log_without_id_falls_back_to_older_log()
+    public void Latest_log_without_id_cannot_reuse_older_number()
     {
         Log("#ID:1111111\n", "20260914.txt");
         Log("Запуск регистратора\n");
-        Assert.Equal(1111111, DeviceIdentifier.Read(_card));
+        Assert.Throws<InvalidDataException>(() => DeviceIdentifier.Read(_card));
     }
 
     [Fact]
@@ -89,11 +89,11 @@ public sealed class DeviceIdentifierTests : IDisposable
     }
 
     [Fact]
-    public void Log_wins_when_sources_disagree()
+    public void Different_sources_are_rejected()
     {
         Log("#ID:1234567\n");
         Recording("9999999");
-        Assert.Equal(1234567, DeviceIdentifier.Read(_card));
+        Assert.Throws<InvalidDataException>(() => DeviceIdentifier.Read(_card));
     }
 
     [Theory]
@@ -115,22 +115,11 @@ public sealed class DeviceIdentifierTests : IDisposable
     }
 
     [Fact]
-    public void Broken_bytes_in_log_do_not_hide_id()
+    public void Unreadable_existing_log_aborts_even_when_recording_has_id()
     {
-        var dir = Path.Combine(_card, "LOG");
-        Directory.CreateDirectory(dir);
-        File.WriteAllBytes(Path.Combine(dir, "20260915.txt"),
-            [0xff, 0xfe, (byte)'\n', .. System.Text.Encoding.ASCII.GetBytes("#ID:1234567\n")]);
-        Assert.Equal(1234567, DeviceIdentifier.Read(_card));
-    }
-
-    [Fact]
-    public void Log_with_garbage_only_falls_back_to_recording()
-    {
-        var dir = Path.Combine(_card, "LOG");
-        Directory.CreateDirectory(dir);
-        File.WriteAllBytes(Path.Combine(dir, "20260915.txt"), [0xff, 0xfe]);
+        Log("#ID:1234567\n");
         Recording("1234567");
-        Assert.Equal(1234567, DeviceIdentifier.Read(_card));
+        File.WriteAllBytes(Path.Combine(_card, "LOG", "20260915.txt"), [0xff, 0xfe]);
+        Assert.Throws<IOException>(() => DeviceIdentifier.Read(_card));
     }
 }

@@ -33,10 +33,16 @@ class FactoryResetTest(unittest.TestCase):
             os.makedirs(os.path.join(dest, "Device1"))
             with open(os.path.join(dest, "Device1", "a.mp4"), "w") as f:
                 f.write("x")
+            with open(os.path.join(dest, um.DEST_MARKER_FILE), "w"):
+                pass
+            with open(os.path.join(dest, "personal.txt"), "w") as stream:
+                stream.write("keep")
             with um._device_id_lock:
                 um._connected_device_ids[("db", "sda1")] = (1, object())
             try:
-                with mock.patch.object(um, "is_copying", return_value=False):
+                with mock.patch.object(um, "is_copying", return_value=False), \
+                     mock.patch.object(um, "_require_archive_device"), \
+                     mock.patch.object(um, "DB_PATH", db):
                     result = um.factory_reset(db_path=db, dest_base=dest)
             finally:
                 with um._device_id_lock:
@@ -51,18 +57,17 @@ class FactoryResetTest(unittest.TestCase):
             finally:
                 conn.close()
             self.assertTrue(os.path.isdir(dest))
-            self.assertEqual(os.listdir(dest), [])
+            self.assertEqual(set(os.listdir(dest)), {um.DEST_MARKER_FILE, "personal.txt"})
             with um._device_id_lock:
                 self.assertEqual(um._connected_device_ids, {})
 
-    def test_missing_db_and_dest_are_tolerated(self):
+    def test_missing_destination_refuses_reset(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(um, "is_copying", return_value=False):
-                result = um.factory_reset(
-                    db_path=os.path.join(tmp, "no.db"),
-                    dest_base=os.path.join(tmp, "no_dir"),
-                )
-            self.assertEqual(result, {"devices": 0, "backups": 0, "entries": 0})
+            with mock.patch.object(um, "is_copying", return_value=False), \
+                 self.assertRaises(OSError):
+                um.factory_reset(db_path=os.path.join(tmp, "no.db"),
+                                 dest_base=os.path.join(tmp, "no_dir"))
+            self.assertFalse(os.path.exists(os.path.join(tmp, "no.db")))
 
     def test_refuses_while_copying(self):
         with tempfile.TemporaryDirectory() as tmp:

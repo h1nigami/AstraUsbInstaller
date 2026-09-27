@@ -25,6 +25,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+
+      # Релиз собирается только из того, что уже в master. v1.15 и v1.16
+      # собрали из отдельной ветки, отведённой от v1.13, и станции при
+      # обновлении потеряли всё, что вошло в v1.14. Тег на коммите вне
+      # master здесь останавливает сборку: ни одного архива к релизу не
+      # прикрепится, и апдейтеры его пропустят.
+      - name: Тег должен быть в master
+        # Пробная сборка по кнопке ничего не публикует, её не ограничиваем.
+        if: github.event_name == 'release'
+        # На windows-latest оболочка по умолчанию PowerShell: без явного bash
+        # шаг падал бы на каждом релизе и установщик не прикреплялся бы.
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin master
+          COMMIT="$(git rev-parse "$TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$COMMIT" origin/master; then
+            echo "::error::Тег $TAG указывает на $COMMIT, которого нет в master. Влейте изменения в master и выпустите новый тег."
+            exit 1
+          fi
 
       - uses: actions/setup-dotnet@v4
         with:
@@ -125,7 +147,11 @@ jobs:
             printf '\n' >> /tmp/body.md
             sed -e "s/TAG_HERE/$TAG/g" -e "s/VERSION_HERE/${TAG#v}/g" \
               .github/release-station-install.md >> /tmp/body.md
-            gh release edit "$TAG" --notes-file /tmp/body.md
+            # Только тело описания. `gh release edit` заодно переставляет
+            # метку latest на редактируемый релиз, а релиз станции C# latest
+            # получать не должен: его увидели бы апдейтеры Python.
+            ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" -q .id)
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat /tmp/body.md)" > /dev/null
           fi
 
   # Установщик для Windows собирается отдельно: Inno Setup идёт только на
@@ -139,6 +165,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
+          fetch-depth: 0
+
+      # Релиз собирается только из того, что уже в master. v1.15 и v1.16
+      # собрали из отдельной ветки, отведённой от v1.13, и станции при
+      # обновлении потеряли всё, что вошло в v1.14. Тег на коммите вне
+      # master здесь останавливает сборку: ни одного архива к релизу не
+      # прикрепится, и апдейтеры его пропустят.
+      - name: Тег должен быть в master
+        # Пробная сборка по кнопке ничего не публикует, её не ограничиваем.
+        if: github.event_name == 'release'
+        # На windows-latest оболочка по умолчанию PowerShell: без явного bash
+        # шаг падал бы на каждом релизе и установщик не прикреплялся бы.
+        shell: bash
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          git fetch --no-tags origin master
+          COMMIT="$(git rev-parse "$TAG^{commit}")"
+          if ! git merge-base --is-ancestor "$COMMIT" origin/master; then
+            echo "::error::Тег $TAG указывает на $COMMIT, которого нет в master. Влейте изменения в master и выпустите новый тег."
+            exit 1
+          fi
 
       - uses: actions/setup-dotnet@v4
         with:

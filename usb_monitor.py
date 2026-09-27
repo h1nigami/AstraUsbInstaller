@@ -2,11 +2,15 @@ import os
 import shutil
 import time
 import subprocess
+import errno
 import json
 import platform
 import sys
 import sqlite3
 import threading
+import stat
+import tempfile
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 
@@ -23,13 +27,36 @@ MOUNT_BASE = "/mnt/usb_backup"
 # на запись. Без автомонтирования задержка ограничена этим интервалом.
 MOUNT_GRACE_SECONDS = float(os.environ.get("USB_MOUNT_GRACE", "4"))
 MAX_WORKERS = int(os.environ.get("USB_MAX_WORKERS", "10"))
+# Сколько ждать возврата шины, когда из опроса разом пропали все устройства.
+# Дешёвый многопортовый хаб при выдёргивании одной карты передёргивает всю
+# линейку: порты пропадают на секунду-другую целиком. Человек так не делает —
+# он вынимает по одному, поэтому одновременное исчезновение всех считаем
+# сбоем шины. Дольше этого срока — верим, что хаб действительно отключили.
+BUS_GLITCH_GRACE = float(os.environ.get("USB_BUS_GLITCH_GRACE", "20"))
+# Сколько подряд идущих отказов чтения считать потерей носителя. Когда хаб
+# сбрасывает порт, ядро отдаёт ошибку на каждом файле: перебирать после этого
+# всю карту бессмысленно — это минуты впустую и простыня в журнале вместо
+# одного внятного сообщения оператору.
+IO_ERRORS_TO_GIVE_UP = int(os.environ.get("USB_IO_ERRORS_LIMIT", "5"))
+# Сколько ждать возвращения карты, которую сбросило шиной, и сколько раз
+# пробовать. Хаб отдаёт устройство обратно под новым именем, и по журналам
+# станции на это уходит до минуты. Ждать дешевле, чем бросать работу: копия
+# продолжается с того же места, а оператор видит одну плитку, а не цирк.
+CARD_RETURN_WAIT = float(os.environ.get("USB_CARD_RETURN_WAIT", "120"))
+CARD_RETURN_RETRIES = int(os.environ.get("USB_CARD_RETURN_RETRIES", "3"))
+# Носитель отвечает ошибкой — сброшен шиной, но ещё числится подключённым.
+# EREMOTEIO есть не на всех платформах, поэтому берём его осторожно.
+_LOST_DEVICE_ERRNOS = {errno.EIO, errno.ENODEV, errno.ENXIO,
+                       getattr(errno, "EREMOTEIO", errno.EIO)}
+# Файлы просто исчезли: так выглядит физически выдернутая карта — точка
+# монтирования пустеет. Само по себе это ещё не потеря носителя (файл мог
+# исчезнуть между сканированием и копированием), поэтому проверяется отдельно.
+_GONE_ERRNOS = {errno.ENOENT, getattr(errno, "ESTALE", errno.ENOENT)}
 DEBUG = os.environ.get("USB_DEBUG", "0") == "1"
 IS_TTY = sys.stdout.isatty()
 USE_RICH = HAS_RICH and IS_TTY
 
 _CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "config.json")
-_CONFIG_BROKEN = "_config_unreadable"
-_config_lock = threading.RLock()
 DEST_MARKER_FILE = ".astra_dest"
 VERSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
 _DEST_CFG_RELPATH = "backup_mount_relpath"
@@ -39,6 +66,152 @@ _DEST_CFG_KEYS = (_DEST_CFG_RELPATH, _DEST_CFG_UUID, _DEST_CFG_SERIAL)
 
 VIDEO_EXTS = {".mp4", ".avi", ".mkv", ".mov", ".wmv", ".mpg", ".mpeg",
               ".m4v", ".3gp", ".ts", ".flv", ".webm", ".m2ts", ".vob", ".mts"}
+
+
+class DeviceLost(OSError):
+    """Носитель пропал или сброшен шиной — читать с него больше нечего."""
+
+
+# Безопасное извлечение: оператор останавливает копирование перед тем, как
+# вынимать регистраторы. Тогда выдёргивать нечего — нет ни одного открытого
+# чтения, и хаб не сбрасывает соседние порты.
+_safe_removal = False
+_stop_generation = 0
+_worker_local = threading.local()
+_submitted_jobs = set()
+_interrupted_devices = set()
+_failed_unmounts = set()
+_foreign_mounts = set()
+
+
+def set_safe_removal(on):
+    """Включить или снять остановку копирования для извлечения карт."""
+    global _safe_removal, _stop_generation
+    with _operations_lock:
+        if on and not _safe_removal:
+            _stop_generation += 1
+        _safe_removal = bool(on)
+    print(f"  Безопасное извлечение: {'включено' if _safe_removal else 'снято'}", flush=True)
+
+
+def safe_removal_active():
+    return _safe_removal
+
+
+def _stop_requested():
+    return (_safe_removal or
+            getattr(_worker_local, "generation", _stop_generation) != _stop_generation)
+
+
+def safe_removal_status():
+    with _operations_lock:
+        if not _safe_removal:
+            return "running", "Копирование разрешено"
+        if _operation_readers or _operation_writer or any(not future.done() for future in _submitted_jobs):
+            return "stopping", "Останавливаем задания и освобождаем носители"
+        for mounts in (_failed_unmounts, _foreign_mounts):
+            mounts.intersection_update(path for path in tuple(mounts) if os.path.ismount(path))
+        if _failed_unmounts:
+            return "blocked", "Не удалось размонтировать носитель. Извлекать его пока нельзя"
+        if _foreign_mounts:
+            return "blocked", "Копирование остановлено. Выполните безопасное извлечение в системе"
+        return "ready", "Задания остановлены. Можно извлекать регистраторы"
+
+
+@contextmanager
+def _worker_guard(devname):
+    with operation_guard():
+        outer = not hasattr(_worker_local, "generation")
+        if outer:
+            _worker_local.generation = _stop_generation
+            _worker_local.completed = False
+        try:
+            yield
+        finally:
+            if outer:
+                if _stop_requested() and not _worker_local.completed:
+                    with _operations_lock:
+                        _interrupted_devices.add(devname)
+                del _worker_local.generation
+                del _worker_local.completed
+
+
+_awaiting_cards = {}
+_awaiting_lock = threading.Lock()
+
+
+def _await_card_register(fs_uuid, seconds):
+    """Пометить карту как ожидаемую: пока метка здесь, новый воркер на неё
+    не поднимается — её доигрывает тот, кто уже начал."""
+    if fs_uuid:
+        with _awaiting_lock:
+            _awaiting_cards[fs_uuid] = time.time() + seconds
+
+
+def _await_card_clear(fs_uuid):
+    if fs_uuid:
+        with _awaiting_lock:
+            _awaiting_cards.pop(fs_uuid, None)
+
+
+def _card_is_awaited(fs_uuid):
+    if not fs_uuid:
+        return False
+    with _awaiting_lock:
+        until = _awaiting_cards.get(fs_uuid)
+        if until and until > time.time():
+            return True
+        _awaiting_cards.pop(fs_uuid, None)
+        return False
+
+
+def _find_card_by_uuid(fs_uuid):
+    """Имя устройства, под которым сейчас видна карта с этой меткой."""
+    if not fs_uuid:
+        return None
+    for devname in _get_linux_partitions():
+        if _get_filesystem_uuid(f"/dev/{devname}") == fs_uuid:
+            return devname
+    return None
+
+
+def _wait_for_card(fs_uuid, timeout, stop_check=None):
+    """Дождаться возвращения той же карты под любым именем устройства."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _stop_requested() or (stop_check is not None and stop_check()):
+            return None
+        devname = _find_card_by_uuid(fs_uuid)
+        if devname:
+            return devname
+        time.sleep(2)
+    return None
+
+
+def _mountpoint_for(devname):
+    """Точка монтирования устройства: чужая, если система уже смонтировала,
+    иначе своя. Возвращает (точка, надо ли отмонтировать самим)."""
+    existing = _wait_for_system_mount(devname, MOUNT_GRACE_SECONDS)
+    if existing:
+        own = _is_own_mount(existing)
+        if not own:
+            with _operations_lock:
+                _foreign_mounts.add(existing)
+        return existing, own
+    if _stop_requested():
+        return None, False
+    mp = _mount_device(devname)
+    if mp is None:
+        return None, False
+    return mp, _is_own_mount(mp)
+
+
+def _source_gone(src_root):
+    """Носителя больше нет? Пропавший одиночный файл — ещё не потеря карты."""
+    try:
+        return not os.listdir(src_root)
+    except OSError:
+        return True
 
 
 def read_version(path=None):
@@ -81,20 +254,97 @@ def is_copying(path=None, max_age=60):
         return False
 
 
-def factory_reset(db_path=None, dest_base=None):
-    """Удалить устройства, историю выгрузок и файлы архива.
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
+LOG_MAX_BYTES = 1024 * 1024
 
-    Возвращает счётчики {"devices", "backups", "entries"}. Во время
-    копирования отказывает с OSError: снос данных под идущей выгрузкой
-    оставил бы архив и базу в рассогласованном состоянии.
-    """
-    if is_copying():
-        raise OSError("Сброс невозможен: идёт сканирование или копирование")
+_orig_stdout = None
+_orig_stderr = None
+_log_fh = None
+
+
+class _LogTee:
+    """Дублирует print в файл. Один flush на запись, чтобы строки не терялись при падении."""
+
+    def __init__(self, stream, fh):
+        self._stream = stream
+        self._fh = fh
+
+    def write(self, data):
+        self._stream.write(data)
+        try:
+            self._fh.write(data)
+            self._fh.flush()
+        except OSError:
+            pass
+
+    def writelines(self, lines):
+        for line in lines:
+            self.write(line)
+
+    def flush(self):
+        try:
+            self._stream.flush()
+            self._fh.flush()
+        except OSError:
+            pass
+
+    def isatty(self):
+        try:
+            return self._stream.isatty()
+        except Exception:
+            return False
+
+
+def setup_file_logging(path=None):
+    """Дублировать stdout/stderr в файл. Идемпотентно; вызывать один раз на старте."""
+    global _orig_stdout, _orig_stderr, _log_fh
+    if _orig_stdout is not None:
+        return True
+    target = path or LOG_PATH
     try:
-        dest = dest_base or get_dest_base()
-    except Exception:
-        dest = None
-    devices = backups = 0
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.isfile(target) and os.path.getsize(target) > LOG_MAX_BYTES:
+            with open(target, "rb") as f:
+                f.seek(-LOG_MAX_BYTES // 2, os.SEEK_END)
+                tail = f.read()
+            with open(target, "wb") as f:
+                f.write(tail)
+        _log_fh = open(target, "a", encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+    sys.stdout = _LogTee(_orig_stdout, _log_fh)
+    sys.stderr = _LogTee(_orig_stderr, _log_fh)
+    return True
+
+
+def restore_stdout():
+    """Вернуть stdout/stderr. Нужно только тестам; в бою не вызывается."""
+    global _orig_stdout, _orig_stderr, _log_fh
+    if _orig_stdout is not None:
+        sys.stdout, sys.stderr = _orig_stdout, _orig_stderr
+        _orig_stdout, _orig_stderr = None, None
+    if _log_fh is not None:
+        try:
+            _log_fh.close()
+        except OSError:
+            pass
+        _log_fh = None
+
+
+def collect_diagnostics(db_path=None):
+    """Сводка для выгрузки: только счётчики, без имён, серийников и людей."""
+    info = {
+        "version": "unknown",
+        "platform": platform.system(),
+        "devices": 0,
+        "backups": 0,
+        "archive": get_dest_base(),
+        "archive_bytes": 0,
+    }
+    ver = read_version()
+    if ver:
+        info["version"] = f"{ver[0]} {ver[1]}"
     try:
         conn = _connect(db_path)
     except Exception:
@@ -104,121 +354,231 @@ def factory_reset(db_path=None, dest_base=None):
             tables = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}
             if "devices" in tables:
-                devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
-                conn.execute("DELETE FROM devices")
+                info["devices"] = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
             if "backups" in tables:
-                backups = conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0]
-                conn.execute("DELETE FROM backups")
-            conn.commit()
-            try:
-                conn.execute("VACUUM")
-            except sqlite3.Error as e:
-                # Данные уже удалены, место освободится позже — падать поздно.
-                print(f"  VACUUM пропущен: {e}", flush=True)
-        except sqlite3.Error as e:
-            # GUI ловит OSError; sqlite3.Error ему не родня, и без перевода
-            # поток сброса умирал молча, оставляя интерфейс в «Сброс...».
-            raise OSError(f"Не удалось очистить базу: {e}") from e
+                info["backups"] = conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0]
+        except sqlite3.Error:
+            pass
         finally:
             conn.close()
-    entries = 0
-    if dest:
-        try:
-            names = os.listdir(dest)
-        except OSError:
-            names = []
-        for name in names:
-            path = os.path.join(dest, name)
-            try:
-                if os.path.isdir(path) and not os.path.islink(path):
-                    shutil.rmtree(path)
-                else:
-                    os.remove(path)
-                entries += 1
-            except OSError:
-                continue
-    with _device_id_lock:
-        _connected_device_ids.clear()
+    total = 0
     try:
-        os.remove(COPYING_MARKER)
+        for root, _dirs, files in os.walk(info["archive"]):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    pass
     except OSError:
         pass
-    return {"devices": devices, "backups": backups, "entries": entries}
+    info["archive_bytes"] = total
+    return info
 
 
-def _load_config():
-    """Прочитать config.json.
+def export_logs(dest_dir, db_path=None, log_path=None):
+    """Собрать app.log + version.txt + summary.txt в подпапку dest_dir.
 
-    Отсутствующий файл — это «ничего не настроено», а нечитаемый или
-    испорченный помечается служебным ключом: принять потерю настроек за их
-    отсутствие опаснее всего для диска назначения (см. dest_available).
+    Возвращает путь пакета. Персональных данных (имена, люди, серийники)
+    в пакете нет — только счётчики.
     """
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    bundle = os.path.join(dest_dir, f"bestcam-logs-{stamp}")
+    os.makedirs(bundle, exist_ok=False)
+    src_log = log_path or LOG_PATH
     try:
-        with open(_CONFIG_PATH) as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {_CONFIG_BROKEN: True}
+        if os.path.isfile(src_log):
+            shutil.copy2(src_log, os.path.join(bundle, "app.log"))
+        else:
+            with open(os.path.join(bundle, "app.log"), "w") as f:
+                f.write("Журнал пуст: станция перезапускалась до включения записи в файл.\n")
+    except OSError as e:
+        raise OSError(f"Не удалось скопировать журнал: {e}") from e
+    ver = read_version()
+    try:
+        with open(os.path.join(bundle, "version.txt"), "w") as f:
+            f.write(f"{ver[0]} {ver[1]}\n" if ver else "unknown\n")
+        d = collect_diagnostics(db_path)
+        with open(os.path.join(bundle, "summary.txt"), "w") as f:
+            f.write(
+                "BestCam USB Backup Manager — диагностика\n"
+                f"version: {d['version']}\n"
+                f"platform: {d['platform']}\n"
+                f"devices: {d['devices']}\n"
+                f"backups: {d['backups']}\n"
+                f"archive: {d['archive']}\n"
+                f"archive_bytes: {d['archive_bytes']}\n"
+            )
+    except OSError as e:
+        raise OSError(f"Не удалось записать сводку: {e}") from e
+    return bundle
+
+
+_operations_lock = threading.RLock()
+_operation_readers = 0
+_operation_writer = False
+
+
+class StationBusy(OSError):
+    """Общая блокировка занята: операцию можно повторить позже."""
+
+
+@contextmanager
+def operation_guard(exclusive=False):
+    """Не допускать обслуживания архива одновременно с копированием."""
+    global _operation_readers, _operation_writer
+    fd = None
+    with _operations_lock:
+        if _operation_writer or (exclusive and _operation_readers):
+            raise StationBusy("Станция занята другой операцией")
+        if os.name != "nt":
+            import fcntl
+            path = DB_PATH + ".operations.lock"
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+            try:
+                fcntl.flock(fd, (fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH) | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                os.close(fd)
+                raise StationBusy("Станция занята другой операцией") from error
+            except OSError:
+                os.close(fd)
+                raise
+        if exclusive:
+            _operation_writer = True
+        else:
+            _operation_readers += 1
+    try:
+        yield fd
+    finally:
+        with _operations_lock:
+            if fd is not None:
+                os.close(fd)
+            if exclusive:
+                _operation_writer = False
+            else:
+                _operation_readers -= 1
+
+
+@contextmanager
+def _maintenance_archive(path):
+    with _archive_directory(path) as directory:
+        cfg = _load_config()
+        marker = os.path.join(directory, DEST_MARKER_FILE)
+        if (cfg.get("_config_unreadable") or not _dest_identity_matches(directory, cfg)
+                or not stat.S_ISREG(os.stat(marker, follow_symlinks=False).st_mode)):
+            raise OSError("Не удалось подтвердить диск архива")
+        yield directory
+
+
+def _device_archive_paths(directory, device_id=None):
+    names = [f"Device{device_id}"] if device_id is not None else os.listdir(directory)
+    for name in names:
+        path = os.path.join(directory, name)
+        if (name.startswith("Device") and _positive_id(name[6:])
+                and not os.path.islink(path) and os.path.isdir(path)):
+            yield path
+
+
+def factory_reset(db_path=None, dest_base=None, config_path=None):
+    """Удалить только папки DeviceN и историю после проверки диска архива."""
+    with operation_guard(exclusive=True):
+        if is_copying():
+            raise OSError("Сброс невозможен: идёт сканирование или копирование")
+        dest = dest_base or get_dest_base()
+        with _maintenance_archive(dest) as directory:
+            entries = 0
+            for path in _device_archive_paths(directory):
+                archive_device = os.stat(directory).st_dev
+                for root, _dirs, _files in os.walk(path):
+                    if os.stat(root).st_dev != archive_device:
+                        raise OSError("В папке устройства смонтирован другой диск")
+                shutil.rmtree(path)
+                entries += 1
+            devices = backups = 0
+            conn = sqlite3.connect(db_path or DB_PATH)
+            try:
+                tables = {row[0] for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'")}
+                if "devices" in tables:
+                    devices = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
+                    conn.execute("DELETE FROM devices")
+                if "backups" in tables:
+                    backups = conn.execute("SELECT COUNT(*) FROM backups").fetchone()[0]
+                    conn.execute("DELETE FROM backups")
+                conn.commit()
+            finally:
+                conn.close()
+        if config_path is not None:
+            with _config_lock:
+                try:
+                    os.remove(config_path)
+                except FileNotFoundError:
+                    pass
+        with _device_id_lock:
+            _connected_device_ids.clear()
+        return {"devices": devices, "backups": backups, "entries": entries}
+
+
+_config_lock = threading.RLock()
+
+
+def _load_config(path=None):
+    try:
+        with open(path or _CONFIG_PATH, encoding="utf-8") as stream:
+            data = json.load(stream)
+        if not isinstance(data, dict):
+            return {"_config_unreadable": True}
+        if "exit_password" in data and (not isinstance(data["exit_password"], str) or not data["exit_password"]):
+            return {"_config_unreadable": True}
+        for key in ("lock_timeout_minutes", "auto_cleanup_days"):
+            if key in data and (type(data[key]) is not int or data[key] < 0):
+                return {"_config_unreadable": True}
+        if "auto_cleanup_enabled" in data and type(data["auto_cleanup_enabled"]) is not bool:
+            return {"_config_unreadable": True}
+        for key in ("backup_dest", *_DEST_CFG_KEYS):
+            if key in data and not isinstance(data[key], str):
+                return {"_config_unreadable": True}
+        return data
     except FileNotFoundError:
         return {}
-    except Exception:
-        return {_CONFIG_BROKEN: True}
+    except (OSError, ValueError, UnicodeError):
+        return {"_config_unreadable": True}
 
 
-def _save_config(cfg):
-    """Записать config.json целиком через временный файл и os.replace.
-
-    Обрыв питания посреди записи оставляет прежний файл, а не обрезанный:
-    станция работает без присмотра, а потеря backup_dest тихо меняет режим
-    проверки диска назначения.
-    """
-    cfg = {k: v for k, v in cfg.items() if k != _CONFIG_BROKEN}
-    tmp = _CONFIG_PATH + ".tmp"
-    try:
-        os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-        with open(tmp, "w") as f:
-            json.dump(cfg, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, _CONFIG_PATH)
-        return True
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        return False
-
-
-def update_config(changes=None, drop=()):
-    """Изменить ключи config.json под общим замком.
-
-    Без него чтение-правка-запись из потока GUI и из воркеров идут вперемешку
-    по одному файлу, и та запись, что легла позже, затирает чужие ключи.
-    """
+def _save_config(cfg, path=None, repair=False):
+    path = os.path.abspath(path or _CONFIG_PATH)
+    temporary = None
     with _config_lock:
-        cfg = _load_config()
-        if cfg.get(_CONFIG_BROKEN) and "backup_dest" not in (changes or {}):
-            # Файл не прочитался, а перезапись выбросила бы уцелевшие ключи —
-            # в том числе backup_dest, из-за чего dest_available снова начала
-            # бы разрешать запись мимо диска назначения. Исключение только для
-            # явного выбора папки оператором: он сам задаёт потерянный ключ.
+        try:
+            if cfg.get("_config_unreadable") or (not repair and _load_config(path).get("_config_unreadable")):
+                return False
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=os.path.dirname(path),
+                                             delete=False) as stream:
+                temporary = stream.name
+                json.dump(cfg, stream, ensure_ascii=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            return True
+        except (OSError, ValueError, TypeError):
             return False
-        for key in drop:
-            cfg.pop(key, None)
-        cfg.update(changes or {})
-        return _save_config(cfg)
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
 
 
-def reset_config():
-    """Удалить config.json при заводском сбросе — под тем же замком.
-
-    Мимо замка удаление успевало разойтись с записью из потока монитора,
-    и файл воскресал со старыми настройками уже после сброса.
-    """
+def update_config(updates, remove_keys=(), path=None, repair=False):
     with _config_lock:
-        try:
-            os.remove(_CONFIG_PATH)
-        except OSError:
-            pass
+        cfg = _load_config(path)
+        if cfg.get("_config_unreadable"):
+            if not repair:
+                return False
+            cfg = {}
+        for key in remove_keys:
+            cfg.pop(key, None)
+        cfg.update(updates)
+        return _save_config(cfg, path, repair=repair)
 
 
 def _config_backup_dest():
@@ -255,7 +615,7 @@ def _find_mount_for_path(path):
             real_mp = os.path.realpath(mountpoint)
         except Exception:
             real_mp = mountpoint
-        if target == real_mp or target.startswith(real_mp + os.sep):
+        if target == real_mp or target.startswith(real_mp.rstrip(os.sep) + os.sep):
             if best is None or len(real_mp) > len(best[1]):
                 best = (src, real_mp)
     return best
@@ -307,11 +667,15 @@ def describe_dest_path(dest_base):
 
 def remember_configured_dest(dest_base, update_path=False):
     """Persist destination metadata once the real filesystem is reachable."""
+    if not _archive_path_allowed(dest_base):
+        return False
+    if not update_path and not _dest_identity_matches(dest_base, _load_config()):
+        return False
     info = describe_dest_path(dest_base)
-    changes = {k: v for k, v in info.items() if k in _DEST_CFG_KEYS}
+    updates = {key: info[key] for key in _DEST_CFG_KEYS if key in info}
     if update_path:
-        changes["backup_dest"] = dest_base
-    return update_config(changes, drop=_DEST_CFG_KEYS)
+        updates["backup_dest"] = dest_base
+    return update_config(updates, remove_keys=_DEST_CFG_KEYS)
 
 
 def _dest_device_matches(src, cfg):
@@ -336,7 +700,8 @@ def _resolve_configured_dest(cfg):
         return None
 
     # Fast path: the originally selected path is still the live mounted one.
-    if os.path.isdir(dest) and os.path.isfile(os.path.join(dest, DEST_MARKER_FILE)):
+    if (os.path.isdir(dest) and os.path.isfile(os.path.join(dest, DEST_MARKER_FILE))
+            and _dest_identity_matches(dest, cfg)):
         return dest
 
     if platform.system() == "Windows":
@@ -366,45 +731,156 @@ def get_dest_base():
                           os.path.join(os.path.dirname(os.path.abspath(__file__)), "USB_Backups"))
 
 
-def ensure_dest_marker(dest_base):
-    """Stamp ``dest_base`` with the destination marker file. True on success.
+def _physical_disks(device):
+    """Физические диски файловой системы, включая разделы, LVM и RAID."""
+    pending = [os.path.realpath(f"/sys/dev/block/{os.major(device)}:{os.minor(device)}")]
+    seen, disks = set(), set()
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        seen.add(path)
+        with open(os.path.join(path, "dev")) as src:
+            number = src.read().strip()
+        slaves = os.listdir(os.path.join(path, "slaves")) if os.path.isdir(os.path.join(path, "slaves")) else []
+        if slaves:
+            pending.extend(os.path.realpath(os.path.join(path, "slaves", name)) for name in slaves)
+        elif os.path.isfile(os.path.join(path, "partition")):
+            pending.append(os.path.dirname(path))
+        else:
+            # Loop, RAM и прочие виртуальные устройства не доказывают отдельный диск.
+            if "/virtual/" in path or not number:
+                raise OSError("Не удалось определить физический диск архива")
+            disks.add(number)
+    if not disks:
+        raise OSError("Не удалось определить физический диск архива")
+    return disks
 
-    The marker is written when the user picks the folder in the GUI, i.e.
-    while the disk it lives on is actually mounted. Later backups require it:
-    if the disk is gone, the same path is either missing or gets silently
-    recreated by ``makedirs`` as a plain directory on the root/overlay
-    filesystem — without the marker. Requiring the marker turns that silent
-    write into a visible error instead of filling a shadow directory the
-    user will never find on the real disk.
-    """
+
+def _require_archive_device(device):
+    """Запретить архив на системном диске; неизвестное устройство тоже запрещено."""
+    if os.name == "nt":
+        if device == os.stat(os.environ["SystemRoot"]).st_dev:
+            raise OSError("Запись архива на системный диск запрещена")
+        return
+    system_devices = {os.stat("/").st_dev}
+    for path in ("/usr", "/var", "/boot"):
+        try:
+            system_devices.add(os.stat(path).st_dev)
+        except FileNotFoundError:
+            pass
+    if device in system_devices:
+        raise OSError("Запись архива на системный диск запрещена")
+    archive_disks = _physical_disks(device)
+    for system_device in system_devices:
+        if archive_disks & _physical_disks(system_device):
+            raise OSError("Запись архива на раздел системного диска запрещена")
+
+
+@contextmanager
+def _archive_directory(path, create=False):
+    """Открытый каталог удерживает монтирование при записи на Linux."""
+    path = os.path.abspath(path)
+    missing = []
+    while not os.path.lexists(path):
+        if not create:
+            raise OSError("Диск архива не подключён")
+        parent, name = os.path.split(path)
+        if parent == path:
+            raise OSError("Диск архива не подключён")
+        missing.append(name)
+        path = parent
+    if os.name == "nt":
+        _require_archive_device(os.stat(path).st_dev)
+        for name in reversed(missing):
+            path = os.path.join(path, name)
+            os.makedirs(path, exist_ok=True)
+            _require_archive_device(os.stat(path).st_dev)
+        yield path
+        return
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
     try:
-        marker = os.path.join(dest_base, DEST_MARKER_FILE)
-        if not os.path.isfile(marker):
-            with open(marker, "w") as f:
-                f.write("BestCam backup destination marker. Do not delete.\n")
+        device = os.fstat(fd).st_dev
+        _require_archive_device(device)
+        for name in reversed(missing):
+            try:
+                os.mkdir(name, dir_fd=fd)
+            except FileExistsError:
+                pass
+            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+            if os.fstat(fd).st_dev != device:
+                raise OSError("Диск назначения сменился")
+        yield f"/proc/self/fd/{fd}"
+    finally:
+        os.close(fd)
+
+
+def _archive_path_allowed(path, create=False):
+    try:
+        with _archive_directory(path, create=create):
+            return True
+    except (OSError, KeyError, ValueError):
+        return False
+
+
+def _dest_identity_matches(path, cfg):
+    if os.name == "nt" or not (cfg.get(_DEST_CFG_UUID) or cfg.get(_DEST_CFG_SERIAL)):
         return True
+    try:
+        device = os.stat(path).st_dev
+        return _dest_device_matches(f"/dev/block/{os.major(device)}:{os.minor(device)}", cfg)
     except OSError:
         return False
 
 
-def dest_available():
-    """True when the active backup destination may be written to.
+def _copy_archive_file(source, destination):
+    """Создать новую копию без перезаписи ссылок и с проверкой открытого файла."""
+    with _archive_directory(os.path.dirname(destination)) as directory:
+        target = os.path.join(directory, os.path.basename(destination))
+        with open(source, "rb") as src, open(target, "xb") as dst:
+            try:
+                _require_archive_device(os.fstat(dst.fileno()).st_dev)
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+                dst.flush()
+                os.fsync(dst.fileno())
+                info = os.fstat(src.fileno())
+                if os.name != "nt":
+                    os.fchmod(dst.fileno(), stat.S_IMODE(info.st_mode))
+                os.utime(dst.fileno() if os.utime in os.supports_fd else target,
+                         ns=(info.st_atime_ns, info.st_mtime_ns))
+            except BaseException:
+                dst.close()
+                os.unlink(target)
+                raise
 
-    Env/default destinations keep the historical behaviour (created on
-    demand). A destination chosen in the GUI must exist AND carry the marker
-    written at selection time — see ensure_dest_marker().
-    """
+
+def ensure_dest_marker(dest_base):
+    """Создать метку только на проверенном несистемном диске."""
+
+    try:
+        with _archive_directory(dest_base) as directory:
+            marker = os.path.join(directory, DEST_MARKER_FILE)
+            if os.path.lexists(marker):
+                return stat.S_ISREG(os.stat(marker, follow_symlinks=False).st_mode)
+            with open(marker, "x") as f:
+                _require_archive_device(os.fstat(f.fileno()).st_dev)
+                f.write("BestCam backup destination marker. Do not delete.\n")
+        return True
+    except (OSError, KeyError, ValueError):
+        return False
+
+
+def dest_available():
+    """Проверить реальный диск; метка не разрешает запись на системный раздел."""
     cfg = _load_config()
-    if cfg.get(_CONFIG_BROKEN):
-        # Настройки не прочитались. Диск назначения мог быть выбран, и тогда
-        # запись «по умолчанию» уйдёт в теневую папку на системном разделе,
-        # а оригиналы будут удалены с флешки. Отказываемся до починки файла.
+    if cfg.get("_config_unreadable"):
         return False
     cfg_dest = cfg.get("backup_dest", "") or None
-    if not cfg_dest:
-        return True
-    resolved = _resolve_configured_dest(cfg)
-    return os.path.isfile(os.path.join(resolved, DEST_MARKER_FILE))
+    resolved = _resolve_configured_dest(cfg) if cfg_dest else get_dest_base()
+    return (_archive_path_allowed(resolved, create=not cfg_dest) and _dest_identity_matches(resolved, cfg)
+            and (not cfg_dest or os.path.isfile(os.path.join(resolved, DEST_MARKER_FILE))))
 
 
 def _is_dest_path(mountpoint):
@@ -439,39 +915,36 @@ def _delete_source_videos(src_root, allowed=None):
     return deleted
 
 
-def cleanup_old_backup_videos(dest_base=None, older_than_days=30):
-    """Delete video files in dest_base that are older than older_than_days.
-
-    Returns (deleted_count, freed_bytes).
-    """
-    if dest_base is None:
-        dest_base = get_dest_base()
-    if not os.path.isdir(dest_base):
-        return 0, 0
-
-    cutoff = datetime.now() - timedelta(days=older_than_days)
-    cutoff_ts = cutoff.timestamp()
-
-    deleted = 0
-    freed = 0
-    for root, _dirs, files in os.walk(dest_base):
-        for name in files:
-            if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
-                continue
-            fp = os.path.join(root, name)
-            try:
-                mtime = os.path.getmtime(fp)
-                if mtime < cutoff_ts:
-                    size = os.path.getsize(fp)
-                    os.remove(fp)
-                    deleted += 1
-                    freed += size
-            except OSError as e:
-                print(f"  Cleanup skipped {fp}: {e}", flush=True)
-
+def cleanup_old_backup_videos(dest_base=None, older_than_days=30, device_id=None):
+    """Очистить видео в DeviceN, удерживая проверенный диск и exclusive-блокировку."""
+    if device_id is not None:
+        device_id = _positive_id(str(device_id))
+        if device_id is None:
+            raise ValueError("Неверный ID регистратора")
+    if older_than_days is None and device_id is None:
+        raise ValueError("Для полной очистки укажите ID регистратора")
+    cutoff = ((datetime.now() - timedelta(days=older_than_days)).timestamp()
+              if older_than_days is not None else float("inf"))
+    deleted = freed = 0
+    with operation_guard(exclusive=True):
+        with _maintenance_archive(dest_base or get_dest_base()) as directory:
+            archive_device = os.stat(directory).st_dev
+            for path in _device_archive_paths(directory, device_id):
+                for root, _dirs, files in os.walk(path):
+                    with _archive_directory(root) as opened:
+                        if os.stat(opened).st_dev != archive_device:
+                            raise OSError("В папке устройства смонтирован другой диск")
+                        for name in files:
+                            if os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+                                continue
+                            fp = os.path.join(opened, name)
+                            info = os.stat(fp, follow_symlinks=False)
+                            if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+                                os.remove(fp)
+                                deleted += 1
+                                freed += info.st_size
     if deleted:
-        print(f"  Auto-cleanup: removed {deleted} video file(s), freed {_format_size(freed)} "
-              f"(older than {older_than_days} days)", flush=True)
+        print(f"Очистка архива: удалено видео {deleted}, освобождено {_format_size(freed)}", flush=True)
     return deleted, freed
 
 
@@ -637,21 +1110,16 @@ def _id_from_latest_log(mountpoint):
     try:
         files = sorted((entry.path for entry in os.scandir(log_dir)
                         if entry.is_file() and entry.name.lower().endswith(".txt")),
-                       key=os.path.getmtime, reverse=True)
+                       key=lambda path: (os.path.getmtime(path), os.path.basename(path)), reverse=True)
         if not files:
             return None
-        for path in files:
-            try:
-                with open(path, encoding="utf-8", errors="ignore") as stream:
-                    lines = stream.readlines()
-                for line in reversed(lines):
-                    if "#ID:" in line:
-                        tokens = line.partition("#ID:")[2].split()
-                        val = _positive_id(tokens[0] if tokens else "")
-                        if val:
-                            return val
-            except Exception:
-                continue
+        device_id = None
+        with open(files[0], encoding="utf-8") as stream:
+            for line in stream:
+                if "#ID:" in line:
+                    tokens = line.partition("#ID:")[2].split()
+                    device_id = _positive_id(tokens[0] if tokens else "")
+        return device_id
     except (OSError, UnicodeError) as error:
         raise OSError("Не удалось прочитать журнал регистратора") from error
     return None
@@ -691,7 +1159,7 @@ def _read_device_id(mountpoint):
     log_id = _id_from_latest_log(mountpoint)
     recording_id = _id_from_latest_recording(mountpoint)
     if log_id and recording_id and log_id != recording_id:
-        return log_id
+        raise OSError("Разные ID в журнале и записях регистратора")
     device_id = log_id or recording_id
     if not device_id:
         raise OSError("ID регистратора не найден")
@@ -716,12 +1184,16 @@ def _register_id_from_device(conn, device_id, serial, label, now):
 def _resolve_device_id(conn, mountpoint, serial, label, devname):
     database = os.path.realpath(conn.execute("PRAGMA database_list").fetchone()[2])
     owner = (database, devname)
+    # Метка файловой системы — единственный надёжный признак «та же карта»:
+    # USB-серийники у регистраторов заводские и совпадают у всех до единого.
+    # Читается до замка: это подпроцесс blkid.
+    fs_uuid = _get_filesystem_uuid(f"/dev/{devname}")
     with _device_id_lock:
         present = _connected_devices.get(database)
         if present is not None and devname not in present:
             raise OSError("Устройство отключено")
         # Отмечаем попытку до чтения USB, чтобы отключение отменяло даже зависшее чтение.
-        reservation = (None, object())
+        reservation = (None, object(), fs_uuid)
         _connected_device_ids[owner] = reservation
     try:
         device_id = _read_device_id(mountpoint)
@@ -730,12 +1202,27 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
             if ((present is not None and devname not in present)
                     or _connected_device_ids.get(owner) is not reservation):
                 raise OSError("Устройство отключено")
-            duplicate = any(
-                key[0] == database and key != owner and claim[0] == device_id
-                for key, claim in _connected_device_ids.items())
-            if duplicate:
-                raise OSError(f"Дубликат ID устройства {device_id}")
-            reservation = (device_id, reservation[1])
+            # Дубликат — это другое СЕЙЧАС подключённое устройство с тем же ID.
+            # Заявка под именем, которого на шине уже нет, — след самого себя:
+            # после сброса хабом устройство возвращается под новым именем, и
+            # без этой проверки оно объявляло дубликатом собственную старую
+            # заявку и навсегда оставалось красным.
+            # Старая заявка с той же меткой файловой системы — это сама карта,
+            # вернувшаяся после сброса под новым именем: ядро какое-то время
+            # держит оба имени, поэтому «владелец ещё на шине» здесь не помогает.
+            # Без метки различить нечем — считаем дубликатом, как раньше.
+            returned = []
+            for key, claim in _connected_device_ids.items():
+                if key[0] != database or key == owner or claim[0] != device_id:
+                    continue
+                if fs_uuid and len(claim) > 2 and claim[2] == fs_uuid:
+                    returned.append(key)
+                else:
+                    raise OSError(f"Дубликат ID устройства {device_id}")
+            for key in returned:
+                _connected_device_ids.pop(key, None)
+                print(f"  Карта вернулась под новым именем: {key[1]} -> {devname}", flush=True)
+            reservation = (device_id, reservation[1], fs_uuid)
             _connected_device_ids[owner] = reservation
         # Запись в БД идёт уже без общего замка: sqlite сериализует писателей
         # сам и ждёт до 30 с, а замок нужен циклу опроса USB каждые две
@@ -764,6 +1251,12 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
 
 
 def _update_connected_devices(devices):
+    if isinstance(devices, dict):
+        with _operations_lock:
+            _foreign_mounts.intersection_update(path for path in tuple(_foreign_mounts)
+                                                if os.path.ismount(path))
+            _foreign_mounts.update(path for path in devices.values()
+                                   if path and os.path.ismount(path) and not _is_dest_path(path))
     database = os.path.realpath(DB_PATH)
     with _device_id_lock:
         _connected_devices[database] = set(devices)
@@ -1068,6 +1561,8 @@ def _wait_for_system_mount(devname, timeout):
     """Дождаться системного монтирования или вернуть None по таймауту."""
     deadline = time.time() + max(0.0, timeout)
     while True:
+        if _stop_requested():
+            return None
         mp = _find_existing_mount(devname)
         if mp and os.path.ismount(mp):
             return mp
@@ -1116,22 +1611,38 @@ def _mount_device(devname):
 def _unmount(mountpoint):
     try:
         subprocess.run(["umount", mountpoint], check=True, capture_output=True)
+    except (OSError, subprocess.SubprocessError) as error:
+        with _operations_lock:
+            _failed_unmounts.add(mountpoint)
+        print(f"Не удалось размонтировать {mountpoint}: {error}", flush=True)
+        return False
+    with _operations_lock:
+        _failed_unmounts.discard(mountpoint)
+        _foreign_mounts.discard(mountpoint)
+    try:
         os.rmdir(mountpoint)
-    except Exception:
+    except OSError:
         pass
+    return True
 
 
 def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
+    with _archive_directory(dest_root, create=True) as directory:
+        return _copy_files_open(src_root, directory, timestamp, progress_label,
+                                total_files, total_bytes, progress_obj, task_id,
+                                start_time, emit_fn)
+
+
+def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     copied_files = 0
     copied_bytes = 0
     failed = 0
     # Source paths that are now safely present at the destination — either just
     # copied or already identical. Only these may be auto-deleted from source.
     backed_up = set()
+    # Отказов чтения подряд: сброшенный шиной носитель валит их пачкой.
+    lost_in_row = 0
     last_emit_t = 0.0
-    # Без onerror обход молча обрывается на пропавшем каталоге (носитель
-    # выдернули посреди копирования), и сеанс заканчивается зелёным «Готово»
-    # с неполным числом файлов.
     walk_errors = []
     for root, dirs, files in os.walk(src_root, onerror=walk_errors.append):
         rel_path = os.path.relpath(root, src_root)
@@ -1139,47 +1650,61 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
             rel_path = ""
         dest_dir = os.path.join(dest_root, rel_path) if rel_path else dest_root
         try:
-            os.makedirs(dest_dir, exist_ok=True)
-        except OSError as e:
-            # Destination vanished mid-copy (e.g. the disk was pulled) —
-            # everything in this directory counts as failed, nothing here may
-            # be auto-deleted from the source.
-            failed += sum(1 for f in files if f not in SERVICE_ID_FILES)
-            print(f"  Copy failed into {dest_dir}: {e}", flush=True)
-            continue
-        for file_name in files:
-            if file_name in SERVICE_ID_FILES:
-                continue
-            src_file = os.path.join(root, file_name)
-            dst_file = os.path.join(dest_dir, file_name)
-            try:
-                if os.path.exists(dst_file):
-                    src_stat = os.stat(src_file)
-                    dst_stat = os.stat(dst_file)
-                    if src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1:
-                        backed_up.add(src_file)  # identical copy already exists
+            with _archive_directory(dest_dir, create=True) as dest_dir:
+                for file_name in files:
+                    if _stop_requested():
+                        return copied_files, copied_bytes, backed_up, failed
+                    if file_name in SERVICE_ID_FILES:
                         continue
-                    base, ext = os.path.splitext(file_name)
-                    dst_file = os.path.join(dest_dir, f"{base}_{timestamp}{ext}")
-                file_size = os.path.getsize(src_file)
-                shutil.copy2(src_file, dst_file)
-                copied_files += 1
-                copied_bytes += file_size
-                backed_up.add(src_file)
-                if USE_RICH and progress_obj:
-                    progress_obj.update(task_id, advance=file_size)
-                elif not IS_TTY:
-                    _log_progress(progress_label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
-                if emit_fn is not None:
-                    now = time.time()
-                    if now - last_emit_t >= 1.0:
-                        emit_fn("copying", copied_bytes, total_bytes, "")
-                        last_emit_t = now
-            except Exception as e:
-                # Copy failed for this file — deliberately NOT added to
-                # backed_up, so it will be preserved on the source.
-                failed += 1
-                print(f"  Copy failed {src_file}: {e}", flush=True)
+                    src_file = os.path.join(root, file_name)
+                    dst_file = os.path.join(dest_dir, file_name)
+                    try:
+                        if os.path.lexists(dst_file):
+                            src_stat = os.stat(src_file)
+                            dst_stat = os.stat(dst_file, follow_symlinks=False)
+                            if not stat.S_ISREG(dst_stat.st_mode):
+                                raise OSError("Архивный файл не должен быть ссылкой")
+                            _require_archive_device(dst_stat.st_dev)
+                            if src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1:
+                                backed_up.add(src_file)  # identical copy already exists
+                                continue
+                            base, ext = os.path.splitext(file_name)
+                            dst_file = os.path.join(dest_dir, f"{base}_{timestamp}{ext}")
+                        file_size = os.path.getsize(src_file)
+                        _copy_archive_file(src_file, dst_file)
+                        copied_files += 1
+                        copied_bytes += file_size
+                        backed_up.add(src_file)
+                        lost_in_row = 0
+                        if USE_RICH and progress_obj:
+                            progress_obj.update(task_id, advance=file_size)
+                        elif not IS_TTY:
+                            _log_progress(progress_label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
+                        if emit_fn is not None:
+                            now = time.time()
+                            if now - last_emit_t >= 1.0:
+                                emit_fn("copying", copied_bytes, total_bytes, "")
+                                last_emit_t = now
+                    except Exception as e:
+                        # Copy failed for this file — deliberately NOT added to
+                        # backed_up, so it will be preserved on the source.
+                        failed += 1
+                        print(f"  Copy failed {src_file}: {e}", flush=True)
+                        code = e.errno     if isinstance(e, OSError) else None
+                        if code in _LOST_DEVICE_ERRNOS:
+                            lost_in_row += 1
+                        elif code in _GONE_ERRNOS and _source_gone(src_root):
+                            lost_in_row += 1
+                        else:
+                            lost_in_row = 0
+                        if lost_in_row >= IO_ERRORS_TO_GIVE_UP:
+                            raise DeviceLost(
+                                f"{src_root}: {lost_in_row} отказов чтения подряд") from e
+        except DeviceLost:
+            raise
+        except OSError as error:
+            failed += sum(1 for name in files if name not in SERVICE_ID_FILES)
+            print(f"  Copy failed into {dest_dir}: {error}", flush=True)
     if walk_errors:
         failed += len(walk_errors)
         print(f"  Обход источника прерван: {walk_errors[0]}", flush=True)
@@ -1187,6 +1712,15 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
 
 
 def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, progress_queue=None):
+    with _worker_guard(devname):
+        if _stop_requested():
+            if should_unmount:
+                _unmount(mountpoint)
+            return None, 0, 0
+        return _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount, progress_queue)
+
+
+def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unmount=False, progress_queue=None):
     is_linux = platform.system() != "Windows"
     label = _get_drive_label_linux(mountpoint) if is_linux else get_drive_label_windows(drive_path.replace(":\\", ""))
 
@@ -1198,6 +1732,11 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
     # Each worker thread owns its connection; sharing one across the pool is
     # not safe for concurrent writes.
     conn = _connect()
+    friendly = None
+    # Метка карты, запомненная до копирования. В finally по ней снимается
+    # отметка «ждём возврата»: к концу работы имя устройства могло уже
+    # исчезнуть или смениться, и спрашивать метку по имени поздно.
+    fs_uuid = None
     try:
         if progress_queue is not None:
             progress_queue.put_nowait((f"identity:{devname}", "", "identifying", 0, 0,
@@ -1231,6 +1770,8 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 return str(device_id)
 
         def _emit(state, current=0, total=0, msg=""):
+            if state == "done":
+                _worker_local.completed = True
             if progress_queue is not None:
                 try:
                     progress_queue.put_nowait((device_id, _label(), state, current, total, msg, devname))
@@ -1256,7 +1797,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             # mounted). Creating the path anyway would silently back up into a
             # shadow directory on the root filesystem, so refuse loudly and,
             # critically, never reach the source auto-delete below.
-            msg = f"Диск назначения недоступен: {dest_base}"
+            msg = f"Диск архива недоступен или является системным: {dest_base}"
             _emit("error", 0, 0, msg)
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
@@ -1295,20 +1836,22 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
                 _unmount(mountpoint)
             return device_id, 0, 0
 
-        try:
-            os.makedirs(dest, exist_ok=True)
-        except OSError as error:
-            return _fail(error)
+        if _stop_requested():
+            if should_unmount:
+                _unmount(mountpoint)
+            _emit("stopped", 0, total_bytes, "Копирование остановлено")
+            return device_id, 0, 0
 
         if total_files == 0:
+            if should_unmount and not _unmount(mountpoint):
+                _emit("error", 0, 0, "Не удалось размонтировать носитель")
+                return device_id, 0, 0
             msg = f"Empty: {friendly}"
             _emit("done", 0, 0, f"Готово: ID {_label()}")
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
             else:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-            if should_unmount:
-                _unmount(mountpoint)
             return device_id, 0, 0
 
         _emit("copying", 0, total_bytes, f"Копирование ID {_label()}")
@@ -1319,29 +1862,94 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {total_files} files, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
+        # Карту может сбросить шиной посреди копирования: хаб передёргивает
+        # соседние порты, когда из него вынимают другое устройство. Бросать
+        # работу нельзя — оператор не виноват, что хаб так себя ведёт. Ждём
+        # ту же карту (узнаём по метке файловой системы, имя устройства при
+        # этом меняется) и продолжаем с того же места: уже скопированные
+        # файлы пропускаются по размеру и времени.
+        fs_uuid = _get_filesystem_uuid(f"/dev/{devname}") if is_linux else None
+        attempt = 0
         try:
-            copied_files, copied_bytes, backed_up, failed = _copy_files(
-                mountpoint, dest, ts, friendly, total_files, total_bytes,
-                progress_obj, task_id, start_time, emit_fn=_emit)
+            while True:
+                try:
+                    with _archive_directory(dest_base) as directory:
+                        if not _dest_identity_matches(directory, _load_config()):
+                            raise OSError("Подключён другой диск архива")
+                        copied_files, copied_bytes, backed_up, failed = _copy_files(
+                            mountpoint, os.path.join(directory, display_id), ts, friendly,
+                            total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=_emit)
+                    break
+                except DeviceLost as lost:
+                    attempt += 1
+                    if not fs_uuid or attempt > CARD_RETURN_RETRIES:
+                        raise
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: карту сбросило "
+                          f"шиной ({lost}), ждём возвращения", flush=True)
+                    _emit("detached", 0, total_bytes,
+                          "Устройство переподключается, копирование продолжится")
+                    _await_card_register(fs_uuid, CARD_RETURN_WAIT)
+                    returned = _wait_for_card(fs_uuid, CARD_RETURN_WAIT)
+                    if _stop_requested():
+                        _await_card_clear(fs_uuid)
+                        if should_unmount:
+                            _unmount(mountpoint)
+                        _emit("stopped", 0, total_bytes, "Копирование остановлено")
+                        return device_id, 0, 0
+                    if not returned:
+                        _await_card_clear(fs_uuid)
+                        raise
+                    if should_unmount and not _unmount(mountpoint):
+                        return _fail(OSError("Не удалось размонтировать носитель"))
+                    mountpoint, should_unmount = _mountpoint_for(returned)
+                    if mountpoint is None:
+                        _await_card_clear(fs_uuid)
+                        raise
+                    devname = returned
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: карта вернулась "
+                          f"как {returned}, копирование продолжается", flush=True)
+                    _emit("copying", 0, total_bytes, f"Копирование ID {_label()}")
+        except DeviceLost as error:
+            # Носитель сброшен шиной или выдернут. Дальше читать нечего, а с
+            # источника ничего не удаляем: доехавшее останется и на карте.
+            msg = (f"Устройство отключилось или сброшено шиной: {friendly} — "
+                   f"копирование прервано, карта не изменена")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg} ({error})", flush=True)
+            # Не «ошибка», а «переподключение»: при сбросе порта карта
+            # возвращается через несколько секунд и продолжает работу. Красная
+            # вспышка на весь экран кричит оператору «сломалось», хотя ничего
+            # не сломалось. Не вернётся — плитка погаснет по своему сроку.
+            _emit("detached", 0, 0, "Устройство переподключается...")
+            if USE_RICH and progress_obj:
+                progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
+            if should_unmount:
+                _unmount(mountpoint)
+            return device_id, 0, 0
         except Exception as error:
             return _fail(error)
-        _repair_archive_ownership(dest_base, dest)
+        if _archive_path_allowed(dest):
+            _repair_archive_ownership(dest_base, dest)
 
+        stopped = _stop_requested()
         # Карту могли подменить не до копирования, а прямо во время него:
         # пути из backed_up тогда относятся к ушедшей карте, а удаление
         # пошло бы по совпадающим путям уже на новой.
-        same_device = _still_same_device()
-        if same_device:
-            # Only delete videos that were actually backed up successfully.
+        same_device = stopped or _still_same_device()
+        # При остановке сохраняем оригиналы до следующего полного копирования.
+        if not stopped and same_device:
             _delete_source_videos(mountpoint, backed_up)
 
-        if should_unmount:
-            _unmount(mountpoint)
+        if should_unmount and not _unmount(mountpoint):
+            _emit("error", copied_bytes, total_bytes, "Не удалось размонтировать носитель")
+            return device_id, copied_files, copied_bytes
 
         finished_at = datetime.now()
         if failed:
             msg = f"Ошибки: {friendly} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
             _emit("error", copied_bytes, total_bytes, f"Не скопировано: {failed} файл(ов)")
+        elif stopped:
+            msg = f"Копирование остановлено: {friendly} ({copied_files} файлов)"
+            _emit("stopped", copied_bytes, total_bytes, "Копирование остановлено")
         elif not same_device:
             msg = f"Носитель сменился: {friendly} — исходные файлы сохранены"
             _emit("error", copied_bytes, total_bytes, "Носитель сменился, файлы сохранены")
@@ -1350,7 +1958,7 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
             _emit("done", copied_bytes, total_bytes, f"Готово: ID {_label()}")
 
         if USE_RICH and progress_obj:
-            color = "green" if not failed and same_device else "red"
+            color = "red" if failed or not same_device else "yellow" if stopped else "green"
             progress_obj.update(task_id, description=f"[{color}]{msg}")
         else:
             print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
@@ -1370,6 +1978,10 @@ def copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_unm
 
         return device_id, copied_files, copied_bytes
     finally:
+        if friendly is not None:
+            _log_progress_cache.pop(friendly, None)
+        if is_linux:
+            _await_card_clear(fs_uuid or _get_filesystem_uuid(f"/dev/{devname}"))
         conn.close()
 
 
@@ -1379,6 +1991,18 @@ def copy_task_windows(drive_letter, progress_obj, task_id, progress_queue=None):
 
 
 def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
+    with _worker_guard(devname):
+        if _stop_requested():
+            return None, 0, 0
+        return _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue)
+
+
+def _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=None):
+    # Ту же карту уже доигрывает воркер, потерявший её при сбросе шины:
+    # второй на неё не поднимаем, иначе два потока полезут в одну папку.
+    if _card_is_awaited(_get_filesystem_uuid(f"/dev/{devname}")):
+        print(f"  Карта {devname} возвращается к прежней выгрузке", flush=True)
+        return 0, 0, 0
     should_unmount = False
     if not (mountpoint and os.path.ismount(mountpoint)):
         # The lsblk mountpoint captured at detection can be stale: the desktop
@@ -1392,6 +2016,8 @@ def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=N
         if existing:
             mountpoint = existing
         else:
+            if _stop_requested():
+                return None, 0, 0
             mp = _mount_device(devname)
             if mp is None:
                 if USE_RICH and progress_obj:
@@ -1401,6 +2027,7 @@ def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=N
                 return 0, 0, 0
             mountpoint = mp
             should_unmount = _is_own_mount(mp)
+    should_unmount = should_unmount or _is_own_mount(mountpoint)
     if _is_dest_path(mountpoint):
         # This drive hosts the backup destination — it is not a source to back
         # up, and it must STAY mounted: unmounting it here (and rmdir'ing the
@@ -1409,8 +2036,8 @@ def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=N
         # reported success while the real disk stayed empty.
         cfg_dest = _config_backup_dest()
         resolved_dest = get_dest_base()
-        if cfg_dest and os.path.isdir(resolved_dest):
-            ensure_dest_marker(resolved_dest)
+        if (cfg_dest and _dest_identity_matches(resolved_dest, _load_config())
+                and ensure_dest_marker(resolved_dest)):
             remember_configured_dest(resolved_dest, update_path=False)
         print(f"  Destination drive connected, keeping mounted: {mountpoint}", flush=True)
         if progress_queue is not None:
@@ -1420,14 +2047,39 @@ def copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=N
             except Exception:
                 pass
         return 0, 0, 0
+    if not should_unmount:
+        with _operations_lock:
+            _foreign_mounts.add(mountpoint)
     return copy_task(devname, mountpoint, devname, progress_obj, task_id, should_unmount, progress_queue)
 
 
 def _make_submit_fn(progress_queue=None):
+    def _run(dev, mountpoint, progress_obj, task_id):
+        if _safe_removal:
+            with _operations_lock:
+                _interrupted_devices.add(dev)
+            return None, 0, 0
+        try:
+            if platform.system() == "Windows":
+                return copy_task_windows(dev, progress_obj, task_id, progress_queue)
+            return copy_task_linux(dev, mountpoint, progress_obj, task_id, progress_queue)
+        except OSError as error:
+            with _operations_lock:
+                _interrupted_devices.add(dev)
+            if progress_queue is not None:
+                progress_queue.put_nowait((f"identity:{dev}", "", "error", 0, 0, str(error), dev))
+            return None, 0, 0
+
+    def _finished(future):
+        with _operations_lock:
+            _submitted_jobs.discard(future)
+
     def _submit(executor, dev, mountpoint, progress_obj, task_id):
-        if platform.system() == "Windows":
-            return executor.submit(copy_task_windows, dev, progress_obj, task_id, progress_queue)
-        return executor.submit(copy_task_linux, dev, mountpoint, progress_obj, task_id, progress_queue)
+        with _operations_lock:
+            future = executor.submit(_run, dev, mountpoint, progress_obj, task_id)
+            _submitted_jobs.add(future)
+            future.add_done_callback(_finished)
+            return future
     return _submit
 
 
@@ -1444,19 +2096,15 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     cfg_dest = _config_backup_dest()
     if cfg_dest:
         resolved_dest = get_dest_base()
-        if os.path.isdir(resolved_dest):
-            # Configs saved before the marker existed get stamped here, while
-            # the destination is actually reachable. Also backfill the
-            # filesystem UUID / relative path so the same disk is recognised
-            # even if native mode mounts it under /mnt/usb_backup later.
-            ensure_dest_marker(resolved_dest)
+        if (_dest_identity_matches(resolved_dest, _load_config())
+                and ensure_dest_marker(resolved_dest)):
             remember_configured_dest(resolved_dest, update_path=False)
         else:
             print(f"WARNING: backup destination is not available yet: {resolved_dest} "
                   f"(backups will fail until its disk is mounted)", flush=True)
 
     archive_root = get_dest_base()
-    if os.path.isdir(archive_root):
+    if not _load_config().get("_config_unreadable") and _archive_path_allowed(archive_root):
         _repair_archive_ownership(archive_root)
 
     print(f"USB Monitor | Platform: {system} | Workers: {MAX_WORKERS} | DB: {DB_PATH}", flush=True)
@@ -1473,13 +2121,40 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         known = get_removable_drives()
 
     _update_connected_devices(known)
+    if _safe_removal:
+        known = {} if is_linux else set()
+    # Метка файловой системы принятых карт. По ней после сбоя шины отличаем
+    # вернувшуюся карту от новой, вставленной под тем же именем устройства.
+    known_fs = {}
     for dev in sorted(known):
         mp = known[dev] if is_linux else None
+        if is_linux:
+            known_fs[dev] = _get_filesystem_uuid(f"/dev/{dev}")
         print(f"  Connected: {dev}", flush=True)
         active[dev] = submit(executor, dev, mp, None, None)
 
     # dev → timestamp of first consecutive miss; cleared when device reappears
     pending_removals = {}
+    # Когда из опроса пропала вся линейка разом; None — шина в порядке.
+    bus_glitch_since = None
+
+    def _forget(dev):
+        """Подтвердить отключение: забыть устройство и сообщить интерфейсу."""
+        with _operations_lock:
+            _interrupted_devices.discard(dev)
+        pending_removals.pop(dev, None)
+        known_fs.pop(dev, None)
+        _release_device_id(dev)
+        if is_linux:
+            known.pop(dev, None)
+        else:
+            known.discard(dev)
+        dn = os.path.basename(dev)
+        if progress_queue is not None:
+            try:
+                progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
+            except Exception:
+                pass
 
     try:
         while True:
@@ -1497,10 +2172,51 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             now_t = time.time()
             current = _get_linux_partitions() if is_linux else get_removable_drives()
-            _update_connected_devices(current)
 
             known_keys = set(known) if is_linux else known
             current_keys = set(current) if is_linux else current
+
+            # Из опроса разом пропали все, кто был. Это сбой шины, а не
+            # отключение всей линейки руками: пока ждём возврата, состояние
+            # не публикуем (иначе воркеры решат, что их карты вынули) и
+            # отключений не подтверждаем.
+            if len(known_keys) > 1 and not (current_keys & known_keys):
+                if bus_glitch_since is None:
+                    bus_glitch_since = now_t
+                    print(f"  Из опроса пропала вся линейка ({len(known_keys)} устройств) — "
+                          f"ждём возврата шины", flush=True)
+                    # Интерфейс должен знать про сбой: пока шина не вернулась,
+                    # гасить плитки нельзя — карты вернутся под другими именами.
+                    if progress_queue is not None:
+                        try:
+                            progress_queue.put_nowait(("_bus_", "glitch", "", 0, 0, "", ""))
+                        except Exception:
+                            pass
+                if now_t - bus_glitch_since < BUS_GLITCH_GRACE:
+                    continue
+            elif bus_glitch_since is not None:
+                print("  Шина вернулась, устройства на месте", flush=True)
+                bus_glitch_since = None
+                if progress_queue is not None:
+                    try:
+                        progress_queue.put_nowait(("_bus_", "ok", "", 0, 0, "", ""))
+                    except Exception:
+                        pass
+                # «Сбоем шины» считается и честная замена всей линейки: оператор
+                # вынул все камеры и за время ожидания вставил новые, а ядро
+                # выдало им те же имена. Такие карты — новые, а не вернувшиеся:
+                # иначе их не выгрузили бы, а плитки показывали бы старые.
+                if is_linux:
+                    for dev in sorted(current_keys & set(known)):
+                        was = known_fs.get(dev)
+                        now = _get_filesystem_uuid(f"/dev/{dev}")
+                        if was and now and was != now:
+                            print(f"  Под именем {dev} уже другая карта — "
+                                  f"прежняя отключена", flush=True)
+                            _forget(dev)
+                    known_keys = set(known)
+
+            _update_connected_devices(current)
 
             # Devices missing from this poll but still in known
             candidate_removed = known_keys - current_keys
@@ -1521,38 +2237,28 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                                  if now_t - t >= grace}
 
             for dev in confirmed_removed:
-                pending_removals.pop(dev, None)
-                _release_device_id(dev)
-                if is_linux:
-                    known.pop(dev, None)
-                else:
-                    known.discard(dev)
-                # active не трогаем: сборщик в начале тика сам снимет
-                # завершившийся future вместе с его result(). Пока воркер жив,
-                # он пишет и удаляет в той же точке монтирования, и то же имя
-                # устройства, доставшееся новой флешке, не должно поднять
-                # второго такого же.
-                dn = os.path.basename(dev)
-                if progress_queue is not None:
-                    try:
-                        progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
-                    except Exception:
-                        pass
+                _forget(dev)
 
             # New devices: present in current but not yet in known
-            new_devices = sorted(current_keys - known_keys)
+            with _operations_lock:
+                _interrupted_devices.intersection_update(current_keys)
+                retry_devices = _interrupted_devices & current_keys - set(active)
+            new_devices = sorted(((current_keys - known_keys) | retry_devices) - set(active))
+
+            if _safe_removal and new_devices:
+                # Пока идёт извлечение, новые карты не трогаем: оператор как
+                # раз ими и занят.
+                new_devices = []
 
             for dev in new_devices:
                 if _offline_hold:
                     print(f"  New USB held for offline update: {dev}", flush=True)
                     continue
-                if active.get(dev) is not None:
-                    # Прежний воркер с этим именем ещё копирует — подождём
-                    # следующего опроса, устройство останется «новым».
-                    print(f"  Waiting for previous worker: {dev}", flush=True)
-                    continue
+                with _operations_lock:
+                    _interrupted_devices.discard(dev)
                 if is_linux:
                     known[dev] = current[dev]
+                    known_fs[dev] = _get_filesystem_uuid(f"/dev/{dev}")
                 else:
                     known.add(dev)
                 pending_removals.pop(dev, None)
@@ -1566,7 +2272,10 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         _update_connected_devices(set())
         for dev in known:
             _release_device_id(dev)
-        executor.shutdown(wait=False)
+        was_paused = _safe_removal
+        set_safe_removal(True)
+        executor.shutdown(wait=True)
+        set_safe_removal(was_paused)
 
 
 if __name__ == "__main__":

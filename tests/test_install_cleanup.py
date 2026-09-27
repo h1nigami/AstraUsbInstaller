@@ -1,6 +1,6 @@
-"""Проверка блока install_native.sh, который выключает станцию BestCam.
+"""Проверка сохранности отдельной станции BestCam при установке Python.
 
-Функция вытаскивается из установщика и запускается в песочнице: systemctl,
+Блок очистки вытаскивается из установщика и запускается в песочнице: systemctl,
 dpkg и apt-get подменены заглушками, а все пути уводятся под временный
 каталог переменной ASTRA_ROOT, поэтому тест не трогает настоящую систему.
 """
@@ -16,7 +16,6 @@ import unittest
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INSTALLER = os.path.join(REPO, "install_native.sh")
-FUNC = "remove_bestcam_station"
 
 SYSTEMCTL = """#!/bin/sh
 echo "$@" >> "$LOG"
@@ -24,18 +23,8 @@ echo "$@" >> "$LOG"
 exit 0
 """
 
-# Пакета в системе нет: так ставились v2.0 и v2.0.1, из архива.
-DPKG_MISSING = """#!/bin/sh
-exit 1
-"""
-
 DPKG_PRESENT = """#!/bin/sh
 exit 0
-"""
-
-# Ни systemd, ни dpkg: так выглядит установка в контейнере.
-SYSTEMCTL_MISSING = """#!/bin/sh
-exit 127
 """
 
 APT_GET = """#!/bin/sh
@@ -61,6 +50,12 @@ def working_bash():
 BASH = working_bash()
 
 
+def extract_cleanup():
+    """Выполнить только очистку, исключив установку пакетов и служб."""
+    text = pathlib.Path(INSTALLER).read_text(encoding="utf-8")
+    return text.split("# --- 2.", 1)[1].split("# --- 3.", 1)[0].split("\n", 1)[1]
+
+
 def extract_named_function(name):
     """Тело функции из установщика — без остального скрипта: он ставит
     систему целиком и в тесте выполняться не должен."""
@@ -69,12 +64,8 @@ def extract_named_function(name):
     return match.group(0) if match else ""
 
 
-def extract_function():
-    return extract_named_function(FUNC)
-
-
 @unittest.skipUnless(BASH, "нужен работающий bash")
-class RemoveStationTest(unittest.TestCase):
+class PreserveStationTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
@@ -100,7 +91,7 @@ class RemoveStationTest(unittest.TestCase):
         binaries = os.path.join(self.root, "bin")
         os.makedirs(binaries, exist_ok=True)
         for name, body in (("systemctl", systemctl or SYSTEMCTL), ("dpkg", dpkg),
-                           ("apt-get", APT_GET)):
+                           ("apt-get", APT_GET), ("rm", APT_GET), ("docker", APT_GET)):
             path = os.path.join(binaries, name)
             with open(path, "w", newline="\n", encoding="utf-8") as f:
                 f.write(body)
@@ -113,12 +104,12 @@ class RemoveStationTest(unittest.TestCase):
             # set -e как в самом установщике: без него оборванная команда
             # внутри функции осталась бы в тесте незамеченной.
             f.write('set -e\nPATH="$PWD/bin:$PATH"\n'
-                    + extract_function() + f"\n{FUNC}\n")
+                    + extract_cleanup() + "\n")
 
         result = subprocess.run(
             [BASH, "cleanup.sh"], cwd=self.root, capture_output=True,
             text=True, env={**os.environ, "ASTRA_ROOT": self.root,
-                            "LOG": self.log, "SUDO": ""})
+                            "LOG": self.log, "SUDO": "", "APP_DIR": os.path.join(self.root, "python")})
         self.assertEqual(result.returncode, 0, result.stderr)
         return result
 
@@ -126,40 +117,27 @@ class RemoveStationTest(unittest.TestCase):
         log = pathlib.Path(self.log)
         return log.read_text(encoding="utf-8") if log.exists() else ""
 
-    def test_manual_install_is_disabled_and_kept(self):
-        self.run_cleanup(DPKG_MISSING)
-
-        leftovers = [n for n in os.listdir(os.path.dirname(self.app))
-                     if n.startswith("astra-usb-avalonia.removed.")]
-        self.assertEqual(len(leftovers), 1, "каталог станции должен остаться под .removed")
-        kept = os.path.join(os.path.dirname(self.app), leftovers[0], "data", "station.db")
-        self.assertTrue(os.path.exists(kept), "база станции не должна пропадать")
-        self.assertFalse(os.path.exists(self.app))
-        self.assertEqual(os.listdir(self.units), [])
-        self.assertFalse(os.path.exists(self.rule))
-        self.assertIn("disable --now astra-usb-avalonia.service", self.calls())
-
-    def test_package_is_removed_through_apt(self):
+    def test_python_install_preserves_independent_station(self):
         self.run_cleanup(DPKG_PRESENT)
-
-        self.assertIn("remove -y bestcam-station", self.calls())
-
-    def test_survives_system_without_systemctl(self):
-        self.run_cleanup(DPKG_MISSING, systemctl=SYSTEMCTL_MISSING)
-
-        leftovers = [n for n in os.listdir(os.path.dirname(self.app))
-                     if n.startswith("astra-usb-avalonia.removed.")]
-        self.assertEqual(len(leftovers), 1, "без systemd каталог всё равно убирается")
-
-    def test_station_absent_changes_nothing(self):
-        shutil.rmtree(self.app)
-        for unit in os.listdir(self.units):
-            os.remove(os.path.join(self.units, unit))
-
-        self.run_cleanup(DPKG_MISSING)
-
-        self.assertTrue(os.path.exists(self.rule), "чужого правила udev тут нет — не трогаем")
+        self.assertTrue(os.path.exists(os.path.join(self.app, "data", "station.db")))
+        self.assertTrue(os.path.exists(self.rule))
+        self.assertEqual(len(os.listdir(self.units)), 3)
+        self.assertNotIn("remove", self.calls())
         self.assertNotIn("disable", self.calls())
+        self.assertNotIn("astra-usb-avalonia", self.calls())
+
+
+def _stub_trust_tools(root):
+    """Заглушки chown/runuser/gio: пишут вызовы в лог вместо системы."""
+    bin_dir = os.path.join(root, "bin")
+    os.makedirs(bin_dir, exist_ok=True)
+    log = os.path.join(root, "calls.log")
+    for name in ("chown", "runuser", "gio"):
+        path = os.path.join(bin_dir, name)
+        with open(path, "w", newline="\n") as f:
+            f.write(f'#!/bin/sh\necho "{name} $*" >> "{log}"\n')
+        os.chmod(path, 0o755)
+    return log
 
 
 @unittest.skipUnless(BASH, "нужен работающий bash")
@@ -212,6 +190,17 @@ class DesktopShortcutTest(unittest.TestCase):
         self.run_shortcut({"SUDO_USER": "operator"})
 
         self.assertEqual(self.desktops(), [os.path.join(home, "BestCam-USB.desktop")])
+
+    def test_shortcut_is_given_to_user_and_trusted(self):
+        home = os.path.join(self.root, "home", "operator", "Desktop")
+        os.makedirs(home)
+        log = _stub_trust_tools(self.root)
+        self.run_shortcut({"SUDO_USER": "operator"})
+
+        calls = pathlib.Path(log).read_text(encoding="utf-8")
+        shortcut = os.path.join(home, "BestCam-USB.desktop")
+        self.assertIn(f"chown operator: {shortcut}", calls)
+        self.assertIn(f"runuser -u operator -- gio set {shortcut} metadata::trusted true", calls)
 
     def test_no_desktop_changes_nothing(self):
         self.run_shortcut()
@@ -268,6 +257,17 @@ class AvaloniaDesktopShortcutTest(unittest.TestCase):
         os.makedirs(desktop)
         self.run_shortcut({"SUDO_USER": "operator"})
         self.assertEqual(self.shortcuts(), [os.path.join(desktop, "BestCam-Station.desktop")])
+
+    def test_shortcut_is_given_to_user_and_trusted(self):
+        desktop = os.path.join(self.root, "home", "operator", "Desktop")
+        os.makedirs(desktop)
+        log = _stub_trust_tools(self.root)
+        self.run_shortcut({"SUDO_USER": "operator"})
+
+        calls = pathlib.Path(log).read_text(encoding="utf-8")
+        shortcut = os.path.join(desktop, "BestCam-Station.desktop")
+        self.assertIn(f"chown operator: {shortcut}", calls)
+        self.assertIn(f"runuser -u operator -- gio set {shortcut} metadata::trusted true", calls)
 
     def test_no_desktop_changes_nothing(self):
         self.run_shortcut()

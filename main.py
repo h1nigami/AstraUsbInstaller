@@ -3,6 +3,8 @@ import sys
 
 
 def main():
+    from usb_monitor import setup_file_logging
+    setup_file_logging()
     if os.environ.get("DISPLAY") or sys.platform == "win32":
         try:
             from gui import launch

@@ -6,12 +6,14 @@ Pure stdlib (unittest) so they run without pytest or a GUI/X11 display:
     python3 tests/test_usb_monitor.py
 """
 
+import errno
 import os
 import sys
 import time
 import tempfile
 import unittest
 from datetime import datetime
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -127,6 +129,7 @@ class ScanDriveTest(unittest.TestCase):
 
 
 class CopyAndDeleteTest(unittest.TestCase):
+    @mock.patch.object(um, "_require_archive_device", new=lambda device: None)
     def _copy(self, src, dst):
         return um._copy_files(src, dst, "20260630_120000", 1, 0, 0,
                               None, None, time.time())
@@ -178,7 +181,6 @@ class CopyAndDeleteTest(unittest.TestCase):
 
     def test_failed_copy_video_is_preserved(self):
         """End-to-end: a video that fails to copy is not deleted from source."""
-        from unittest import mock
         with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
             good = os.path.join(src, "good.mp4")
             bad = os.path.join(src, "bad.mp4")
@@ -187,14 +189,14 @@ class CopyAndDeleteTest(unittest.TestCase):
             with open(bad, "wb") as f:
                 f.write(b"bad")
 
-            real_copy2 = um.shutil.copy2
+            real_copy = um._copy_archive_file
 
-            def flaky_copy2(s, d, *a, **kw):
+            def flaky_copy(s, d, *a, **kw):
                 if os.path.basename(s) == "bad.mp4":
                     raise OSError("simulated copy failure")
-                return real_copy2(s, d, *a, **kw)
+                return real_copy(s, d, *a, **kw)
 
-            with mock.patch.object(um.shutil, "copy2", side_effect=flaky_copy2):
+            with mock.patch.object(um, "_copy_archive_file", side_effect=flaky_copy):
                 _cf, _cb, backed_up, failed = self._copy(src, dst)
 
             um._delete_source_videos(src, backed_up)
@@ -207,3 +209,164 @@ class CopyAndDeleteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+@mock.patch.object(um, "_require_archive_device", new=lambda device: None)
+class BusResetTest(unittest.TestCase):
+    """Хаб сбрасывает соседние порты при выдёргивании устройства, и ядро
+    отдаёт ошибку ввода-вывода на каждом чтении. Молотить по всей карте в
+    таком состоянии бессмысленно — надо быстро остановиться и сказать это."""
+
+    def _card(self, root, count):
+        os.makedirs(os.path.join(root, "DCIM"), exist_ok=True)
+        names = []
+        for i in range(count):
+            path = os.path.join(root, "DCIM", f"A11_7_000_2026091812000{i}_000{i}.mp4")
+            with open(path, "wb") as f:
+                f.write(b"x" * 16)
+            names.append(path)
+        return names
+
+    def _copy_with_failures(self, src, dst, failing):
+        """failing(path) -> True, если чтение этого файла падает как при сбросе."""
+        real_copy = um._copy_archive_file
+
+        def fake_copy2(a, b, *args, **kwargs):
+            if failing(a):
+                raise OSError(errno.EIO, "Input/output error")
+            return real_copy(a, b, *args, **kwargs)
+
+        with mock.patch.object(um, "_copy_archive_file", fake_copy2):
+            return um._copy_files(src, dst, "20260918_120000", 1, 0, 0,
+                                  None, None, time.time())
+
+    def test_device_lost_aborts_instead_of_grinding(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            self._card(src, 40)
+            with self.assertRaises(um.DeviceLost):
+                self._copy_with_failures(src, dst, lambda p: True)
+
+    def test_single_bad_file_does_not_abort(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            names = self._card(src, 10)
+            bad = names[3]
+            copied, _bytes, backed_up, failed = self._copy_with_failures(
+                src, dst, lambda p: p == bad)
+            self.assertEqual(failed, 1, "один сбойный файл — не повод бросать карту")
+            self.assertEqual(copied, 9)
+            self.assertNotIn(bad, backed_up, "несостоявшаяся копия не должна удаляться")
+
+
+@mock.patch.object(um, "_require_archive_device", new=lambda device: None)
+class SourceGoneTest(BusResetTest):
+    """Выдернутый носитель даёт не ошибку ввода-вывода, а «нет такого файла»:
+    точка монтирования пустеет. Перебирать после этого всю карту незачем."""
+
+    def test_pulled_card_aborts(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            self._card(src, 30)
+            dcim = os.path.join(src, "DCIM")
+            state = {"n": 0}
+            real_copy = um._copy_archive_file
+
+            def fake_copy2(a, b, *args, **kwargs):
+                state["n"] += 1
+                if state["n"] <= 2:
+                    return real_copy(a, b, *args, **kwargs)
+                # Карту выдернули: точка монтирования опустела, и дальше
+                # каждый файл отвечает «нет такого файла».
+                if os.path.isdir(dcim):
+                    um.shutil.rmtree(dcim)
+                raise FileNotFoundError(errno.ENOENT, "No such file or directory", a)
+
+            with mock.patch.object(um, "_copy_archive_file", fake_copy2):
+                with self.assertRaises(um.DeviceLost):
+                    um._copy_files(src, dst, "20260918_120000", 1, 0, 0,
+                                   None, None, time.time())
+
+    def test_missing_single_file_does_not_abort(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            names = self._card(src, 10)
+            bad = names[2]
+
+            def fake(path):
+                raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
+
+            copied, _bytes, _backed, failed = self._copy_with_failures(
+                src, dst, lambda p: p == bad)
+            self.assertEqual(failed, 1, "пропавший файл при живой карте — не потеря носителя")
+            self.assertEqual(copied, 9)
+
+
+class CardReturnTest(unittest.TestCase):
+    """Карту сбросило шиной — воркер ждёт её возвращения и продолжает работу,
+    а второй воркер на ту же карту не поднимается."""
+
+    def setUp(self):
+        um._awaiting_cards.clear()
+        self.addCleanup(um._awaiting_cards.clear)
+
+    def test_awaited_card_is_not_picked_up_twice(self):
+        um._await_card_register("C23E-1A23", 60)
+        self.assertTrue(um._card_is_awaited("C23E-1A23"))
+        self.assertFalse(um._card_is_awaited("DFDD-190B"))
+
+    def test_expired_wait_releases_card(self):
+        um._await_card_register("C23E-1A23", 60)
+        um._awaiting_cards["C23E-1A23"] = time.time() - 1
+        self.assertFalse(um._card_is_awaited("C23E-1A23"), "просроченное ожидание не держит карту")
+        self.assertNotIn("C23E-1A23", um._awaiting_cards)
+
+    def test_card_without_uuid_is_never_awaited(self):
+        um._await_card_register(None, 60)
+        self.assertFalse(um._card_is_awaited(None))
+        self.assertEqual(um._awaiting_cards, {})
+
+    def test_wait_returns_new_devname_of_same_card(self):
+        with mock.patch.object(um, "_get_linux_partitions", lambda: {"sdf": None, "sdg": None}), \
+             mock.patch.object(um, "_get_filesystem_uuid",
+                               lambda dev: "C23E-1A23" if dev == "/dev/sdg" else "OTHER"):
+            self.assertEqual(um._wait_for_card("C23E-1A23", timeout=5), "sdg")
+
+    def test_wait_gives_up_when_card_does_not_return(self):
+        with mock.patch.object(um, "_get_linux_partitions", lambda: {}), \
+             mock.patch.object(um, "_get_filesystem_uuid", lambda dev: None):
+            self.assertIsNone(um._wait_for_card("C23E-1A23", timeout=0.1))
+
+
+@mock.patch.object(um, "_require_archive_device", new=lambda device: None)
+class SafeRemovalTest(unittest.TestCase):
+    """Кнопка безопасного извлечения: копирование встаёт между файлами,
+    начатый файл дописывается целиком, обрывков в архиве не остаётся."""
+
+    def tearDown(self):
+        um.set_safe_removal(False)
+
+    def test_copying_stops_between_files(self):
+        with tempfile.TemporaryDirectory() as src, tempfile.TemporaryDirectory() as dst:
+            for i in range(6):
+                with open(os.path.join(src, f"clip{i}.mp4"), "wb") as f:
+                    f.write(b"x" * 8)
+            real_copy = um._copy_archive_file
+            done = {"n": 0}
+
+            def fake_copy2(a, b, *args, **kwargs):
+                done["n"] += 1
+                if done["n"] == 2:
+                    um.set_safe_removal(True)   # оператор нажал кнопку
+                return real_copy(a, b, *args, **kwargs)
+
+            with mock.patch.object(um, "_copy_archive_file", fake_copy2):
+                copied, _bytes, backed_up, failed = um._copy_files(
+                    src, dst, "20260918_120000", 1, 0, 0, None, None, time.time())
+
+            self.assertEqual(failed, 0, "остановка — не отказ")
+            self.assertEqual(copied, 2, "копирование встало сразу после текущего файла")
+            self.assertEqual(len(backed_up), 2)
+            for path in backed_up:
+                name = os.path.basename(path)
+                self.assertEqual(os.path.getsize(os.path.join(dst, name)), 8,
+                                 "файл дописан целиком")
+
+    def test_flag_is_off_by_default(self):
+        self.assertFalse(um.safe_removal_active())

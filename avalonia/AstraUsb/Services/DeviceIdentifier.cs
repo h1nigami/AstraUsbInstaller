@@ -15,63 +15,55 @@ public static class DeviceIdentifier
         var recordingId = Directory.Exists(Path.Combine(mountPoint, "DCIM"))
             ? ReadRecordingId(mountPoint)
             : null;
-        // Журнал главнее: имена старых записей хранят прежний номер, пока
-        // регистратор не перезапишет карту, а журнал ведёт уже новый.
+        // Расхождение значит, что карту переставили в другой регистратор или
+        // номер сменили: угадывать нельзя, архив ушёл бы в чужую папку.
+        if (logId is > 0 && recordingId is > 0 && logId != recordingId)
+            throw new InvalidDataException($"Разные ID в журнале и записях регистратора: {logId} и {recordingId}");
         return logId ?? recordingId ?? throw new InvalidDataException("ID регистратора не найден");
     }
 
+    /// <summary>
+    /// Номер из последней строки #ID самого свежего журнала. Более старые
+    /// журналы не читаются: их номер мог уже смениться.
+    /// </summary>
     private static long? ReadLogId(string mountPoint)
     {
         var directory = Path.Combine(mountPoint, "LOG");
         if (!Directory.Exists(directory))
             return null;
 
-        FileInfo[] files;
         try
         {
             // Свежий журнал определяем по дате изменения, а не по имени:
             // у части прошивок имена не сортируются по времени.
-            files = new DirectoryInfo(directory).EnumerateFiles()
-                .Where(file => file.Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(file => file.LastWriteTimeUtc)
-                .ThenByDescending(file => file.Name, StringComparer.Ordinal)
-                .ToArray();
+            var file = new DirectoryInfo(directory).EnumerateFiles()
+                .Where(info => info.Extension.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(info => info.LastWriteTimeUtc)
+                .ThenByDescending(info => info.Name, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (file is null)
+                return null;
+
+            // Читаем построчно и строго: битый журнал не повод брать номер
+            // из записей, это ошибка, которую должен увидеть оператор.
+            using var reader = new StreamReader(file.FullName, new UTF8Encoding(false, true),
+                detectEncodingFromByteOrderMarks: false);
+            long? id = null;
+            while (reader.ReadLine() is { } line)
+            {
+                var position = line.IndexOf("#ID:", StringComparison.Ordinal);
+                if (position < 0)
+                    continue;
+                id = ParseId(line[(position + 4)..].Split((char[]?)null,
+                    StringSplitOptions.RemoveEmptyEntries).FirstOrDefault());
+            }
+            return id;
         }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+                                        or DecoderFallbackException)
         {
             throw new IOException("Не удалось прочитать журнал регистратора", error);
         }
-
-        foreach (var file in files)
-        {
-            string[] lines;
-            try
-            {
-                // Битые байты не повод терять номер: строка с #ID обычно цела.
-                // Метку порядка байтов не угадываем: FF FE в мусоре иначе
-                // превратил бы весь файл в UTF-16.
-                using var reader = new StreamReader(file.FullName, new UTF8Encoding(false, false),
-                    detectEncodingFromByteOrderMarks: false);
-                lines = reader.ReadToEnd().Split('\n');
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                continue;
-            }
-
-            // Последняя запись #ID в файле самая свежая.
-            for (var index = lines.Length - 1; index >= 0; index--)
-            {
-                var position = lines[index].IndexOf("#ID:", StringComparison.Ordinal);
-                if (position < 0)
-                    continue;
-                var value = lines[index][(position + 4)..].Split((char[]?)null,
-                    StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                if (ParseId(value) is { } id)
-                    return id;
-            }
-        }
-        return null;
     }
 
     /// <summary>Номер из самой свежей записи, где он прописан.</summary>
