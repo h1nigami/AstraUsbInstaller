@@ -18,6 +18,7 @@ class StoppedTileTest(unittest.TestCase):
         app.progress_queue = queue.Queue()
         app.workers_data = {}
         app.port_assignment = {}
+        app._overflow_status = mock.Mock()
         app.C = {"bg_surface": "gray", "accent_ok": "green"}
         preview, status = mock.Mock(), mock.Mock()
         app.ports = [{"device_id": None, "preview": preview, "status": status}]

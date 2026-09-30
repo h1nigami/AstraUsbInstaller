@@ -26,6 +26,7 @@ except ImportError:
     _HAVE_PIL = False
 
 POLL_MS = 200
+MAX_BAY_COUNT = 12
 # Сколько плитка ждёт возвращения устройства, прежде чем погаснуть.
 # Фиксированный срок тут не работает: после сбоя шины карты возвращаются
 # кто через десять секунд, кто через минуту — станция успевает опознать их
@@ -89,6 +90,11 @@ def _detached_too_long(workers_data, now, pulled_grace=None, max_grace=None):
         if waited > ceiling or (not returning and waited > quick):
             gone.append(did)
     return gone
+
+
+def _get_bay_count(cfg):
+    count = cfg.get("bay_count", 10)
+    return count if type(count) is int and 1 <= count <= MAX_BAY_COUNT else 10
 
 
 def _is_busy(workers_data):
@@ -160,6 +166,7 @@ class App:
         self.public_tab_index = 0
 
         cfg = _load_config()
+        self._bay_count = _get_bay_count(cfg)
         self._lock_timeout = int(cfg.get("lock_timeout_minutes", 10)) * 60
         self._last_activity = time.time()
         self._cleanup_enabled = bool(cfg.get("auto_cleanup_enabled", False))
@@ -600,16 +607,24 @@ class App:
         self._refresh_devices()
 
     def _build_workers_tab(self, nb):
-        f = ttk.Frame(nb)
-        nb.add(f, text="Загрузка")
+        self._workers_tab = ttk.Frame(nb)
+        nb.add(self._workers_tab, text="Загрузка")
+        self._build_ports()
 
+    def _build_ports(self):
+        for child in self._workers_tab.winfo_children():
+            child.destroy()
         self.ports = []
+        self.port_assignment.clear()
+        self._overflow_status = tk.StringVar(self.root)
+        ttk.Label(self._workers_tab, textvariable=self._overflow_status,
+                  foreground=self.C["accent_warn"], wraplength=960).pack(fill="x", padx=20)
 
-        grid = ttk.Frame(f)
+        grid = ttk.Frame(self._workers_tab)
         grid.pack(fill="both", expand=True, padx=10, pady=10)
 
-        rows, cols = 3, 4
-        for i in range(rows * cols):
+        cols = min(self._bay_count, 4)
+        for i in range(self._bay_count):
             r, c = divmod(i, cols)
             cell = tk.Frame(grid, bg=self.C["border"], bd=0)
             cell.grid(row=r, column=c, padx=10, pady=10, sticky="nsew")
@@ -629,16 +644,23 @@ class App:
 
             self.ports.append({"frame": cell, "preview": preview, "status": status, "device_id": None})
 
-        for i in range(10, rows * cols):
-            self.ports[i]["frame"].grid_remove()
+        self._refresh_workers()
 
     def _build_settings_tab(self, nb):
-        f = ttk.Frame(nb)
-        nb.add(f, text="Настройки")
+        tab = ttk.Frame(nb)
+        nb.add(tab, text="Настройки")
+        canvas = tk.Canvas(tab, bg=self.C["bg_app"], highlightthickness=0, height=1)
+        scrollbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(fill="both", expand=True)
+        f = ttk.Frame(canvas)
+        window = canvas.create_window(0, 0, window=f, anchor="nw")
+        f.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
 
-        # Две колонки. В один столбец пять блоков просят 805 пикселей, а на
-        # док-станции вкладке достаётся 440: автоочистка и «О программе»
-        # оказывались за нижним краем и были недостижимы.
+        # Две колонки с прокруткой, чтобы все настройки были доступны
+        # на небольшом экране станции.
         f.columnconfigure(0, weight=1, uniform="settings")
         f.columnconfigure(1, weight=1, uniform="settings")
         left = ttk.Frame(f)
@@ -666,6 +688,13 @@ class App:
         ttk.Button(frame, text="Сменить пароль", command=self._change_password).pack(anchor="w")
 
         self._refresh_pw_status()
+
+        bays_frame = ttk.LabelFrame(left, text=f"Количество гнёзд (1-{MAX_BAY_COUNT})", padding=10)
+        bays_frame.pack(fill="x", padx=10, pady=5)
+        self._bay_count_var = tk.StringVar(value=str(self._bay_count))
+        ttk.Spinbox(bays_frame, from_=1, to=MAX_BAY_COUNT, textvariable=self._bay_count_var,
+                    width=6).pack(side="left")
+        ttk.Button(bays_frame, text="Сохранить", command=self._save_bay_count).pack(side="left", padx=6)
 
         reset_frame = ttk.LabelFrame(right, text="Заводской сброс", padding=10)
         reset_frame.pack(fill="x", padx=10, pady=5)
@@ -930,6 +959,25 @@ class App:
             return
         self._lock_timeout = minutes * 60
         self._refresh_timeout_status()
+
+    def _save_bay_count(self):
+        try:
+            count = int(self._bay_count_var.get().strip())
+            if not 1 <= count <= MAX_BAY_COUNT:
+                raise ValueError
+        except ValueError:
+            messagebox.showwarning("Ошибка", f"Введите целое число гнёзд от 1 до {MAX_BAY_COUNT}")
+            return
+        if count < len(self.workers_data):
+            messagebox.showwarning(
+                "Гнёзда заняты", "Сначала извлеките лишние регистраторы, затем уменьшите количество гнёзд.")
+            return
+        if not _update_config({"bay_count": count}):
+            messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
+            return
+        self._bay_count = count
+        self._bay_count_var.set(str(count))
+        self._build_ports()
 
     def _save_cleanup_settings(self):
         try:
@@ -1778,9 +1826,16 @@ class App:
             pass
 
     def _refresh_workers(self):
-        tracked = set()
+        tracked = set(self.workers_data)
+        for port in self.ports:
+            did = port["device_id"]
+            if did is not None and did not in tracked:
+                port["device_id"] = None
+                self.port_assignment.pop(did, None)
+                port["preview"].configure(text="Простой", bg=self.C["accent"])
+                port["status"].configure(text="Нет передачи данных")
+
         for dev_id, data in self.workers_data.items():
-            tracked.add(dev_id)
             state = data["state"]
             if dev_id in self.port_assignment:
                 pi = self.port_assignment[dev_id]
@@ -1825,13 +1880,10 @@ class App:
             port["preview"].configure(text=preview_text, bg=bg)
             port["status"].configure(text=status_text)
 
-        for pi, port in enumerate(self.ports):
-            did = port["device_id"]
-            if did is not None and did not in tracked:
-                port["device_id"] = None
-                self.port_assignment.pop(did, None)
-                port["preview"].configure(text="Простой", bg=self.C["accent"])
-                port["status"].configure(text="Нет передачи данных")
+        self._overflow_status.set(
+            f"Подключено {len(tracked)} регистраторов, показано {len(self.ports)}. "
+            "Увеличьте количество гнёзд в настройках."
+            if len(tracked) > len(self.ports) else "")
 
     def _fmt_size(self, b):
         for unit in ("B", "KB", "MB", "GB", "TB"):
