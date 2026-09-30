@@ -18,6 +18,12 @@ import usb_monitor as um
 
 class CameraSimulationTest(unittest.TestCase):
     def test_ten_unique_device_ids_copy_to_ten_separate_folders(self):
+        self._simulate_ten_cameras(10)
+
+    def test_eight_bays_do_not_limit_ten_backups(self):
+        self._simulate_ten_cameras(8)
+
+    def _simulate_ten_cameras(self, bay_count):
         with tempfile.TemporaryDirectory() as directory, ExitStack() as patches:
             root = Path(directory)
             sources = [root / f"camera-{n}" for n in range(10)]
@@ -60,6 +66,7 @@ class CameraSimulationTest(unittest.TestCase):
             patches.enter_context(mock.patch.object(um.platform, "system", return_value="Linux"))
             patches.enter_context(mock.patch.object(um.os.path, "ismount", return_value=True))
             patches.enter_context(mock.patch.object(um.subprocess, "run"))
+            self.assertTrue(um.update_config({"bay_count": bay_count}))
 
             progress = queue.Queue()
             stop = threading.Event()
@@ -81,8 +88,9 @@ class CameraSimulationTest(unittest.TestCase):
                 gui.workers_data = {}
                 gui.port_assignment = {}
                 gui.C = dict(accent="blue", accent_warn="orange", accent_ok="green", bg_surface="black")
+                gui._overflow_status = gui_module.tk.StringVar(master=gui_module.tk.Tcl())
                 gui.ports = [{"device_id": None, "preview": mock.Mock(), "status": mock.Mock()}
-                             for _ in range(10)]
+                             for _ in range(gui_module._get_bay_count(um._load_config()))]
                 gui.root = mock.Mock()
                 gui.mon_status = mock.Mock()
                 patches.enter_context(mock.patch.object(gui_module, "touch_copying_marker"))
@@ -126,7 +134,10 @@ class CameraSimulationTest(unittest.TestCase):
                     self.assertEqual(hashlib.sha256(backup.read_bytes()).hexdigest(), expected[n])
                     self.assertFalse((source / "DCIM" / name).exists())
                 if gui is not None:
-                    self.assertEqual(len(gui.port_assignment), 10)
+                    self.assertEqual(len(gui.port_assignment), bay_count)
+                    if bay_count == 8:
+                        self.assertIn("10", gui._overflow_status.get())
+                        self.assertIn("8", gui._overflow_status.get())
                     self.assertTrue(all(data["device"] == str(device_id)
                                         for device_id, data in gui.workers_data.items()))
                     self.assertTrue(all(isinstance(device_id, int)

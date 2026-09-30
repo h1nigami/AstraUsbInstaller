@@ -115,7 +115,8 @@ class ReviewGuiTest(unittest.TestCase):
             with open(path, 'w') as stream:
                 stream.write('{broken')
             app = gui.App.__new__(gui.App)
-            app.C = {'brand': 'blue', 'fg_muted': 'gray'}
+            app.C = {'brand': 'blue', 'fg_muted': 'gray', 'bg_app': 'black'}
+            app._bay_count = 10
             app._lock_timeout = 600
             app._cleanup_enabled = False
             app._cleanup_days = 30
