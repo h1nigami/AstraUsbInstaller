@@ -5,29 +5,18 @@ using CommunityToolkit.Mvvm.Input;
 
 namespace AstraUsb.ViewModels;
 
-/// <summary>Строка разметки гнёзд.</summary>
-public sealed partial class SlotRow : ObservableObject
-{
-    [ObservableProperty] private int _slot;
-    [ObservableProperty] private string _portPath = "";
-
-    public string SlotLabel => $"окно {Slot + 1}";
-    public string PortLabel => string.IsNullOrEmpty(PortPath) ? "не размечено" : PortPath;
-}
-
 /// <summary>
-/// Вкладка «Настройки»: правила хранилища, разметка гнёзд, справочник
+/// Вкладка «Настройки»: правила хранилища и справочник
 /// сотрудников. На экране 1024x600 всё это не помещается в один столбец,
 /// поэтому раскладывается в две колонки.
 /// </summary>
 public sealed partial class SettingsViewModel : ObservableObject
 {
     private readonly string _dbPath;
-    private readonly PortMap _portMap;
     private readonly ActionLog _actions;
     private Settings _settings;
-
-    public ObservableCollection<SlotRow> Slots { get; } = new();
+    public Func<int, bool>? CanChangeBayCount { get; set; }
+    public event Action<int, int>? BaysChanged;
 
     public string[] StorageModes { get; } = ["предупреждать", "перезаписывать старые"];
 
@@ -59,7 +48,6 @@ public sealed partial class SettingsViewModel : ObservableObject
 
     public bool IsStationSection => Section == "station";
     public bool IsAccessSection => Section == "access";
-    public bool IsSlotsSection => Section == "slots";
     public bool IsFtpSection => Section == "ftp";
     public bool IsSqlSection => Section == "sql";
     public bool IsWebSection => Section == "web";
@@ -69,7 +57,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void OpenSection(string? name) => Section = name switch
     {
         "access" => "access",
-        "slots" => "slots",
         "ftp" => "ftp",
         "sql" => "sql",
         "web" => "web",
@@ -82,7 +69,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         Hint = "";
         OnPropertyChanged(nameof(IsStationSection));
         OnPropertyChanged(nameof(IsAccessSection));
-        OnPropertyChanged(nameof(IsSlotsSection));
         OnPropertyChanged(nameof(IsFtpSection));
         OnPropertyChanged(nameof(IsSqlSection));
         OnPropertyChanged(nameof(IsWebSection));
@@ -157,7 +143,6 @@ public sealed partial class SettingsViewModel : ObservableObject
     public SettingsViewModel(string dbPath)
     {
         _dbPath = dbPath;
-        _portMap = new PortMap(dbPath);
         _actions = new ActionLog(dbPath);
         _settings = Settings.Load();
 
@@ -199,8 +184,6 @@ public sealed partial class SettingsViewModel : ObservableObject
         FtpFolder = _settings.FtpFolder;
         FtpSsl = _settings.FtpSsl;
 
-        ReloadSlots();
-
         if (_settings.Unreadable)
             Hint = "файл настроек испорчен: выгрузка остановлена. Выберите папку архива и сохраните хранилище";
     }
@@ -209,13 +192,12 @@ public sealed partial class SettingsViewModel : ObservableObject
     private void SaveStorage()
     {
         var root = BackupRoot.Trim();
-        if (!ArchiveGuard.Mark(root))
+        if (!_settings.SelectBackupRoot(root))
         {
             Hint = "не удалось выбрать папку архива. Проверьте путь, подключение диска и права на запись";
             return;
         }
 
-        _settings.BackupRoot = root;
         _settings.MinFreeGb = Math.Max(1, MinFreeGb);
         _settings.StationNumber = Math.Clamp(StationNumber, 0, 99);
         _settings.StationPlace = StationPlace.Trim();
@@ -243,30 +225,6 @@ public sealed partial class SettingsViewModel : ObservableObject
                 : $"настройки сохранены, записи хранятся {KeepDays} дн";
     }
 
-    // --- Разметка гнёзд -----------------------------------------------------
-
-    [RelayCommand]
-    public void ReloadSlots()
-    {
-        try
-        {
-            var assigned = _portMap.All();
-            Slots.Clear();
-            for (var slot = 0; slot < Math.Clamp(_settings.BayCount, 6, 30); slot++)
-            {
-                var port = assigned.FirstOrDefault(pair => pair.Value == slot).Key ?? "";
-                Slots.Add(new SlotRow { Slot = slot, PortPath = port });
-            }
-        }
-        catch (Exception e)
-        {
-            Hint = UserError.Report("Не удалось прочитать разметку гнёзд", e);
-        }
-    }
-
-    /// <summary>
-    /// Закрепляет за выбранным окном то гнездо, в котором сейчас стоит
-    /// единственная подключённая камера. Так размечают станцию по инструкции:
     /// <summary>
     /// Адреса, по которым станция отвечает панелью. Оператору взять их
     /// больше негде: панель живёт внутри программы, а адрес у станции тот,
@@ -630,11 +588,7 @@ public sealed partial class SettingsViewModel : ObservableObject
         RepeatPassword = "";
     }
 
-    /// <summary>
-    /// Сохраняет число окон сбора. Доска строится один раз при запуске,
-    /// поэтому новое число вступает в силу после перезапуска программы, о чём
-    /// оператору говорится прямо.
-    /// </summary>
+    /// <summary>Применяет число окон, если уменьшение не скроет занятые.</summary>
     [RelayCommand]
     private void SaveBayCount()
     {
@@ -642,11 +596,16 @@ public sealed partial class SettingsViewModel : ObservableObject
         var perRow = Math.Clamp(BaysPerRow, 2, 6);
         var changed = wanted != _settings.BayCount || perRow != _settings.BaysPerRow;
 
+        if (CanChangeBayCount?.Invoke(wanted) == false)
+        {
+            Hint = "нельзя скрыть занятые окна: сначала освободите их";
+            return;
+        }
+
         _settings.BayCount = wanted;
         _settings.BaysPerRow = perRow;
         BayCount = wanted;
         BaysPerRow = perRow;
-        ReloadSlots();
 
         if (!_settings.Save())
         {
@@ -656,13 +615,10 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         if (changed)
         {
-            RestartNeeded = true;
             _actions.Write(ActionLog.Settings, $"число окон сбора изменено на {wanted}");
         }
-
-        Hint = changed
-            ? $"окон сбора: {wanted}. Изменение вступит в силу после перезапуска программы"
-            : $"окон сбора: {wanted}";
+        BaysChanged?.Invoke(wanted, perRow);
+        Hint = $"окон сбора: {wanted}";
     }
 
     /// <summary>Сохраняет время, после которого открытый раздел закрывается сам.</summary>
@@ -683,50 +639,6 @@ public sealed partial class SettingsViewModel : ObservableObject
             : LockTimeoutMinutes == 0
                 ? "разделы больше не закрываются по простою"
                 : $"разделы закроются после {LockTimeoutMinutes} мин простоя";
-    }
-
-    /// втыкают камеру в отсек и нажимают «сопоставить».
-    /// </summary>
-    [RelayCommand]
-    private void MapSlot(SlotRow? row)
-    {
-        if (row is null)
-            return;
-
-        var connected = UsbWatcher.List()
-            .Where(d => !string.IsNullOrEmpty(d.PortPath))
-            .ToArray();
-
-        if (connected.Length == 0)
-        {
-            Hint = "вставьте камеру в размечаемый отсек";
-            return;
-        }
-
-        if (connected.Length > 1)
-        {
-            Hint = "для разметки оставьте подключённой одну камеру";
-            return;
-        }
-
-        _portMap.Assign(connected[0].PortPath!, row.Slot);
-        Hint = $"окно {row.Slot + 1} закреплено за гнездом {connected[0].PortPath}";
-        ReloadSlots();
-    }
-
-    [RelayCommand]
-    private void ClearSlots()
-    {
-        try
-        {
-            _portMap.Clear();
-            Hint = "разметка снята, окна снова занимаются по порядку подключения";
-            ReloadSlots();
-        }
-        catch (Exception e)
-        {
-            Hint = UserError.Report("Не удалось снять разметку гнёзд", e);
-        }
     }
 
     // --- Обновления ---------------------------------------------------------

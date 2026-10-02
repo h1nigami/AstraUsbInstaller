@@ -26,26 +26,63 @@ public sealed class ArchiveSearch
     public const int Limit = 500;
 
     private readonly string _dbPath;
+    private readonly string? _archiveRoot;
+    private readonly Func<string, string>? _resolvePath;
 
-    public ArchiveSearch(string dbPath) => _dbPath = dbPath;
-
-    public IReadOnlyList<ArchiveRow> Find(ArchiveFilter filter, int limit = Limit)
+    public ArchiveSearch(string dbPath, string? archiveRoot = null)
     {
-        var log = new CollectionLog(_dbPath);
-        var staff = new StaffDirectory(_dbPath);
+        _dbPath = dbPath;
+        _archiveRoot = archiveRoot;
+    }
+
+    internal ArchiveSearch(string dbPath, string archiveRoot, Func<string, string> resolvePath)
+        : this(dbPath, archiveRoot) => _resolvePath = resolvePath;
+
+    public IReadOnlyList<ArchiveRow> Find(ArchiveFilter filter, int limit = Limit,
+        CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!DatabaseExists())
+            return [];
+        var settings = Settings.Load();
+        var root = _archiveRoot ?? settings.ResolveBackupRoot();
+        var resolve = _resolvePath ?? settings.ArchivePathResolver(root);
+        var log = new CollectionLog(_dbPath, initialize: false);
 
         var from = filter.CollectedFrom ?? DateTime.MinValue;
         var to = filter.CollectedTo ?? DateTime.MaxValue;
-        var found = log.CollectedBetween(from, to, filter.DeviceId);
+        // ponytail: для важных alias читаем весь журнал; большой архив потребует постоянного идентификатора и индекса.
+        var found = log.CollectedBetween(DateTime.MinValue, DateTime.MaxValue, token: token);
+        if (found.Count == 0)
+            return [];
 
-        var cameras = Cameras();
-        var people = People(staff);
-        var departments = Departments(filter, staff);
+        var staff = new StaffDirectory(_dbPath, initialize: false);
+        var cameras = Cameras(token);
+        var people = People(staff, token);
+        var departments = Departments(filter, staff, token);
 
         var rows = new List<ArchiveRow>();
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var aliases = new Dictionary<string, List<CollectedFile>>(comparer);
+        foreach (var file in found)
+        {
+            token.ThrowIfCancellationRequested();
+            if (Resolve(resolve, file.DestPath) is not { } path)
+                continue;
+            if (!aliases.TryGetValue(path, out var entries))
+                aliases[path] = entries = [];
+            entries.Add(file);
+        }
+        var shown = new HashSet<string>(comparer);
 
         foreach (var file in found)
         {
+            token.ThrowIfCancellationRequested();
+            if (file.CollectedAt < from || file.CollectedAt > to
+                || filter.DeviceId is { } deviceId && file.DeviceId != deviceId
+                || Resolve(resolve, file.DestPath) is not { } path || shown.Contains(path))
+                continue;
+            var entries = aliases[path];
             var camera = cameras.GetValueOrDefault(file.DeviceId);
             var person = camera?.EmployeeId is { } id ? people.GetValueOrDefault(id) : null;
 
@@ -56,21 +93,58 @@ public sealed class ArchiveSearch
                     : file.DeviceId.ToString();
 
             var row = new ArchiveRow(
-                file,
+                file with { Important = entries.Any(entry => entry.Important) },
                 name,
                 person?.FullName ?? "",
                 person?.PersonnelNo ?? "",
-                person?.DepartmentId is { } dep ? staff.DepartmentPath(dep) : "");
+                person?.DepartmentId is { } dep ? staff.DepartmentPath(dep, token) : "")
+            { Path = path, LoggedPaths = entries.Select(entry => entry.DestPath).ToArray() };
 
             if (!Matches(row, filter, departments, person))
                 continue;
 
             rows.Add(row);
+            shown.Add(path);
             if (rows.Count >= limit)
                 break;
         }
 
+        token.ThrowIfCancellationRequested();
         return rows;
+    }
+
+    private bool DatabaseExists()
+    {
+        var database = Path.GetFullPath(_dbPath);
+        for (string? path = database; path is not null; path = Path.GetDirectoryName(path))
+        {
+            try
+            {
+                var attributes = File.GetAttributes(path);
+                if (path != database && (attributes & FileAttributes.Directory) == 0)
+                    throw new IOException("Родительский путь базы не является каталогом");
+                return path == database;
+            }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { }
+        }
+        return false;
+    }
+
+    public void ValidatePath(string path)
+    {
+        var settings = _archiveRoot is null ? Settings.Load() : null;
+        using var archive = ArchiveGuard.Open(_archiveRoot ?? settings!.ResolveBackupRoot(), settings: settings);
+        _ = (_resolvePath ?? (settings ?? Settings.Load()).ArchivePathResolver(archive.Root))(path);
+    }
+
+    private static string? Resolve(Func<string, string> resolve, string path)
+    {
+        try
+        {
+            return resolve(path);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { return null; }
     }
 
     /// <summary>
@@ -80,6 +154,10 @@ public sealed class ArchiveSearch
     /// </summary>
     public DeleteResult Delete(IEnumerable<ArchiveRow> rows)
     {
+        using var operation = OperationGuard.Acquire(exclusive: true, dbPath: _dbPath);
+        var settings = _archiveRoot is null ? Settings.Load() : null;
+        using var archive = ArchiveGuard.Open(_archiveRoot ?? settings!.ResolveBackupRoot(), settings: settings);
+        var resolve = _resolvePath ?? (settings ?? Settings.Load()).ArchivePathResolver(archive.Root);
         _ = new CollectionLog(_dbPath);
         var deleted = 0;
         var skipped = 0;
@@ -96,24 +174,34 @@ public sealed class ArchiveSearch
                 using var transaction = db.BeginTransaction();
                 using var command = db.CreateCommand();
                 command.Transaction = transaction;
-                command.CommandText = "SELECT important FROM collected_files WHERE dest_path = $path";
-                command.Parameters.AddWithValue("$path", row.File.DestPath);
-                if (command.ExecuteScalar() is long important && important != 0)
+                var path = resolve(row.File.DestPath);
+                var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+                var aliases = new List<string>();
+                var protectedFile = false;
+                command.CommandText = "SELECT dest_path, important FROM collected_files";
+                using (var reader = command.ExecuteReader())
                 {
-                    skipped++;
-                    continue;
+                    while (reader.Read())
+                        if (Resolve(resolve, reader.GetString(0)) is { } alias && comparer.Equals(alias, path))
+                        {
+                            aliases.Add(reader.GetString(0));
+                            protectedFile |= reader.GetInt64(1) != 0;
+                        }
                 }
+                if (protectedFile) { skipped++; continue; }
 
-                var file = new FileInfo(row.File.DestPath);
-                var size = file.Exists ? file.Length : 0;
-                if (file.Exists)
-                    file.Delete();
+                var size = archive.DeleteFile(Path.GetRelativePath(archive.Root, path));
 
                 command.CommandText = "DELETE FROM collected_files WHERE dest_path = $path";
-                command.ExecuteNonQuery();
+                command.Parameters.AddWithValue("$path", row.File.DestPath);
+                foreach (var alias in aliases)
+                {
+                    command.Parameters["$path"].Value = alias;
+                    command.ExecuteNonQuery();
+                }
                 transaction.Commit();
                 deleted++;
-                deletedPaths.Add(row.File.DestPath);
+                deletedPaths.AddRange(aliases.Append(row.File.DestPath).Distinct());
                 bytes += size;
             }
             catch (Exception)
@@ -165,38 +253,38 @@ public sealed class ArchiveSearch
         return true;
     }
 
-    private Dictionary<long, DeviceRecord> Cameras()
+    private Dictionary<long, DeviceRecord> Cameras(CancellationToken token)
     {
         try
         {
-            using var registry = new DeviceRegistry(_dbPath);
-            return registry.ListDevices().ToDictionary(d => d.Id);
+            using var registry = new DeviceRegistry(_dbPath, initialize: false);
+            return registry.ListDevices(token).ToDictionary(d => d.Id);
         }
-        catch (Exception)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
             return new Dictionary<long, DeviceRecord>();
         }
     }
 
-    private static Dictionary<long, Employee> People(StaffDirectory staff)
+    private static Dictionary<long, Employee> People(StaffDirectory staff, CancellationToken token)
     {
         try
         {
-            return staff.Employees().ToDictionary(e => e.Id);
+            return staff.Employees(token: token).ToDictionary(e => e.Id);
         }
-        catch (Exception)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
             return new Dictionary<long, Employee>();
         }
     }
 
     /// <summary>Отдел и все его подчинённые, если отбор по отделу задан.</summary>
-    private static HashSet<long>? Departments(ArchiveFilter filter, StaffDirectory staff)
+    private static HashSet<long>? Departments(ArchiveFilter filter, StaffDirectory staff, CancellationToken token)
     {
         if (filter.DepartmentId is not { } root)
             return null;
 
-        var all = staff.Departments();
+        var all = staff.Departments(token);
         var wanted = new HashSet<long> { root };
 
         // Дерево неглубокое, поэтому проходим по списку, пока он растёт.
@@ -205,6 +293,7 @@ public sealed class ArchiveSearch
             grew = false;
             foreach (var department in all)
             {
+                token.ThrowIfCancellationRequested();
                 if (department.ParentId is { } parent
                     && wanted.Contains(parent)
                     && wanted.Add(department.Id))

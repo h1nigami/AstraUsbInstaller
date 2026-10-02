@@ -8,9 +8,12 @@ namespace AstraUsb.Tests;
 /// удаляется только самое раннее, только в режиме перезаписи и ровно
 /// столько, сколько нужно.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class StorageManagerTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("astra-storage-").FullName;
+
+    public StorageManagerTests() => Assert.True(ArchiveGuard.Mark(_root));
 
     private string Write(string relative, int sizeBytes, DateTime written)
     {
@@ -95,6 +98,32 @@ public sealed class StorageManagerTests : IDisposable
         var status = StorageManager.Check(Path.Combine(_root, "нет-такой"), minFreeBytes: 1);
 
         Assert.False(status.LowOnSpace);
+    }
+
+    [Fact]
+    public void Cleanup_keeps_files_outside_real_device_folders()
+    {
+        var foreign = Write("Documents/a.mp4", 1000, new DateTime(2026, 1, 1));
+        var recording = Write("Device1/a.mp4", 1000, new DateTime(2026, 2, 1));
+        ArchiveGuard.Mark(_root);
+        StorageManager.FreeUpSpace(_root, 1000, StorageMode.Overwrite);
+        Assert.True(File.Exists(foreign));
+        Assert.False(File.Exists(recording));
+    }
+
+    [Fact]
+    public void An_unconfirmed_link_does_not_report_the_system_drives_capacity()
+    {
+        var outside = Directory.CreateDirectory(Path.Combine(_root, "outside")).FullName;
+        var link = Path.Combine(_root, "linked");
+        FileCopierTests.MakeDirectoryLink(link, outside);
+        try
+        {
+            var status = StorageManager.Check(link, 1);
+            Assert.Equal(0, status.TotalBytes);
+            Assert.Equal(0, status.FreeBytes);
+        }
+        finally { Directory.Delete(link); }
     }
 
     public void Dispose()

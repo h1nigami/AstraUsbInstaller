@@ -47,10 +47,15 @@ public sealed record CollectedFile(
 public sealed class CollectionLog
 {
     private readonly string _dbPath;
+    private readonly bool _readOnly;
+    public string DatabasePath => _dbPath;
 
-    public CollectionLog(string dbPath)
+    public CollectionLog(string dbPath, bool initialize = true)
     {
         _dbPath = dbPath;
+        _readOnly = !initialize;
+        if (!initialize)
+            return;
         var dir = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
@@ -111,9 +116,18 @@ public sealed class CollectionLog
     /// Файлы, загруженные в станцию за указанный промежуток. Поиск идёт по
     /// времени загрузки, а не съёмки: только оно достоверно.
     /// </summary>
-    public IReadOnlyList<CollectedFile> CollectedBetween(DateTime from, DateTime to, long? deviceId = null)
+    public IReadOnlyList<CollectedFile> CollectedBetween(DateTime from, DateTime to,
+        long? deviceId = null, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         using var db = Open();
+        if (_readOnly)
+        {
+            using var schema = db.CreateCommand();
+            schema.CommandText = "SELECT 1 FROM sqlite_schema WHERE name = 'collected_files'";
+            if (ReadCancelable(schema, token, () => schema.ExecuteScalar()) is null)
+                return [];
+        }
         using var cmd = db.CreateCommand();
         cmd.CommandText = """
             SELECT device_id, dest_path, size_bytes, shot_at, collected_at, important, note
@@ -127,7 +141,7 @@ public sealed class CollectionLog
         if (deviceId is { } id)
             cmd.Parameters.AddWithValue("$device", id);
 
-        return Read(cmd);
+        return ReadCancelable(cmd, token, () => Read(cmd, token));
     }
 
     /// <summary>Файлы, загруженные раньше указанной даты, для чистки по давности.</summary>
@@ -151,6 +165,7 @@ public sealed class CollectionLog
     /// </summary>
     public void SetImportant(string destPath, bool important)
     {
+        using var operation = OperationGuard.Acquire(dbPath: _dbPath);
         using var db = Open();
         Run(db, "UPDATE collected_files SET important = $flag WHERE dest_path = $dest",
             ("$flag", important ? 1 : 0), ("$dest", destPath));
@@ -181,12 +196,14 @@ public sealed class CollectionLog
     /// <summary>Тот же формат, что у Python-версии: ISO с разделителем T.</summary>
     private static string Stamp(DateTime moment) => moment.ToString("yyyy-MM-ddTHH:mm:ss.ffffff");
 
-    private static IReadOnlyList<CollectedFile> Read(SqliteCommand cmd)
+    private static IReadOnlyList<CollectedFile> Read(SqliteCommand cmd, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         var list = new List<CollectedFile>();
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
+            token.ThrowIfCancellationRequested();
             list.Add(new CollectedFile(
                 reader.GetInt64(0),
                 reader.GetString(1),
@@ -196,14 +213,56 @@ public sealed class CollectionLog
                 reader.GetInt64(5) != 0,
                 reader.GetString(6)));
         }
+        token.ThrowIfCancellationRequested();
         return list;
     }
 
     private SqliteConnection Open()
     {
-        var db = new SqliteConnection($"Data Source={_dbPath}");
+        var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _dbPath,
+            Mode = _readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWriteCreate,
+        }.ToString());
         db.Open();
         return db;
+    }
+
+    internal static T ReadCancelable<T>(SqliteCommand command, CancellationToken token, Func<T> read)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!token.CanBeCanceled)
+            return read();
+
+        var timeout = command.CommandTimeout;
+        // SqliteCommand повторяет SQLITE_BUSY без проверки токена: ждём короткими попытками.
+        command.CommandTimeout = 1;
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        using var cancellation = token.Register(() =>
+            SQLitePCL.raw.sqlite3_interrupt(command.Connection!.Handle!));
+        try
+        {
+            while (true)
+            {
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    var result = read();
+                    token.ThrowIfCancellationRequested();
+                    return result;
+                }
+                catch (SqliteException) when (token.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException(token);
+                }
+                catch (SqliteException error) when (error.SqliteErrorCode is 5 or 6
+                                                   && (timeout == 0 || elapsed.Elapsed.TotalSeconds < timeout))
+                {
+                    token.WaitHandle.WaitOne(50);
+                }
+            }
+        }
+        finally { command.CommandTimeout = timeout; }
     }
 
     private static void TryRun(SqliteConnection db, string sql)

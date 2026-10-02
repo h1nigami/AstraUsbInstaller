@@ -58,6 +58,8 @@ public sealed partial class SearchViewModel : ObservableObject
     private readonly Dispatcher _ui = Dispatcher.UIThread;
 
     private readonly string _dbPath;
+    private readonly string? _archiveRoot;
+    private CancellationTokenSource? _searchCancellation;
 
     /// <summary>Поколение запроса: ответ прежнего не должен перебить новый.</summary>
     private int _generation;
@@ -179,7 +181,14 @@ public sealed partial class SearchViewModel : ObservableObject
 
         Task.Run(() =>
         {
-            var frame = VideoPreview.Frame(path, at);
+            string? frame;
+            try { frame = ReadArchive(path, (_, inputPath) => VideoPreview.Frame(inputPath, at)); }
+            catch (Exception error)
+            {
+                var message = UserError.Report("Не удалось показать кадр", error);
+                _ui.Post(() => { if (mine == _frameRequest) Hint = message; });
+                return;
+            }
             if (frame is null || mine != _frameRequest)
                 return;
 
@@ -224,9 +233,10 @@ public sealed partial class SearchViewModel : ObservableObject
     {
     }
 
-    public SearchViewModel(string dbPath)
+    public SearchViewModel(string dbPath, string? archiveRoot = null)
     {
         _dbPath = dbPath;
+        _archiveRoot = archiveRoot;
         _ = ReloadDepartments();
     }
 
@@ -304,7 +314,9 @@ public sealed partial class SearchViewModel : ObservableObject
         CloseViewer();
         var request = _openRequest;
 
-        var path = file.Path;
+        var path = file.Row.File.DestPath;
+        if (!CheckArchivePath(path))
+            return;
         var kind = file.Row.Kind;
         var size = file.Size;
         var shot = file.ShotAt;
@@ -365,37 +377,36 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>Читает запись. Работает в стороне: диск и ffprobe не быстры.</summary>
-    private static Opened Open(string path, MediaKind kind)
+    private Opened Open(string path, MediaKind kind)
     {
-        if (!File.Exists(path))
-            return new Opened(null, "", null, "записи больше нет в архиве");
-
         try
         {
-            switch (kind)
+            return ReadArchive(path, (input, inputPath) =>
             {
+                switch (kind)
+                {
                 case MediaKind.Photo:
-                    using (var stream = File.OpenRead(path))
-                        return new Opened(new Bitmap(stream), "", null, "");
+                    return new Opened(new Bitmap(input), "", null, "");
 
                 case MediaKind.Log:
                     // Журнал регистратора бывает на десятки мегабайт, а
                     // оператору нужно начало: читаем первые страницы.
-                    var head = Read(path, 64 * 1024);
+                    var head = Read(input, 64 * 1024);
                     return new Opened(null, head.Length > 0 ? head : "файл пуст", null, "");
 
                 case MediaKind.Video:
                     // Без длительности шкалу строить не из чего, и запись
                     // уходит системному проигрывателю, как раньше.
-                    if (VideoPreview.Duration(path) is { } length)
+                    if (VideoPreview.Duration(inputPath) is { } length)
                         return new Opened(null, "", length, "");
                     break;
-            }
+                }
 
-            var result = MediaTools.Open(path);
-            return new Opened(null, "", null, result.Ok
-                ? $"{Path.GetFileName(path)} открыт системным проигрывателем"
-                : result.Message);
+                var result = MediaTools.Open(path, _archiveRoot, _dbPath);
+                return new Opened(null, "", null, result.Ok
+                    ? $"{Path.GetFileName(path)} открыт системным проигрывателем"
+                    : result.Message);
+            });
         }
         catch (Exception e)
         {
@@ -410,7 +421,10 @@ public sealed partial class SearchViewModel : ObservableObject
         if (Current is not { } file)
             return;
 
-        var result = MediaTools.Open(file.Path);
+        if (!CheckArchivePath(file.Row.File.DestPath))
+            return;
+
+        var result = MediaTools.Open(file.Row.File.DestPath, _archiveRoot, _dbPath);
         Hint = result.Message;
     }
 
@@ -430,9 +444,20 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>Читает начало файла, не поднимая в память весь.</summary>
-    private static string Read(string path, int limit)
+    private T ReadArchive<T>(string path, Func<FileStream, string, T> read)
     {
-        using var stream = File.OpenRead(path);
+        using var operation = OperationGuard.Acquire(dbPath: _dbPath);
+        var settings = _archiveRoot is null ? Settings.Load() : null;
+        using var archive = ArchiveGuard.Open(_archiveRoot ?? settings!.ResolveBackupRoot(), settings: settings);
+        path = (settings ?? Settings.Load()).ArchivePathResolver(archive.Root)(path);
+        using var input = archive.OpenRead(Path.GetRelativePath(archive.Root, path));
+        var inputPath = OperatingSystem.IsLinux()
+            ? $"/proc/{Environment.ProcessId}/fd/{input.SafeFileHandle.DangerousGetHandle()}" : path;
+        return read(input, inputPath);
+    }
+
+    private static string Read(FileStream stream, int limit)
+    {
         var buffer = new byte[Math.Min(limit, stream.Length)];
         var read = stream.Read(buffer, 0, buffer.Length);
         var text = System.Text.Encoding.UTF8.GetString(buffer, 0, read);
@@ -440,6 +465,20 @@ public sealed partial class SearchViewModel : ObservableObject
         return stream.Length > read
             ? text + Environment.NewLine + Environment.NewLine + "… показано начало файла"
             : text;
+    }
+
+    private bool CheckArchivePath(string path)
+    {
+        try
+        {
+            new ArchiveSearch(_dbPath, _archiveRoot).ValidatePath(path);
+            return true;
+        }
+        catch (Exception error)
+        {
+            Hint = UserError.Report("Не удалось открыть запись архива", error);
+            return false;
+        }
     }
 
     /// <summary>
@@ -464,7 +503,7 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
-        var path = file.Path;
+        var path = file.Row.File.DestPath;
         var format = Format;
 
         Converting = true;
@@ -472,7 +511,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
         try
         {
-            var result = await Task.Run(() => MediaTools.Convert(path, format));
+            var result = await Task.Run(() => MediaTools.Convert(path, format, _archiveRoot, _dbPath));
             Hint = result.Ok
                 ? $"готова копия: {result.Message}"
                 : result.Message;
@@ -496,9 +535,13 @@ public sealed partial class SearchViewModel : ObservableObject
     /// идёт заметное время, а окно должно оставаться живым. Ответ прежнего
     /// запроса отбрасывается, если оператор успел запросить заново.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task Search()
     {
+        _searchCancellation?.Cancel();
+        _searchCancellation = null;
+        var generation = ++_generation;
+        Searching = false;
         if (!TryDate(From, out var from) || !TryDate(To, out var to))
         {
             Hint = "дата пишется как 02.09.2026";
@@ -530,13 +573,15 @@ public sealed partial class SearchViewModel : ObservableObject
             ProtectedOnly = ProtectedOnly,
         };
 
-        var generation = ++_generation;
+        using var cancellation = new CancellationTokenSource();
+        _searchCancellation = cancellation;
         Searching = true;
         Hint = "ищем";
 
         try
         {
-            var found = await Task.Run(() => new ArchiveSearch(_dbPath).Find(filter));
+            var found = await Task.Run(() => new ArchiveSearch(_dbPath, _archiveRoot)
+                .Find(filter, token: cancellation.Token), cancellation.Token);
 
             if (generation != _generation)
                 return;
@@ -555,6 +600,10 @@ public sealed partial class SearchViewModel : ObservableObject
                 _ => $"найдено записей: {found.Count}",
             };
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            // Новый запрос или сброс уже заняли место этого результата.
+        }
         catch (Exception e)
         {
             var message = UserError.Report("Не удалось выполнить запрос", e);
@@ -564,7 +613,10 @@ public sealed partial class SearchViewModel : ObservableObject
         finally
         {
             if (generation == _generation)
+            {
                 Searching = false;
+                _searchCancellation = null;
+            }
         }
     }
 
@@ -574,8 +626,7 @@ public sealed partial class SearchViewModel : ObservableObject
     [RelayCommand]
     private void Reset()
     {
-        _generation++;
-        Searching = false;
+        CancelSearch();
         From = DateTime.Now.AddDays(-7).ToString("dd.MM.yyyy");
         To = DateTime.Now.ToString("dd.MM.yyyy");
         ShotFrom = "";
@@ -587,12 +638,19 @@ public sealed partial class SearchViewModel : ObservableObject
         KindIndex = 0;
         ProtectedOnly = false;
         Department = Departments.Count > 0 ? Departments[0] : null;
-        Current = null;
         Results.Clear();
         NoteInput = "";
         Current = null;
         Hint = "укажите условия и нажмите «Запрос»";
         Refresh();
+    }
+
+    public void CancelSearch()
+    {
+        _generation++;
+        _searchCancellation?.Cancel();
+        _searchCancellation = null;
+        Searching = false;
     }
 
     /// <summary>Отбирает или снимает отбор со всех найденных строк.</summary>
@@ -624,7 +682,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
         try
         {
-            var paths = rows.Select(r => r.Path).ToList();
+            var paths = rows.SelectMany(r => r.Row.LoggedPaths).Distinct().ToList();
 
             await Task.Run(() =>
             {
@@ -659,7 +717,7 @@ public sealed partial class SearchViewModel : ObservableObject
         try
         {
             var note = NoteInput.Trim();
-            var paths = rows.Select(r => r.Path).ToList();
+            var paths = rows.SelectMany(r => r.Row.LoggedPaths).Distinct().ToList();
 
             await Task.Run(() =>
             {
@@ -702,12 +760,12 @@ public sealed partial class SearchViewModel : ObservableObject
 
             // Удаление обходит файлы на диске: с сотней записей это надолго,
             // и интерфейс не должен замирать всё это время.
-            var result = await Task.Run(() => new ArchiveSearch(_dbPath).Delete(chosen));
+            var result = await Task.Run(() => new ArchiveSearch(_dbPath, _archiveRoot).Delete(chosen));
 
             var deleted = result.DeletedPaths.ToHashSet();
-            if (Current is { } current && deleted.Contains(current.Path))
+            if (Current is { } current && deleted.Contains(current.Row.File.DestPath))
                 Current = null;
-            foreach (var row in rows.Where(r => deleted.Contains(r.Path)).ToArray())
+            foreach (var row in rows.Where(r => deleted.Contains(r.Row.File.DestPath)).ToArray())
                 Results.Remove(row);
 
             var parts = new List<string> { $"удалено записей: {result.Deleted}" };
@@ -755,7 +813,7 @@ public sealed partial class SearchViewModel : ObservableObject
             return;
         }
 
-        var paths = rows.Select(r => r.Path).ToList();
+        var paths = rows.Select(r => r.Row.File.DestPath).ToList();
         Exporting = true;
 
         try
@@ -763,7 +821,7 @@ public sealed partial class SearchViewModel : ObservableObject
             var result = await Task.Run(() => FileExporter.Export(
                 paths, target, DateTime.Now,
                 (done, total) => _ui.Post(
-                    () => Hint = $"выгружено {done} из {total}")));
+                    () => Hint = $"выгружено {done} из {total}"), _archiveRoot, _dbPath));
 
             var parts = new List<string>
             {
@@ -820,7 +878,7 @@ public sealed partial class SearchViewModel : ObservableObject
                 : "часы сбиты",
         Employee = row.EmployeeName.Length > 0 ? row.EmployeeName : row.PersonnelNo,
         Kind = MediaKinds.Name(row.Kind),
-        Path = row.File.DestPath,
+        Path = row.Path,
         Important = row.File.Important,
         Note = row.File.Note,
     };

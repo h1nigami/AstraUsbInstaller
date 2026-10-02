@@ -81,6 +81,14 @@ public sealed class ArchiveGuardTests : IDisposable
         Assert.False(ArchiveGuard.IsArchiveMedia(media, archive));
     }
 
+    [Fact]
+    public void Linux_mount_names_are_compared_with_case_sensitivity()
+    {
+        var mount = Path.Combine(_dir, "CAM");
+        var archive = Path.Combine(_dir, "cam", "archive");
+        Assert.Equal(OperatingSystem.IsWindows(), ArchiveGuard.IsArchiveMedia(mount, archive));
+    }
+
     [Theory]
     [InlineData("Device1", true)]
     [InlineData("Device999", true)]
@@ -155,6 +163,58 @@ public sealed class ArchiveGuardTests : IDisposable
 
         Assert.NotNull(command);
         Assert.Equal(new[] { "-R", $"--reference={root}", "--", folder }, command.ArgumentList);
+    }
+
+    [Fact]
+    public void An_open_destination_cannot_be_replaced_by_a_directory_link()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var root = Directory.CreateDirectory(Path.Combine(_dir, "held")).FullName;
+        using var archive = ArchiveGuard.Open(root, requireMarker: false);
+        Assert.Throws<IOException>(() => Directory.Move(root, root + "-old"));
+        archive.WriteText("report.txt", "checked destination");
+        Assert.Equal("checked destination", File.ReadAllText(Path.Combine(root, "report.txt")));
+    }
+
+    [Theory]
+    [InlineData("../outside.txt")]
+    [InlineData("child/../../outside.txt")]
+    public void An_open_destination_rejects_paths_outside_its_directory(string relative)
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        using var archive = ArchiveGuard.Open(_dir, requireMarker: false);
+        Assert.Throws<IOException>(() => archive.WriteText(relative, "must not escape"));
+        Assert.Empty(Directory.GetFiles(_dir));
+    }
+
+    [Fact]
+    public void A_failed_write_leaves_no_partial_copy()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        using var archive = ArchiveGuard.Open(_dir, requireMarker: false);
+        var write = typeof(ArchiveDirectory).GetMethod("WriteFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Action<FileStream> failure = output => { output.Write(new byte[100]); throw new IOException("source failed"); };
+        var error = Assert.Throws<TargetInvocationException>(() => write.Invoke(archive, ["partial.mp4", failure, null, false]));
+        Assert.IsType<IOException>(error.InnerException);
+        Assert.False(File.Exists(Path.Combine(_dir, "partial.mp4")));
+    }
+
+    [Fact]
+    public void A_linked_archive_root_is_not_marked_or_accepted()
+    {
+        var outside = Directory.CreateDirectory(Path.Combine(_dir, "outside")).FullName;
+        var linked = Path.Combine(_dir, "linked");
+        FileCopierTests.MakeDirectoryLink(linked, outside);
+        try
+        {
+            Assert.False(ArchiveGuard.Mark(linked));
+            Assert.False(File.Exists(Path.Combine(outside, Markers.Archive)));
+            Assert.False(ArchiveGuard.Available(linked));
+        }
+        finally { Directory.Delete(linked); }
     }
 
     public void Dispose()

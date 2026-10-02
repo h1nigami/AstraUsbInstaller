@@ -158,8 +158,9 @@ Python и C#/Avalonia являются отдельными продуктами
   Настройки → О программе screen always shows a version, offline included.
 - **Сборки.** `.github/workflows/release-station.yml` собирает C# только для
   prerelease `v2.*` или ручного запуска с тегом `v2.*`. Оба задания берут
-  исходники указанного тега. Платформы: `linux-x64`, `linux-arm64`, `win-x64`,
-  `osx-x64`, `osx-arm64`. Python workflow собирает только stable `v1.*`.
+  исходники указанного тега. Платформы: `linux-x64`, `linux-arm64`, `win-x64`.
+  Python workflow собирает только stable `v1.*`. Сборки macOS приостановлены,
+  пока защита доступа к архиву не поддерживает эту платформу.
 - **Обновление C#.** `AstraUsb --update` запускается отдельной службой
   `astra-usb-avalonia-update.service` по таймеру. Из списка релизов выбирается
   последний по дате публикации готовый `v2.*` с архивом своей платформы и

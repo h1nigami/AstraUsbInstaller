@@ -8,6 +8,7 @@ namespace AstraUsb.Tests;
 /// и то, что остаётся, и то, что журнал после уборки говорит правду: запись о
 /// файле, которого нет, обманывает оператора на поиске.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class StorageCleanupTests : IDisposable
 {
     private static readonly DateTime Now = new(2026, 9, 2, 12, 0, 0);
@@ -20,6 +21,7 @@ public sealed class StorageCleanupTests : IDisposable
     {
         _root = Path.Combine(_dir, "USB_Backups");
         Directory.CreateDirectory(_root);
+        Assert.True(ArchiveGuard.Mark(_root));
         _db = Path.Combine(_dir, "devices.db");
         using var registry = new DeviceRegistry(_db);
     }
@@ -88,6 +90,16 @@ public sealed class StorageCleanupTests : IDisposable
 
         Assert.True(ArchiveGuard.Available(_root));
         Assert.Equal(0, freed);
+    }
+
+    [Fact]
+    public void Cleanup_refuses_while_a_backup_holds_the_shared_operation_lock()
+    {
+        var recording = Collected("busy.mp4", 100, Now.AddDays(-100));
+        using var backup = OperationGuard.Acquire(dbPath: _db);
+        Assert.Throws<StationBusyException>(() => StorageManager.DeleteExpired(Log(), Now, _root));
+        Assert.True(File.Exists(recording));
+        Assert.Equal(1, Log().Count());
     }
 
     [Theory]
@@ -233,6 +245,39 @@ public sealed class StorageCleanupTests : IDisposable
         Assert.Equal(1, files);
         Assert.True(File.Exists(protectedPath));
         Assert.False(File.Exists(ordinary));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void A_protected_alias_with_a_future_collection_time_preserves_the_same_file(bool expired)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var path = Collected("shared.mp4", 1000, DateTime.Now.AddDays(-1));
+        var alias = Path.Combine(_root.ToUpperInvariant(), "Device1", "shared.mp4");
+        Log().Record([new CollectedFile(1, alias, 1000, DateTime.Now.AddDays(1), DateTime.Now.AddDays(1))]);
+        Log().SetImportant(alias, true);
+
+        var freed = expired
+            ? StorageManager.DeleteExpired(Log(), DateTime.Now, _root).Bytes
+            : StorageManager.FreeUpSpace(_root, 500, StorageMode.Overwrite, Log());
+
+        Assert.Equal(0, freed);
+        Assert.True(File.Exists(path));
+        Assert.Equal(2, Log().Count());
+    }
+
+    [Fact]
+    public void A_clock_rollback_does_not_turn_a_protected_record_into_an_unknown_file()
+    {
+        var protectedPath = Collected("protected-future.mp4", 1000, DateTime.Now.AddDays(1));
+        Log().SetImportant(protectedPath, true);
+
+        var freed = StorageManager.FreeUpSpace(_root, 500, StorageMode.Overwrite, Log());
+
+        Assert.Equal(0, freed);
+        Assert.True(File.Exists(protectedPath));
+        Assert.True(Assert.Single(Log().CollectedBetween(DateTime.MinValue, DateTime.MaxValue)).Important);
     }
 
     [Fact]

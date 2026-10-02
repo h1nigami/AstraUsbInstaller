@@ -1,4 +1,5 @@
 using AstraUsb.Services;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace AstraUsb.Tests;
@@ -22,10 +23,171 @@ public sealed class ArchiveSearchTests : IDisposable
         _db = Path.Combine(_dir, "devices.db");
         _store = Path.Combine(_dir, "store");
         Directory.CreateDirectory(_store);
+        ArchiveGuard.Mark(_store);
         using var registry = new DeviceRegistry(_db);
     }
 
-    private ArchiveSearch Search() => new(_db);
+    private ArchiveSearch Search() => new(_db, _store);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Searching_a_new_database_does_not_create_schema(bool existingFile)
+    {
+        var path = Path.Combine(_dir, "new.db");
+        if (existingFile)
+            File.WriteAllBytes(path, []);
+
+        Assert.Empty(new ArchiveSearch(path, _store).Find(new ArchiveFilter()));
+        Assert.Equal(existingFile, File.Exists(path));
+        if (existingFile)
+            Assert.Equal(0, new FileInfo(path).Length);
+    }
+
+    [Fact]
+    public void Searching_does_not_create_missing_staff_tables()
+    {
+        _ = new CollectionLog(_db);
+
+        Assert.Empty(Search().Find(new ArchiveFilter()));
+
+        using var db = new SqliteConnection($"Data Source={_db}");
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM sqlite_schema WHERE name IN ('employees', 'departments')";
+        Assert.Equal(0L, command.ExecuteScalar());
+    }
+
+    [Fact]
+    public void A_database_under_a_file_parent_is_an_error()
+    {
+        var parent = Path.Combine(_dir, "blocked");
+        File.WriteAllText(parent, "не каталог");
+
+        Assert.ThrowsAny<IOException>(() => new ArchiveSearch(Path.Combine(parent, "devices.db"), _store)
+            .Find(new ArchiveFilter()));
+    }
+
+    [Fact]
+    public async Task A_search_cancels_while_another_connection_holds_the_database()
+    {
+        _ = new CollectionLog(_db);
+        using var writer = new SqliteConnection($"Data Source={_db};Pooling=False");
+        writer.Open();
+        using var command = writer.CreateCommand();
+        command.CommandText = "BEGIN EXCLUSIVE";
+        command.ExecuteNonQuery();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var query = Task.Run(() => Search().Find(new ArchiveFilter(), token: cancellation.Token));
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+                await query.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            command.CommandText = "ROLLBACK";
+            command.ExecuteNonQuery();
+            try { await query; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Fact]
+    public async Task A_search_can_read_while_another_connection_holds_a_write_reservation()
+    {
+        var camera = Camera("КАМ-1", "Смирнов С.С.", "222222", null);
+        Collected(camera, "запись.mp4");
+        using var writer = new SqliteConnection($"Data Source={_db};Pooling=False");
+        writer.Open();
+        using var command = writer.CreateCommand();
+        command.CommandText = "BEGIN IMMEDIATE";
+        command.ExecuteNonQuery();
+        var query = Task.Run(() => Search().Find(new ArchiveFilter()));
+        try
+        {
+            Assert.Single(await query.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            command.CommandText = "ROLLBACK";
+            command.ExecuteNonQuery();
+            await query;
+        }
+    }
+
+    [Theory]
+    [InlineData("devices")]
+    [InlineData("employees")]
+    [InlineData("departments")]
+    public async Task Search_metadata_reading_cancels_under_an_exclusive_database_lock(string table)
+    {
+        _ = new StaffDirectory(_db);
+        using var registry = new DeviceRegistry(_db, initialize: false);
+        var staff = new StaffDirectory(_db, initialize: false);
+        using var writer = new SqliteConnection($"Data Source={_db};Pooling=False");
+        writer.Open();
+        using var command = writer.CreateCommand();
+        command.CommandText = "BEGIN EXCLUSIVE";
+        command.ExecuteNonQuery();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var query = Task.Run(() =>
+        {
+            if (table == "devices")
+                registry.ListDevices(cancellation.Token);
+            else if (table == "employees")
+                staff.Employees(token: cancellation.Token);
+            else
+                staff.Departments(cancellation.Token);
+        });
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+                await query.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            command.CommandText = "ROLLBACK";
+            command.ExecuteNonQuery();
+            try { await query; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Fact]
+    public void A_cancelled_search_stops_before_opening_the_database()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var path = Path.Combine(_dir, "not-created.db");
+
+        Assert.Throws<OperationCanceledException>(() => new ArchiveSearch(path)
+            .Find(new ArchiveFilter(), token: cancellation.Token));
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void Deletion_does_not_follow_a_database_path_outside_the_archive()
+    {
+        var path = Path.Combine(_dir, "unrelated.mp4");
+        File.WriteAllText(path, "чужой файл");
+        new CollectionLog(_db).Record([new CollectedFile(1, path, 10, null, Now)]);
+
+        var file = new CollectedFile(1, path, 10, null, Now);
+        var result = Search().Delete([new ArchiveRow(file, "1", "", "", "")]);
+
+        Assert.True(File.Exists(path));
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(1, new CollectionLog(_db).Count());
+    }
+
+    [Fact]
+    public void A_database_path_outside_the_archive_is_not_offered_for_viewing_or_export()
+    {
+        var path = Path.Combine(_dir, "credentials.log");
+        File.WriteAllText(path, "password=secret");
+        new CollectionLog(_db).Record([new CollectedFile(1, path, 10, null, Now)]);
+
+        Assert.Empty(Search().Find(new ArchiveFilter()));
+    }
 
     /// <summary>Кладёт файл в архив и заносит его в журнал сбора.</summary>
     private string Collected(long deviceId, string name, DateTime? shotAt = null,

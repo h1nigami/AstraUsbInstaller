@@ -34,9 +34,75 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _poll = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
-    private readonly PortMap _portMap;
-    private readonly Settings _stationSettings = Services.Settings.Load();
+    private Settings _stationSettings = Services.Settings.Load();
     private readonly BackupService _backups;
+    private readonly Dictionary<string, PortViewModel> _extraPorts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Task> _workers = new(StringComparer.Ordinal);
+    private readonly HashSet<Task> _mediaTasks = new();
+    private readonly Func<Mounted?, bool> _releaseMount = MountManager.Release;
+    private CancellationTokenSource _mountStop = new();
+    private bool _stopping;
+    private bool _disposed;
+    private readonly Func<DateTime> _now = () => DateTime.UtcNow;
+    private readonly HashSet<string> _missing = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, CardRecovery> _recoveries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _returnAttempts = new(StringComparer.Ordinal);
+    private DateTime? _busGlitchSince;
+    private int _stopGeneration;
+    [ObservableProperty] private bool _safeRemovalActive;
+    [ObservableProperty] private bool _safeRemovalReady;
+    [ObservableProperty] private string _safeRemovalStatus = "Копирование разрешено";
+
+    [RelayCommand]
+    private async Task StopCollection()
+    {
+        if (_stopping) return;
+        _stopping = true;
+        _stopGeneration++;
+        SafeRemovalActive = true;
+        SafeRemovalReady = false;
+        foreach (var port in Ports.Concat(_extraPorts.Values)) port.SafeToRemove = false;
+        SafeRemovalStatus = "Останавливаем задания и освобождаем носители";
+        _mountStop.Cancel();
+        foreach (var mount in _cancels.Keys.ToArray()) Cancel(mount);
+        try
+        {
+            var jobs = _workers.Values.Concat(_mediaTasks).ToArray();
+            try { await Task.WhenAll(jobs); }
+            catch (Exception error) { CrashLog.Write("остановка сбора", error); }
+            // Ответы монтирования уже поставлены в очередь диспетчера.
+            await _ui.InvokeAsync(() => { });
+            using var operation = OperationGuard.Acquire(exclusive: true);
+            var mounts = _mounted.ToArray();
+            var results = await Task.Run(() => mounts.Select(entry =>
+                (entry.Key, entry.Value, Ok: _releaseMount(entry.Value))).ToArray());
+            foreach (var result in results.Where(r => r.Ok))
+                _mounted.Remove(result.Key);
+            UpdateRemovalStatus(operationHeld: true);
+        }
+        catch (StationBusyException) { UpdateRemovalStatus(); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            SafeRemovalStatus = UserError.Report("Не удалось остановить сбор для извлечения", error);
+        }
+        finally { _stopping = false; }
+    }
+
+    [RelayCommand]
+    private void ResumeCollection()
+    {
+        if (_stopping || !SafeRemovalActive) return;
+        _mountStop.Dispose();
+        _mountStop = new CancellationTokenSource();
+        SafeRemovalActive = false;
+        SafeRemovalReady = false;
+        SafeRemovalStatus = "Копирование разрешено";
+        _finished.Clear();
+        _recoveries.Clear();
+        _returnAttempts.Clear();
+        foreach (var port in Ports.Concat(_extraPorts.Values)) port.SafeToRemove = false;
+        Refresh();
+    }
 
     /// <summary>Камеры, для которых выгрузка уже идёт: повторно не запускаем.</summary>
     private readonly Dictionary<string, long> _running = new(StringComparer.Ordinal);
@@ -101,6 +167,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Пароль спрашивают перед выходом, а не перед разделом.</summary>
     private bool _askingForExit;
+    private string? _bayMount;
+    private string? _bayKey;
 
     /// <summary>Названия разделов для журнала: индекс совпадает с вкладкой.</summary>
     // Имена совпадают с надписями на вкладках: по журналу разбирают, куда
@@ -185,7 +253,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        _offlineKnown = _recent.Keys.ToHashSet(StringComparer.Ordinal);
+        _offlineKnown = _recent.Values.Select(entry => entry.Device.Name).ToHashSet(StringComparer.Ordinal);
         OfflineStatus = "Вставьте флешку с файлом обновления…";
         OfflineWaiting = true;
     }
@@ -410,19 +478,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public event Action? AccessExpired;
 
     /// <summary>Открыт ли сейчас доступ к закрытым разделам.</summary>
-    public bool AccessAllowed => _access.Check(DateTime.Now);
+    public bool AccessAllowed => !Services.Settings.Load().Unreadable && _access.Check(DateTime.Now);
 
     public MainWindowViewModel() : this(UsbWatcher.List)
     {
     }
 
     /// <summary>Опрос носителей передаётся снаружи: так экран можно проверить без железа.</summary>
-    public MainWindowViewModel(Func<IReadOnlyList<UsbDevice>> listDevices, PortMap? portMap = null)
+    public MainWindowViewModel(Func<IReadOnlyList<UsbDevice>> listDevices)
     {
         _listDevices = listDevices;
         AppPaths.EnsureCreated();
-        _portMap = portMap ?? new PortMap(AppPaths.Database);
-        _backups = new BackupService(AppPaths.Database, _stationSettings);
+        _backups = new BackupService(AppPaths.Database);
         Version = VersionInfo.Label();
 
         // Число окон задаётся в настройках: у станций от шести до тридцати
@@ -431,6 +498,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         var bays = Math.Clamp(_stationSettings.BayCount, 6, 30);
         for (var i = 0; i < bays; i++)
             Ports.Add(new PortViewModel { Slot = i });
+        Settings.CanChangeBayCount = count => !Ports.Skip(count).Any(p => p.IsBusy);
+        Settings.BaysChanged += ResizePorts;
 
         // Журнал за годы работы разрастается вместе с базой, поэтому при
         // запуске он подрезается до последних событий.
@@ -633,6 +702,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         // Настройки читаются заново: пароль могли сменить в этом же сеансе.
         var settings = Services.Settings.Load();
 
+        if (settings.Unreadable)
+        {
+            PasswordInput = "";
+            PasswordError = "настройки станции не читаются: доступ закрыт";
+            return;
+        }
+
         if (!PasswordGate.AccountMatches(settings.AdminAccount, AccountInput)
             || !PasswordGate.Matches(settings.PasswordHash, PasswordInput))
         {
@@ -683,6 +759,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
 
         Bay = port;
+        _bayMount = port.MountPoint;
+        _bayKey = port.DeviceKey;
         BayDevice = port.CameraId;
         BayConfirm = "";
         BayVisible = true;
@@ -693,6 +771,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         BayVisible = false;
         Bay = null;
+        _bayMount = null;
+        _bayKey = null;
         BayConfirm = "";
     }
 
@@ -772,7 +852,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     /// <summary>Точка монтирования, которой сейчас занят этот отсек.</summary>
     private string? MountOf(PortViewModel port) =>
-        port.MountPoint is { } mount && _identified.TryGetValue(mount, out var card)
+        (!BayVisible || port != Bay || port.MountPoint == _bayMount && port.DeviceKey == _bayKey)
+            && port.MountPoint is { } mount && _identified.TryGetValue(mount, out var card)
             && card.DeviceId > 0 ? mount : null;
 
     private bool HasAnotherOwner(long deviceId, string mount) =>
@@ -845,10 +926,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
 
         _polling = true;
-        var archiveRoot = _stationSettings.BackupRoot;
+        var settings = Services.Settings.Load();
+        var generation = _stopGeneration;
 
         _ = Task.Run(() =>
         {
+            var archiveRoot = settings.ResolveBackupRoot();
             IReadOnlyList<UsbDevice> found;
             try
             {
@@ -870,9 +953,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             _ui.Post(() =>
             {
                 _polling = false;
+                _stationSettings = settings;
                 _deviceNames = names;
 
-                if (!_demonstrating)
+                if (!_disposed && !_demonstrating && generation == _stopGeneration)
                     Apply(found, storage);
             });
         });
@@ -884,26 +968,55 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private void Apply(IReadOnlyList<UsbDevice> found, StorageState storage)
     {
+        if (SafeRemovalActive && !_stopping)
+            foreach (var entry in _mounted.ToArray())
+                if (found.FirstOrDefault(d => d.Name == entry.Key) is { MountPoint: null }
+                    || !entry.Value.Ours && found.All(d => d.Name != entry.Key))
+                    _mounted.Remove(entry.Key);
         var all = HoldBriefly(found);
         var devices = SplitOfflineMedia(all);
-        var present = devices.Select(MountPointFor).Where(m => !string.IsNullOrEmpty(m))
+        var present = devices.Where(d => !_missing.Contains(DeviceKey(d))).Select(MountPointFor).Where(m => !string.IsNullOrEmpty(m))
             .ToHashSet(StringComparer.Ordinal);
-        foreach (var id in _astraOwners.Keys.Where(id => !present.Contains(_astraOwners[id])).ToArray())
+        foreach (var id in _astraOwners.Keys.Where(id => !present.Contains(_astraOwners[id])
+                     && !_recoveries.Values.Any(r => r.DeviceId == id)).ToArray())
             _astraOwners.Remove(id);
 
-        // Носители раскладываются по закреплённым гнёздам: камера из второго
-        // разъёма занимает второе окно независимо от очерёдности подключения.
-        var placed = _portMap.Arrange(devices, Ports.Count);
+        var deviceKeys = devices.Select(DeviceKey).ToHashSet(StringComparer.Ordinal);
+        foreach (var port in Ports.Where(p => p.DeviceKey is { } key && !deviceKeys.Contains(key)))
+            port.Clear();
+        foreach (var key in _extraPorts.Keys.Where(k => !deviceKeys.Contains(k)).ToArray())
+            _extraPorts.Remove(key);
 
-        for (var i = 0; i < Ports.Count; i++)
+        foreach (var device in devices)
         {
-            if (placed[i] is not { } device)
+            var key = DeviceKey(device);
+            var port = Ports.FirstOrDefault(p => p.DeviceKey == key);
+            if (port is null)
             {
-                Ports[i].Clear();
+                var free = Ports.FirstOrDefault(p => p.DeviceKey is null);
+                if (_extraPorts.TryGetValue(key, out port))
+                {
+                    if (free is not null)
+                    {
+                        port.Slot = free.Slot;
+                        Ports[free.Slot] = port;
+                        _extraPorts.Remove(key);
+                    }
+                }
+                else if (free is not null) port = free;
+                else _extraPorts[key] = port = new PortViewModel { Slot = -1 };
+                if (port.DeviceKey is null) port.Clear();
+                port.DeviceKey = key;
+            }
+            if (_missing.Contains(key))
+            {
+                port.MountPoint = null;
+                port.State = PortState.Waiting;
+                port.Detail = _busGlitchSince is not null
+                    ? "Сбой USB-шины, ждём возврата карты"
+                    : "Устройство переподключается, ждём до 120 секунд";
                 continue;
             }
-
-            var port = Ports[i];
             var mount = MountPointFor(device);
             port.MountPoint = mount;
             var cameraId = "";
@@ -912,8 +1025,49 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var employee = "";
             var department = "";
 
+            if (SafeRemovalActive)
+            {
+                if (mount is not null)
+                    _mounted[device.Name] = new Mounted(mount, MountManager.IsOurs(mount));
+                port.State = PortState.Stopped;
+                port.SafeToRemove = SafeRemovalReady;
+                continue;
+            }
+
             if (mount is not null && Identify(device, mount) is { } card)
             {
+                if (_recoveries.TryGetValue(key, out var recovery))
+                {
+                    if (card.DeviceId <= 0 && _now() < recovery.Until)
+                    {
+                        _identified.Remove(mount);
+                        port.State = PortState.Waiting;
+                        port.Detail = "Карта пока не читается, ждём возвращения";
+                        continue;
+                    }
+                    if (card.DeviceId != recovery.DeviceId || _returnAttempts.GetValueOrDefault(key) > 3)
+                    {
+                        port.State = PortState.Failed;
+                        port.Detail = card.DeviceId != recovery.DeviceId
+                            ? "ID вернувшегося носителя изменился, продолжение запрещено"
+                            : "Карта отключилась повторно: три попытки исчерпаны";
+                        port.FilesLine = port.Detail;
+                        _finished[mount] = BackupStage.Failed;
+                        continue;
+                    }
+                    if (_running.ContainsKey(recovery.MountPoint))
+                    {
+                        port.State = PortState.Waiting;
+                        port.Detail = "Карта вернулась, ожидаем остановки прежнего задания";
+                        continue;
+                    }
+                    if (_chargeOnly.Remove(recovery.MountPoint)) _chargeOnly.Add(mount);
+                    _finished.Remove(recovery.MountPoint);
+                    _finished.Remove(mount);
+                    if (_astraOwners.GetValueOrDefault(card.DeviceId) == recovery.MountPoint)
+                        _astraOwners[card.DeviceId] = mount;
+                    _recoveries.Remove(key);
+                }
                 // Имя, если оператор его задал, иначе номер, как в Python-версии.
                 cameraId = _deviceNames.TryGetValue(card.DeviceId, out var named) ? named : card.CameraId;
                 detail = card.Origin;
@@ -959,6 +1113,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 port.FilesLine = "";
                 port.State = PortState.Detected;
             }
+            else if (mount is not null && _finished.TryGetValue(mount, out var finished))
+                port.State = finished == BackupStage.Done ? PortState.Done : PortState.Failed;
         }
 
         // Камеру вынули, забываем итог, чтобы при следующем подключении
@@ -967,16 +1123,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             _finished.Remove(gone);
 
         foreach (var gone in _identified.Keys.Where(m => !present.Contains(m)).ToArray())
-            _identified.Remove(gone);
+            if (!_recoveries.Values.Any(r => r.MountPoint == gone)) _identified.Remove(gone);
 
         foreach (var gone in _chargeOnly.Where(m => !present.Contains(m)).ToArray())
-            _chargeOnly.Remove(gone);
+            if (!_recoveries.Values.Any(r => r.MountPoint == gone)) _chargeOnly.Remove(gone);
 
         if (_priority is { } waiting && !present.Contains(waiting))
             _priority = null;
 
         // Флешка с обновлением остаётся смонтированной, пока её не вынут.
         ReleaseGoneMedia(all);
+        if (SafeRemovalActive && !_stopping) UpdateRemovalStatus();
 
         Status = devices.Count == 0
             ? "носители не подключены"
@@ -984,7 +1141,49 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         UpdateStorage(storage);
         UpdateSummary(storage);
+        if (_extraPorts.Count > 0)
+            Status += $". не показано носителей: {_extraPorts.Count}; сбор продолжается";
         ApplyRemoteCommands();
+    }
+
+    private static string DeviceKey(UsbDevice device) => string.IsNullOrEmpty(device.FileSystemUuid)
+        ? device.Name : "uuid:" + device.FileSystemUuid;
+
+    private void UpdateRemovalStatus(bool operationHeld = false)
+    {
+        SafeRemovalReady = false;
+        foreach (var port in Ports.Concat(_extraPorts.Values)) port.SafeToRemove = false;
+        try
+        {
+            using var operation = operationHeld ? null : OperationGuard.Acquire(exclusive: true);
+            SafeRemovalReady = _mounted.Count == 0
+                && !_workers.Values.Concat(_mediaTasks).Any(task => !task.IsCompleted);
+            SafeRemovalStatus = SafeRemovalReady
+                ? "Задания остановлены. Можно извлекать регистраторы"
+                : _mounted.Values.Any(m => !m.Ours)
+                    ? "Копирование остановлено. Выполните безопасное извлечение в системе"
+                    : "Не удалось размонтировать носитель. Извлекать его пока нельзя";
+        }
+        catch (StationBusyException)
+        {
+            SafeRemovalReady = false;
+            SafeRemovalStatus = "Идёт выгрузка или обслуживание. Дождитесь и нажмите «Стоп» снова";
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            SafeRemovalStatus = UserError.Report("Не удалось проверить безопасность извлечения", error);
+        }
+        foreach (var port in Ports.Concat(_extraPorts.Values)) port.SafeToRemove = SafeRemovalReady;
+    }
+
+    private void ResizePorts(int count, int perRow)
+    {
+        while (Ports.Count > count && Ports[^1].IsFree)
+            Ports.RemoveAt(Ports.Count - 1);
+        while (Ports.Count < count)
+            Ports.Add(new PortViewModel { Slot = Ports.Count });
+        BaysPerRow = perRow;
+        Refresh();
     }
 
     /// <summary>
@@ -994,27 +1193,78 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private IReadOnlyList<UsbDevice> HoldBriefly(IReadOnlyList<UsbDevice> devices)
     {
-        var now = DateTime.Now;
+        var now = _now();
         var hold = _poll.Interval * 1.5;
-
+        var present = devices.Select(DeviceKey).ToHashSet(StringComparer.Ordinal);
+        _missing.Clear();
+        if (_recent.Count > 1 && !_recent.Keys.Any(present.Contains))
+            _busGlitchSince ??= now;
+        else
+            _busGlitchSince = null;
         foreach (var device in devices)
-            _recent[device.Name] = (device, now);
-
-        var present = devices.Select(d => d.Name).ToHashSet(StringComparer.Ordinal);
-        var result = devices.ToList();
-
-        foreach (var (name, entry) in _recent.ToArray())
         {
-            if (present.Contains(name))
-                continue;
-
-            if (now - entry.Seen <= hold)
-                result.Add(entry.Device);
-            else
-                _recent.Remove(name);
+            var key = DeviceKey(device);
+            foreach (var old in _recent.Where(entry => entry.Value.Device.Name == device.Name && entry.Key != key).ToArray())
+            {
+                ForgetCard(old.Key, old.Value.Device);
+                _recent.Remove(old.Key);
+            }
+            if (_recent.TryGetValue(key, out var previous)
+                && (previous.Device.Name != device.Name || previous.Device.MountPoint != device.MountPoint))
+                BeginRecovery(key, previous.Device, previous.Seen.AddSeconds(120));
+            _recent[key] = (device, now);
         }
-
+        var result = devices.ToList();
+        foreach (var (key, entry) in _recent.ToArray())
+        {
+            if (present.Contains(key))
+                continue;
+            BeginRecovery(key, entry.Device, entry.Seen.AddSeconds(120));
+            var waiting = _recoveries.TryGetValue(key, out var recovery)
+                ? now < recovery.Until : now - entry.Seen < hold;
+            var busHold = _busGlitchSince is { } since && now - since < TimeSpan.FromSeconds(20);
+            if (waiting || busHold)
+            {
+                _missing.Add(key);
+                result.Add(entry.Device);
+            }
+            else
+            {
+                ForgetCard(key, entry.Device);
+                _recent.Remove(key);
+            }
+        }
         return result;
+    }
+
+    private void BeginRecovery(string key, UsbDevice device, DateTime until)
+    {
+        if (SafeRemovalActive || _disposed) return;
+        if (_recoveries.ContainsKey(key)) return;
+        var mount = device.MountPoint ?? _mounted.GetValueOrDefault(device.Name)?.Path;
+        if (mount is null) return;
+        Cancel(mount);
+        if (string.IsNullOrEmpty(device.FileSystemUuid)
+            || !_identified.TryGetValue(mount, out var info) || info.DeviceId <= 0) return;
+        _recoveries[key] = new CardRecovery(info.DeviceId, mount, until);
+        _returnAttempts[key] = _returnAttempts.GetValueOrDefault(key) + 1;
+        _identified.Remove(mount);
+    }
+
+    private void ForgetCard(string key, UsbDevice device)
+    {
+        var mount = device.MountPoint ?? _mounted.GetValueOrDefault(device.Name)?.Path;
+        if (mount is not null)
+        {
+            Cancel(mount);
+            _finished.Remove(mount);
+            _identified.Remove(mount);
+            _chargeOnly.Remove(mount);
+            foreach (var id in _astraOwners.Keys.Where(id => _astraOwners[id] == mount).ToArray())
+                _astraOwners.Remove(id);
+        }
+        _recoveries.Remove(key);
+        _returnAttempts.Remove(key);
     }
 
     /// <summary>
@@ -1024,8 +1274,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private string? MountPointFor(UsbDevice device)
     {
-        if (!string.IsNullOrEmpty(device.MountPoint))
+        if (SafeRemovalActive || _disposed)
             return device.MountPoint;
+        if (!string.IsNullOrEmpty(device.MountPoint))
+        {
+            _mounted[device.Name] = new Mounted(device.MountPoint, MountManager.IsOurs(device.MountPoint));
+            return device.MountPoint;
+        }
 
         if (_mounted.TryGetValue(device.Name, out var ours))
             return ours.Path;
@@ -1035,16 +1290,24 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             var name = device.Name;
             var grace = TimeSpan.FromSeconds(_stationSettings.MountGraceSeconds);
 
-            _ = Task.Run(() =>
+            var token = _mountStop.Token;
+            var task = Task.Run(() =>
             {
-                var mounted = MountManager.Ensure(name, grace);
+                var mounted = MountManager.Ensure(name, grace, token);
                 _ui.Post(() =>
                 {
+                    if (_disposed)
+                    {
+                        if (mounted is not null) _ = Task.Run(() => _releaseMount(mounted));
+                        _mounting.Remove(name);
+                        return;
+                    }
                     if (mounted is not null)
                         _mounted[name] = mounted;
                     _mounting.Remove(name);
                 });
             });
+            TrackMediaTask(task);
         }
 
         return null;
@@ -1061,8 +1324,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         foreach (var name in _mounted.Keys.Where(n => !connected.Contains(n)).ToArray())
         {
             var mount = _mounted[name];
-            _mounted.Remove(name);
-            Task.Run(() => MountManager.Release(mount));
+            if (_running.ContainsKey(mount.Path) || _identifying.Contains(mount.Path)) continue;
+            if (!mount.Ours)
+            {
+                _mounted.Remove(name);
+                continue;
+            }
+            var task = Task.Run(() => _releaseMount(mount));
+            TrackMediaTask(task);
+            _ = task.ContinueWith(result => _ui.Post(() =>
+            {
+                if (result.IsCompletedSuccessfully && result.Result
+                    && _mounted.GetValueOrDefault(name) == mount)
+                    _mounted.Remove(name);
+                if (SafeRemovalActive && !_stopping) UpdateRemovalStatus();
+            }));
         }
     }
 
@@ -1074,24 +1350,29 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (_identified.TryGetValue(mount, out var cached))
             return cached;
+        if (SafeRemovalActive || _disposed) return null;
 
         // Чтение носителя и базы не блокирует интерфейс при подключении.
         if (_identifying.Add(mount))
         {
             var name = device.Name;
 
-            _ = Task.Run(() =>
+            var task = Task.Run(() =>
             {
                 var info = ReadCard(name, mount);
+                var connected = _listDevices().Any(current => current.Name == name
+                    && DeviceKey(current) == DeviceKey(device));
 
                 _ui.Post(() =>
                 {
-                    if (info is not null && StillConnected(name))
+                    if (!_disposed && !SafeRemovalActive && info is not null && connected
+                        && _recent.TryGetValue(DeviceKey(device), out var latest) && latest.Device == device)
                         _identified[mount] = info;
 
                     _identifying.Remove(mount);
                 });
             });
+            TrackMediaTask(task);
         }
 
         return null;
@@ -1147,6 +1428,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private void StartBackup(PortViewModel port, long deviceId, string mountPoint)
     {
+        if (SafeRemovalActive || _disposed) return;
         if (_running.ContainsKey(mountPoint) || _finished.ContainsKey(mountPoint))
             return;
 
@@ -1166,19 +1448,24 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         var cts = new CancellationTokenSource();
+        var key = port.DeviceKey;
         _cancels[mountPoint] = cts;
         _running[mountPoint] = deviceId;
         port.State = PortState.Scanning;
 
         var progress = new Progress<BackupProgress>(report =>
         {
-            if (cts.IsCancellationRequested || _chargeOnly.Contains(mountPoint))
+            if (_disposed || SafeRemovalActive || cts.IsCancellationRequested || _chargeOnly.Contains(mountPoint))
                 return;
 
-            port.Progress = report.Progress;
-            port.Detail = report.Detail;
-            port.FilesLine = report.Detail;
-            port.State = report.Stage switch
+            var current = Ports.Concat(_extraPorts.Values).FirstOrDefault(p =>
+                p.DeviceKey == key && p.MountPoint == mountPoint);
+            if (current is null || !_identified.TryGetValue(mountPoint, out var card) || card.DeviceId != deviceId)
+                return;
+            current.Progress = report.Progress;
+            current.Detail = report.Detail;
+            current.FilesLine = report.Detail;
+            current.State = report.Stage switch
             {
                 BackupStage.Scanning => PortState.Scanning,
                 BackupStage.Copying => PortState.Copying,
@@ -1190,24 +1477,54 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             {
                 _finished[mountPoint] = report.Stage;
 
-                if (_stationSettings.VoiceHints)
+                if (_stationSettings.VoiceHints && current.Slot >= 0)
                     Voice.Say(report.Stage == BackupStage.Done
-                        ? $"Отсек {port.Slot + 1}, можно забирать регистратор"
-                        : $"Отсек {port.Slot + 1}, ошибка загрузки", DateTime.Now);
+                        ? $"Отсек {current.Slot + 1}, копирование завершено"
+                        : $"Отсек {current.Slot + 1}, ошибка загрузки", DateTime.Now);
             }
         });
 
-        _ = Task.Run(async () =>
+        _workers[mountPoint] = Task.Run(async () =>
         {
             try
             {
                 await _backups.RunAsync(deviceId, mountPoint, progress, cts.Token);
+            }
+            catch (StationBusyException)
+            {
+                _ui.Post(() =>
+                {
+                    var current = Ports.Concat(_extraPorts.Values).FirstOrDefault(p =>
+                        p.DeviceKey == key && p.MountPoint == mountPoint);
+                    if (current is not null)
+                    {
+                        current.State = PortState.Detected;
+                        current.Detail = "станция обновляется, ожидаем освобождения";
+                    }
+                    _finished.Remove(mountPoint);
+                });
+            }
+            catch (DeviceLostException)
+            {
+                _ui.Post(() =>
+                {
+                    if (_disposed || SafeRemovalActive || key is null) return;
+                    var device = _recent.GetValueOrDefault(key).Device;
+                    if (device is not null) BeginRecovery(key, device, _now().AddSeconds(120));
+                    var current = Ports.Concat(_extraPorts.Values).FirstOrDefault(p => p.DeviceKey == key);
+                    if (current is not null)
+                    {
+                        current.State = PortState.Waiting;
+                        current.Detail = "Карта перестала отвечать, ждём возвращения";
+                    }
+                });
             }
             finally
             {
                 _ui.Post(() =>
                 {
                     _running.Remove(mountPoint);
+                    _workers.Remove(mountPoint);
                     _cancels.Remove(mountPoint);
                     cts.Dispose();
 
@@ -1216,6 +1533,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 });
             }
         });
+    }
+
+    private void TrackMediaTask(Task task)
+    {
+        _mediaTasks.Add(task);
+        _ = task.ContinueWith(_ => _ui.Post(() => _mediaTasks.Remove(task)));
     }
 
     /// <summary>
@@ -1389,17 +1712,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// <summary>Сводка по отсекам, как в прототипе станции.</summary>
     private void UpdateSummary(StorageState storage)
     {
-        var copying = Ports.Count(p => p.State is PortState.Copying or PortState.Scanning
+        var allPorts = Ports.Concat(_extraPorts.Values).ToArray();
+        var copying = allPorts.Count(p => p.State is PortState.Copying or PortState.Scanning
                                        or PortState.Detected);
-        var done = Ports.Count(p => p.State == PortState.Done);
-        var failed = Ports.Count(p => p.State == PortState.Failed);
+        var done = allPorts.Count(p => p.State == PortState.Done);
+        var failed = allPorts.Count(p => p.State == PortState.Failed);
         var free = Ports.Count(p => p.IsFree);
 
         Summary = $"копирование {copying} · готово {done} · ошибки {failed} · свободно {free}";
 
         // Отметка занятости для службы обновления: пока идёт чтение списка
         // или запись, подменять файлы программы нельзя.
-        if (copying > 0)
+        if (copying > 0 || _running.Count > 0 || _identifying.Count > 0 || _mounting.Count > 0)
             BusyMarker.Touch();
 
         PublishSnapshot(copying, done, failed, free, storage);
@@ -1504,6 +1828,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
+        Search.CancelSearch();
+        SafeRemovalActive = true;
+        _mountStop.Cancel();
+        foreach (var mount in _cancels.Keys.ToArray()) Cancel(mount);
         _poll.Stop();
         _clock.Stop();
 
@@ -1511,9 +1841,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // Свои монтирования отпускаем при выходе: иначе карта останется
         // смонтированной, и рабочий стол не сможет с ней работать.
-        foreach (var mount in _mounted.Values)
-            MountManager.Release(mount);
-        _mounted.Clear();
+        var mounts = _mounted.Values.ToArray();
+        _ = Task.WhenAll(_workers.Values.Concat(_mediaTasks)).ContinueWith(_ =>
+        {
+            foreach (var mount in mounts) _releaseMount(mount);
+        });
     }
 }
 
@@ -1527,3 +1859,5 @@ internal sealed record CardInfo(
     string PersonnelNo,
     string Employee,
     string Department);
+
+internal sealed record CardRecovery(long DeviceId, string MountPoint, DateTime Until);

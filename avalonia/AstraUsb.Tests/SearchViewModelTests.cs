@@ -9,18 +9,22 @@ public sealed class SearchViewModelTests : IDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-searchvm-").FullName;
     private readonly string _db;
     private readonly string _path;
+    private readonly string _archive;
 
     public SearchViewModelTests()
     {
         _db = Path.Combine(_dir, "devices.db");
-        _path = Path.Combine(_dir, "record.mp4");
+        _archive = Path.Combine(_dir, "archive");
+        _path = Path.Combine(_archive, "Device1", "record.mp4");
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        ArchiveGuard.Mark(_archive);
         File.WriteAllText(_path, "запись");
         using var registry = new DeviceRegistry(_db);
         new CollectionLog(_db).Record([new CollectedFile(1, _path, 10, null,
             new DateTime(2026, 9, 2, 23, 59, 59).AddMilliseconds(500))]);
     }
 
-    private SearchViewModel Model() => new(_db) { From = "02.09.2026", To = "03.09.2026" };
+    private SearchViewModel Model() => new(_db, _archive) { From = "02.09.2026", To = "03.09.2026" };
 
     [Fact]
     public async Task Protecting_a_search_result_prevents_its_deletion_without_another_search()

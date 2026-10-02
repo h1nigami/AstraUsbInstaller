@@ -23,6 +23,34 @@ public sealed class BackupServiceTests : IDisposable
     }
 
     [Fact]
+    public void Successive_mountpoints_keep_one_logged_key_and_its_protection()
+    {
+        var settings = new Settings { BackupRoot = Path.Combine(_root, "selected") };
+        var db = Path.Combine(_root, "devices.db");
+        var source = Path.Combine(_root, "source.mp4");
+        File.WriteAllText(source, "recording");
+        var service = new BackupService(db, settings);
+        var record = typeof(BackupService).GetMethod("RecordCollected",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var key = Path.Combine(settings.BackupRoot, "Device7", "record.mp4");
+        var log = new CollectionLog(db);
+        log.Record([new CollectedFile(7, key, 9, null, DateTime.Now)]);
+        log.SetImportant(key, true);
+
+        foreach (var mount in new[] { "first-mount", "second-mount" })
+        {
+            var live = Path.Combine(_root, mount);
+            var saved = Path.Combine(live, "Device7", "record.mp4");
+            var copied = new CopyResult(1, 9, new Dictionary<string, string> { [source] = saved }, 0);
+            Assert.Equal(true, record.Invoke(service, [7L, copied, DateTime.Now, settings, live]));
+        }
+
+        var file = Assert.Single(log.CollectedBetween(DateTime.MinValue, DateTime.MaxValue));
+        Assert.Equal(key, file.DestPath);
+        Assert.True(file.Important);
+    }
+
+    [Fact]
     public async Task A_corrupt_database_is_logged_without_exposing_SQLite_details_in_progress()
     {
         var source = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
@@ -56,6 +84,16 @@ public sealed class BackupServiceTests : IDisposable
         await service.RunAsync(1, source, progress);
 
         Assert.Equal(BackupStage.Failed, progress.Updates.Last().Stage);
+    }
+
+    [Fact]
+    public async Task A_source_removed_before_identification_requests_recovery()
+    {
+        var progress = new CapturedProgress();
+        var service = new BackupService(Path.Combine(_root, "devices.db"), new Settings());
+        await Assert.ThrowsAsync<DeviceLostException>(() =>
+            service.RunAsync(1, Path.Combine(_root, "removed"), progress));
+        Assert.Empty(progress.Updates);
     }
 
     [Fact]
@@ -239,6 +277,57 @@ public sealed class BackupServiceTests : IDisposable
     {
         Assert.False(File.Exists(Settings.FilePath));
         Assert.False(Settings.Load().Unreadable);
+    }
+
+    [Fact]
+    public async Task A_new_session_uses_settings_saved_after_service_creation()
+    {
+        var first = Path.Combine(_root, "first");
+        var second = Path.Combine(_root, "second");
+        Assert.True(ArchiveGuard.Mark(first));
+        Assert.True(ArchiveGuard.Mark(second));
+        Assert.True(new Settings { BackupRoot = first, MinFreeGb = 0 }.Save());
+        var service = new BackupService(AppPaths.Database);
+        var changed = Settings.Load();
+        changed.BackupRoot = second;
+        changed.DeleteVideoAfterCopy = true;
+        Assert.True(changed.Save());
+        var dcim = Directory.CreateDirectory(Path.Combine(_root, "session", "DCIM")).FullName;
+        var source = Path.GetDirectoryName(dcim)!;
+        var recording = Path.Combine(dcim, "A11_1234567_222222_20260915120000_0001.mp4");
+        File.WriteAllText(recording, "recording");
+        await service.RunAsync(1234567, source, new CapturedProgress());
+        Assert.True(File.Exists(Path.Combine(second, "Device1234567", "DCIM", Path.GetFileName(recording))));
+        Assert.False(File.Exists(recording));
+        Assert.False(Directory.Exists(Path.Combine(first, "Device1234567")));
+    }
+
+    [Fact]
+    public async Task Cancellation_after_last_file_keeps_source_videos()
+    {
+        var dcim = Directory.CreateDirectory(Path.Combine(_root, "cancel", "DCIM")).FullName;
+        var source = Path.GetDirectoryName(dcim)!;
+        var recording = Path.Combine(dcim, "A11_1234567_222222_20260915120000_0001.mp4");
+        File.WriteAllText(recording, "recording");
+        var settings = new Settings { BackupRoot = Path.Combine(_root, "archive"), MinFreeGb = 0, DeleteVideoAfterCopy = true };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        using var cancellation = new CancellationTokenSource();
+        var progress = new CapturedProgress { OnReport = p => { if (p.Stage == BackupStage.Copying) cancellation.Cancel(); } };
+        await new BackupService(AppPaths.Database, settings).RunAsync(1234567, source, progress, cancellation.Token);
+        Assert.Equal(BackupStage.Failed, progress.Updates.Last().Stage);
+        Assert.True(File.Exists(recording));
+    }
+
+    [Fact]
+    public async Task A_busy_maintenance_lock_is_reported_to_the_caller_for_retry()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "busy", "LOG")).Parent!.FullName;
+        File.WriteAllText(Path.Combine(source, "LOG", "log.txt"), "#ID:1\n");
+        var settings = new Settings { BackupRoot = Path.Combine(_root, "archive"), MinFreeGb = 0 };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        using var maintenance = OperationGuard.Acquire(exclusive: true, dbPath: AppPaths.Database);
+        await Assert.ThrowsAsync<StationBusyException>(() => new BackupService(AppPaths.Database, settings)
+            .RunAsync(1, source, new CapturedProgress()));
     }
 
     public void Dispose()

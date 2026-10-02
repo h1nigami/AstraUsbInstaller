@@ -30,13 +30,17 @@ public static class MediaTools
     };
 
     /// <summary>Открывает запись тем, чем система открывает такие файлы.</summary>
-    public static MediaResult Open(string path)
+    public static MediaResult Open(string path, string? archiveRoot = null, string? dbPath = null)
     {
-        if (!File.Exists(path))
-            return new MediaResult(false, "файла больше нет в архиве");
-
         try
         {
+            using var operation = OperationGuard.Acquire(dbPath: dbPath);
+            var settings = archiveRoot is null ? Settings.Load() : null;
+            using var archive = ArchiveGuard.Open(archiveRoot ?? settings!.ResolveBackupRoot(), settings: settings);
+            path = (settings ?? Settings.Load()).ArchivePathResolver(archive.Root)(path);
+            if (!File.Exists(path))
+                return new MediaResult(false, "файла больше нет в архиве");
+            using var input = archive.OpenRead(Path.GetRelativePath(archive.Root, path));
             if (OperatingSystem.IsWindows())
             {
                 Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
@@ -45,16 +49,20 @@ public static class MediaTools
 
             // На Astra Linux открытие идёт через xdg-open: он спрашивает у
             // рабочего стола, чем открывать такой файл.
-            var proc = Process.Start(new ProcessStartInfo("xdg-open", path)
+            using var proc = Process.Start(new ProcessStartInfo("xdg-open")
             {
                 UseShellExecute = false,
-                RedirectStandardError = true,
+                ArgumentList = { path },
             });
 
             if (proc is null)
                 return new MediaResult(false, "не удалось запустить просмотр");
 
             return new MediaResult(true, "запись открыта");
+        }
+        catch (StationBusyException)
+        {
+            return new MediaResult(false, "Станция занята, повторите просмотр после завершения обслуживания");
         }
         catch (Exception e)
         {
@@ -77,8 +85,16 @@ public static class MediaTools
             if (proc is null)
                 return false;
 
-            proc.StandardOutput.ReadToEnd();
-            return proc.WaitForExit(5000) && proc.ExitCode == 0;
+            var output = proc.StandardOutput.ReadToEndAsync();
+            var error = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(5000))
+            {
+                proc.Kill(entireProcessTree: true);
+                return false;
+            }
+            output.GetAwaiter().GetResult();
+            error.GetAwaiter().GetResult();
+            return proc.ExitCode == 0;
         }
         catch (Exception)
         {
@@ -91,11 +107,9 @@ public static class MediaTools
     /// трогается: он остаётся тем, что собрано с регистратора.
     /// </summary>
     /// <returns>Путь к новому файлу или причину отказа.</returns>
-    public static MediaResult Convert(string path, string format)
+    public static MediaResult Convert(string path, string format, string? archiveRoot = null,
+        string? dbPath = null)
     {
-        if (!File.Exists(path))
-            return new MediaResult(false, "файла больше нет в архиве");
-
         var wanted = (format ?? "").Trim().TrimStart('.').ToLowerInvariant();
         if (wanted.Length == 0)
             return new MediaResult(false, "не выбран формат");
@@ -103,46 +117,55 @@ public static class MediaTools
         if (!FormatsFor(MediaKinds.Of(path)).Contains(wanted))
             return new MediaResult(false, $"в этот формат такую запись не переводят: {wanted}");
 
-        var target = Path.Combine(
-            Path.GetDirectoryName(path) ?? ".",
-            $"{Path.GetFileNameWithoutExtension(path)}_копия.{wanted}");
-
-        if (File.Exists(target))
-            return new MediaResult(false, $"копия уже есть: {Path.GetFileName(target)}");
-
         try
         {
-            var info = new ProcessStartInfo("ffmpeg")
+            using var operation = OperationGuard.Acquire(dbPath: dbPath);
+            var settings = archiveRoot is null ? Settings.Load() : null;
+            using var archive = ArchiveGuard.Open(archiveRoot ?? settings!.ResolveBackupRoot(), settings: settings);
+            path = (settings ?? Settings.Load()).ArchivePathResolver(archive.Root)(path);
+            if (!File.Exists(path))
+                return new MediaResult(false, "файла больше нет в архиве");
+            var target = Path.Combine(Path.GetDirectoryName(path)!,
+                $"{Path.GetFileNameWithoutExtension(path)}_копия.{wanted}");
+            if (File.Exists(target))
+                return new MediaResult(false, $"копия уже есть: {Path.GetFileName(target)}");
+            using var input = archive.OpenRead(Path.GetRelativePath(archive.Root, path));
+            var inputPath = OperatingSystem.IsLinux()
+                ? $"/proc/{Environment.ProcessId}/fd/{input.SafeFileHandle.DangerousGetHandle()}" : path;
+            archive.ProduceFile(Path.GetRelativePath(archive.Root, target), outputPath =>
             {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            };
-            // -nostdin: без него ffmpeg ждёт ввода и подвешивает станцию.
-            foreach (var argument in new[] { "-nostdin", "-y", "-i", path, target })
-                info.ArgumentList.Add(argument);
-
-            using var proc = Process.Start(info);
-            if (proc is null)
-                return new MediaResult(false, "ffmpeg не запустился");
-
-            proc.StandardOutput.ReadToEnd();
-            var error = proc.StandardError.ReadToEnd();
-
-            if (!proc.WaitForExit(600_000))
-            {
-                try { proc.Kill(entireProcessTree: true); } catch (Exception) { }
-                return new MediaResult(false, "преобразование затянулось и прервано");
-            }
-
-            if (proc.ExitCode != 0)
-            {
-                Cleanup(target);
-                return new MediaResult(false, UserError.Report("Не удалось преобразовать запись",
-                    new InvalidOperationException(error)));
-            }
+                var info = new ProcessStartInfo("ffmpeg")
+                {
+                    RedirectStandardOutput = true, RedirectStandardError = true,
+                    UseShellExecute = false, CreateNoWindow = true,
+                };
+                var image = wanted is "jpg" or "png" or "bmp";
+                var muxer = image ? "image2" : wanted == "wma" ? "asf" : wanted;
+                foreach (var argument in new[] { "-nostdin", "-y", "-i", inputPath, "-f", muxer })
+                    info.ArgumentList.Add(argument);
+                if (image)
+                    foreach (var argument in new[] { "-c:v", wanted == "jpg" ? "mjpeg" : wanted, "-frames:v", "1" })
+                        info.ArgumentList.Add(argument);
+                info.ArgumentList.Add(outputPath);
+                using var proc = Process.Start(info) ?? throw new IOException("ffmpeg не запустился");
+                var output = proc.StandardOutput.ReadToEndAsync();
+                var error = proc.StandardError.ReadToEndAsync();
+                if (!proc.WaitForExit(600_000))
+                {
+                    proc.Kill(entireProcessTree: true);
+                    throw new IOException("преобразование затянулось и прервано");
+                }
+                var errors = error.GetAwaiter().GetResult();
+                output.GetAwaiter().GetResult();
+                if (proc.ExitCode != 0)
+                    throw new InvalidOperationException(errors);
+            });
 
             return new MediaResult(true, Path.GetFileName(target));
+        }
+        catch (StationBusyException)
+        {
+            return new MediaResult(false, "Станция занята, повторите преобразование после завершения обслуживания");
         }
         catch (System.ComponentModel.Win32Exception error)
         {
@@ -152,21 +175,7 @@ public static class MediaTools
         }
         catch (Exception e)
         {
-            Cleanup(target);
             return new MediaResult(false, UserError.Report("Не удалось преобразовать запись", e));
-        }
-    }
-
-    /// <summary>Убирает недоделанный файл: половина записи хуже её отсутствия.</summary>
-    private static void Cleanup(string path)
-    {
-        try
-        {
-            if (File.Exists(path))
-                File.Delete(path);
-        }
-        catch (Exception)
-        {
         }
     }
 }

@@ -3,7 +3,7 @@
 # docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 -v "${PWD}:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh /src/avalonia/AstraUsb.Tests/updater-integration.sh busy
 set -eu
 [ "${UPDATER_TEST_CONTAINER:-}" = 1 ] && [ -f /.dockerenv ] || exit 2
-case "$1" in busy|mismatch|restarts|success) ;; *) exit 2 ;; esac
+case "$1" in busy|offline-busy|offline-lock|mismatch|restarts|success|handoff) ;; *) exit 2 ;; esac
 mkdir -p /tmp/integration
 cat > /tmp/integration/Integration.csproj <<'PROJECT'
 <Project Sdk="Microsoft.NET.Sdk">
@@ -16,6 +16,7 @@ cat > /tmp/integration/Integration.csproj <<'PROJECT'
   <ItemGroup>
     <Compile Include="/src/avalonia/AstraUsb.Tests/UpdaterIntegration.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/Updater.cs" />
+    <Compile Include="/src/avalonia/AstraUsb/Services/OperationGuard.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/Release.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/AppPaths.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/BusyMarker.cs" />
@@ -26,6 +27,10 @@ PROJECT
 dotnet build /tmp/integration/Integration.csproj -o /tmp/test-app --verbosity quiet
 cat > /bin/systemctl <<'MOCK'
 #!/bin/sh
+if [ "$1" != reset-failed ] && flock -n -s "$UPDATER_TEST_APP/data/devices.db.operations.lock" true; then
+    echo 'потеряна блокировка перед проверкой или откатом' >&2
+    exit 1
+fi
 case "$1" in
     is-active) echo active ;;
     show) cat /tmp/update-restarts ;;

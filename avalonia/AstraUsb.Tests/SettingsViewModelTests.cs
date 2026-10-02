@@ -12,6 +12,16 @@ public sealed class SettingsViewModelTests : IDisposable
 
     public SettingsViewModelTests() => AppPaths.Root = _dir;
 
+    [Fact]
+    public void A_removed_slot_section_opens_station_settings()
+    {
+        var model = new SettingsViewModel(AppPaths.Database);
+
+        model.OpenSectionCommand.Execute("slots");
+
+        Assert.True(model.IsStationSection);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -60,27 +70,6 @@ public sealed class SettingsViewModelTests : IDisposable
         Assert.DoesNotContain("SQLite", model.FtpState);
         Assert.Contains("Не удалось", model.FtpState);
         Assert.Contains("SqliteException", File.ReadAllText(CrashLog.FilePath));
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void Slot_buttons_report_database_failure_without_throwing(bool clear)
-    {
-        var model = new SettingsViewModel(AppPaths.Database);
-        using (var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={AppPaths.Database}"))
-            Microsoft.Data.Sqlite.SqliteConnection.ClearPool(connection);
-        File.WriteAllText(AppPaths.Database, "сломанная база");
-
-        var error = Record.Exception(() =>
-        {
-            if (clear) model.ClearSlotsCommand.Execute(null);
-            else model.ReloadSlotsCommand.Execute(null);
-        });
-
-        Assert.Null(error);
-        Assert.Contains("Не удалось", model.Hint);
-        Assert.DoesNotContain("SQLite", model.Hint);
     }
 
     [Fact]

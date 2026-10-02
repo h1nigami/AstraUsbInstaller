@@ -65,6 +65,32 @@ else
 fi
 
 echo "--- Ставим пакет..."
+# Проверяем занятость до apt: старый prerm мог ещё не знать о блокировке.
+STATION_DATA="/opt/astra-usb-avalonia/data"
+mkdir -p "$STATION_DATA"
+exec 9>>"$STATION_DATA/devices.db.operations.lock"
+if ! flock -n -x 9; then
+    echo "ОШИБКА: станция занята, установка отложена"
+    exit 1
+fi
+if [ -f "$STATION_DATA/.copying" ] && \
+    [ "$(( $(date +%s) - $(stat -c %Y "$STATION_DATA/.copying") ))" -lt 60 ]; then
+    echo "ОШИБКА: станция собирает записи, установка отложена"
+    exit 1
+fi
+if [ -d /run/systemd/system ]; then
+    for unit in astra-usb-avalonia-update.timer astra-usb-avalonia-update.service astra-usb-avalonia.service; do
+        state="$(systemctl show -p LoadState --value "$unit")"
+        [ "$state" = not-found ] && continue
+        systemctl stop "$unit"
+        if systemctl is-active --quiet "$unit"; then
+            echo "ОШИБКА: служба $unit не остановилась"
+            exit 1
+        fi
+    done
+fi
+# Между скриптами dpkg новые задания не запускаются: киоск и апдейтер остановлены.
+exec 9>&-
 apt-get update -qq || true
 apt-get install -y "$WORK/$NAME"
 

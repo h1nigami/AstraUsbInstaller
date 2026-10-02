@@ -127,30 +127,8 @@ public static class VideoPreview
     /// <summary>Запускает средство и отдаёт его вывод. Отказ это не исключение.</summary>
     private static bool Run(ProcessStartInfo info, int timeoutMs, out string output)
     {
-        output = "";
-
-        try
-        {
-            using var proc = Process.Start(info);
-            if (proc is null)
-                return false;
-
-            output = proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
-
-            if (!proc.WaitForExit(timeoutMs))
-            {
-                try { proc.Kill(entireProcessTree: true); } catch (Exception) { }
-                return false;
-            }
-
-            return proc.ExitCode == 0;
-        }
-        catch (Exception)
-        {
-            // Средства может не быть в системе: тогда просмотр по кадрам
-            // просто недоступен, а станция работает дальше.
-            return false;
-        }
+        var result = UsbWatcher.RunProcess(info, timeoutMs);
+        output = result ?? "";
+        return result is not null;
     }
 }

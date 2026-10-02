@@ -40,16 +40,53 @@ cat > "$ROOT/DEBIAN/postinst" << 'POSTINST'
 #!/bin/sh
 set -e
 
-# Файлы уже разложены, установщику остаётся правило udev и службы.
-/opt/astra-usb-avalonia/install_native.sh --units-only
+case "$1" in
+    configure)
+        /opt/astra-usb-avalonia/install_native.sh --units-only
+        ;;
+    abort-upgrade|abort-remove|abort-deconfigure)
+        # start не прерывает копирование, если отказ произошёл до остановки киоска.
+        if [ -d /run/systemd/system ]; then
+            systemctl start astra-usb-avalonia.service astra-usb-avalonia-update.timer
+        fi
+        ;;
+esac
 POSTINST
 
-cat > "$ROOT/DEBIAN/prerm" << 'PRERM'
+cat > "$ROOT/DEBIAN/preinst" << 'PREINST'
 #!/bin/sh
 set -e
 
-systemctl disable --now astra-usb-avalonia.service 2>/dev/null || true
-systemctl disable --now astra-usb-avalonia-update.timer 2>/dev/null || true
+STATION_DATA="/opt/astra-usb-avalonia/data"
+mkdir -p "$STATION_DATA"
+exec 9>>"$STATION_DATA/devices.db.operations.lock"
+if ! flock -n -x 9; then
+    echo "ОШИБКА: станция занята, установка отложена"
+    exit 1
+fi
+if [ -f "$STATION_DATA/.copying" ] && \
+    [ "$(( $(date +%s) - $(stat -c %Y "$STATION_DATA/.copying") ))" -lt 60 ]; then
+    echo "ОШИБКА: станция собирает записи, установка отложена"
+    exit 1
+fi
+if [ -d /run/systemd/system ]; then
+    for unit in astra-usb-avalonia-update.timer astra-usb-avalonia-update.service astra-usb-avalonia.service; do
+        state="$(systemctl show -p LoadState --value "$unit")"
+        [ "$state" = not-found ] && continue
+        systemctl stop "$unit"
+        if systemctl is-active --quiet "$unit"; then
+            echo "ОШИБКА: служба $unit не остановилась"
+            exit 1
+        fi
+    done
+fi
+PREINST
+
+cp "$ROOT/DEBIAN/preinst" "$ROOT/DEBIAN/prerm"
+cat >> "$ROOT/DEBIAN/prerm" << 'PRERM'
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+    systemctl disable astra-usb-avalonia.service astra-usb-avalonia-update.timer
+fi
 PRERM
 
 cat > "$ROOT/DEBIAN/postrm" << 'POSTRM'
@@ -71,7 +108,7 @@ if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
 fi
 POSTRM
 
-chmod 755 "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/prerm" "$ROOT/DEBIAN/postrm"
+chmod 755 "$ROOT/DEBIAN/preinst" "$ROOT/DEBIAN/postinst" "$ROOT/DEBIAN/prerm" "$ROOT/DEBIAN/postrm"
 
 mkdir -p "$OUT"
 NAME="bestcam-station_${VERSION}_${ARCH}.deb"

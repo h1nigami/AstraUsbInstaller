@@ -128,6 +128,98 @@ public sealed class FileCopierTests : IDisposable
         Assert.Equal(2, seen);
     }
 
+    [Fact]
+    public void A_linked_destination_subfolder_is_rejected()
+    {
+        var outside = Directory.CreateDirectory(Path.Combine(_root, "outside")).FullName;
+        var link = Path.Combine(_dst, "DCIM");
+        MakeDirectoryLink(link, outside);
+        try
+        {
+            var source = Write("DCIM/clip.mp4", "keep source");
+            var result = FileCopier.Copy(_src, _dst, "stamp");
+            Assert.True(result.Failed > 0);
+            Assert.DoesNotContain(source, result.BackedUp);
+            Assert.False(File.Exists(Path.Combine(outside, "clip.mp4")));
+        }
+        finally { Directory.Delete(link); }
+    }
+
+    internal static void MakeDirectoryLink(string link, string target)
+    {
+        if (!OperatingSystem.IsWindows())
+            Directory.CreateSymbolicLink(link, target);
+        else
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe")
+            {
+                Arguments = $"/c mklink /J \"{link}\" \"{target}\"",
+                UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true,
+            })!;
+            process.WaitForExit();
+            Assert.Equal(0, process.ExitCode);
+        }
+    }
+
+    [Fact]
+    public void Cancellation_between_files_keeps_originals_and_stops_the_copy()
+    {
+        var one = Write("one.mp4", "one");
+        var two = Write("two.mp4", "two");
+        using var cancellation = new CancellationTokenSource();
+        Assert.Throws<OperationCanceledException>(() => FileCopier.Copy(_src, _dst, "stamp",
+            (_, _) => cancellation.Cancel(), cancellation.Token));
+        Assert.True(File.Exists(one));
+        Assert.True(File.Exists(two));
+        Assert.Single(Directory.GetFiles(_dst));
+    }
+
+    [Fact]
+    public void Cancellation_during_a_large_file_removes_its_partial_copy()
+    {
+        if (!OperatingSystem.IsWindows())
+            return;
+        var source = Write("large.mp4", "");
+        using (var file = File.OpenWrite(source))
+            file.SetLength(512L * 1024 * 1024);
+        using var cancellation = new CancellationTokenSource();
+        var task = Task.Run(() => FileCopier.Copy(_src, _dst, "stamp", token: cancellation.Token));
+        var target = Path.Combine(_dst, "large.mp4");
+        Assert.True(SpinWait.SpinUntil(() => File.Exists(target) || task.IsCompleted, TimeSpan.FromSeconds(10)));
+        Assert.False(task.IsCompleted);
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => task.GetAwaiter().GetResult());
+        Assert.False(File.Exists(target));
+        Assert.True(File.Exists(source));
+    }
+
+    [Fact]
+    public void A_removed_source_stops_the_session_for_recovery()
+    {
+        Write("one.mp4", "one");
+        Write("two.mp4", "two");
+        var error = Assert.ThrowsAny<IOException>(() => FileCopier.Copy(_src, _dst, "stamp",
+            (_, _) => Directory.Move(_src, _src + "-removed")));
+        Assert.Equal("DeviceLostException", error.GetType().Name);
+        Assert.Single(Directory.GetFiles(_dst));
+        Assert.Equal(2, Directory.GetFiles(_src + "-removed").Length);
+    }
+
+    [Fact]
+    public void A_wrapped_native_source_error_is_recognized_for_recovery()
+    {
+        var classify = typeof(DeviceLostException).GetMethod("IsRemoval",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        var native = new System.ComponentModel.Win32Exception(OperatingSystem.IsLinux() ? 5 : 1117);
+        var read = new IOException("read failed", native);
+        var identify = new IOException("cannot read device ID", read);
+        Assert.True((bool)classify.Invoke(null, [identify])!);
+        var denied = new IOException("access denied",
+            new System.ComponentModel.Win32Exception(OperatingSystem.IsLinux() ? 13 : 5));
+        Assert.False((bool)classify.Invoke(null, [denied])!);
+    }
+
     public void Dispose()
     {
         try

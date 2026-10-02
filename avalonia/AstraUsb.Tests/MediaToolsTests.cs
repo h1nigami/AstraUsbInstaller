@@ -18,7 +18,10 @@ public sealed class MediaToolsTests : IDisposable
 
     private string File_(string name, string content = "не настоящее видео")
     {
-        var path = Path.Combine(_dir, name);
+        var root = Path.Combine(AppPaths.BackupsRoot, "Device1");
+        Directory.CreateDirectory(root);
+        ArchiveGuard.Mark(AppPaths.BackupsRoot);
+        var path = Path.Combine(root, name);
         File.WriteAllText(path, content);
         return path;
     }
@@ -41,6 +44,49 @@ public sealed class MediaToolsTests : IDisposable
 
         Assert.False(MediaTools.Open(absent).Ok);
         Assert.False(MediaTools.Convert(absent, "mov").Ok);
+    }
+
+    [Fact]
+    public void External_viewing_does_not_start_during_exclusive_maintenance()
+    {
+        var record = File_("record.astra-no-viewer");
+        using var maintenance = OperationGuard.Acquire(exclusive: true);
+
+        var result = MediaTools.Open(record);
+
+        Assert.False(result.Ok);
+        Assert.Contains("занята", result.Message);
+    }
+
+    [Fact]
+    public void Conversion_does_not_start_during_exclusive_maintenance()
+    {
+        var video = File_("clip.mp4");
+        using var maintenance = OperationGuard.Acquire(exclusive: true);
+
+        var result = MediaTools.Convert(video, "mov");
+
+        Assert.False(result.Ok);
+        Assert.Contains("занята", result.Message);
+        Assert.True(File.Exists(video));
+    }
+
+    [Fact]
+    public void A_valid_image_is_converted_through_the_held_destination()
+    {
+        if (!MediaTools.ConverterAvailable())
+            return;
+        var image = File_("pixel.bmp");
+        File.WriteAllBytes(image, System.Convert.FromHexString(
+            "424d3a000000000000003600000028000000010000000100000001001800"
+            + "0000000004000000000000000000000000000000000000000020ff00"));
+
+        var result = MediaTools.Convert(image, "png");
+
+        Assert.True(result.Ok, result.Message);
+        var copy = Path.Combine(Path.GetDirectoryName(image)!, "pixel_копия.png");
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, File.ReadAllBytes(copy)[..8]);
+        Assert.True(File.Exists(image));
     }
 
     [Fact]
@@ -103,7 +149,7 @@ public sealed class MediaToolsTests : IDisposable
 
         if (!result.Ok)
         {
-            var copy = Path.Combine(_dir, "VID_0001_копия.mov");
+            var copy = Path.Combine(Path.GetDirectoryName(video)!, "VID_0001_копия.mov");
             Assert.False(File.Exists(copy));
         }
     }
@@ -112,14 +158,15 @@ public sealed class MediaToolsTests : IDisposable
     public void An_existing_copy_is_not_overwritten()
     {
         var video = File_("VID_0001.MP4");
-        File.WriteAllText(Path.Combine(_dir, "VID_0001_копия.mov"), "прежняя копия");
+        var copy = Path.Combine(Path.GetDirectoryName(video)!, "VID_0001_копия.mov");
+        File.WriteAllText(copy, "прежняя копия");
 
         var result = MediaTools.Convert(video, "mov");
 
         Assert.False(result.Ok);
         Assert.Contains("уже есть", result.Message);
         Assert.Equal("прежняя копия",
-            File.ReadAllText(Path.Combine(_dir, "VID_0001_копия.mov")));
+            File.ReadAllText(copy));
     }
 
     public void Dispose()

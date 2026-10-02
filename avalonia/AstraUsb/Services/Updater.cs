@@ -217,11 +217,11 @@ public static class Updater
             return 0;
         }
 
-        return InstallArchive(release.Tag, archive, work);
+        return InstallArchive(release.Tag, archive, work).Code;
     }
 
     /// <summary>Ставит проверенный архив: распаковка, пробный запуск, установщик, проверка, откат.</summary>
-    private static int InstallArchive(string tag, string archive, string work)
+    private static (int Code, bool Deferred) InstallArchive(string tag, string archive, string work)
     {
         var unpacked = Path.Combine(work, "unpacked");
         Directory.CreateDirectory(unpacked);
@@ -233,7 +233,7 @@ public static class Updater
         {
             Say("в архиве нет установщика");
             RememberFailed(tag);
-            return 1;
+            return (1, false);
         }
 
         // Новую программу пробуем запустить до того, как трогать рабочую:
@@ -242,39 +242,52 @@ public static class Updater
         {
             Say("новая сборка не запускается, оставляем прежнюю");
             RememberFailed(tag);
-            return 1;
+            return (1, false);
         }
 
-        if (BusyMarker.Busy())
+        IDisposable operation;
+        try { operation = OperationGuard.Acquire(exclusive: true); }
+        catch (StationBusyException)
         {
-            Say("во время загрузки начался сбор записей, обновимся в следующий раз");
-            return 0;
+            Say("станция занята другой операцией, обновление отложено");
+            return (0, true);
         }
+        using (operation)
+        {
+            if (BusyMarker.Busy())
+            {
+                Say("во время загрузки начался сбор записей, обновимся в следующий раз");
+                return (0, true);
+            }
 
-        Snapshot();
-        Say($"ставим {tag}");
-        try
-        {
-            if (!Shell("/bin/systemctl", "reset-failed", null, Service))
-                throw new IOException("не удалось сбросить счётчик перезапусков службы");
-            if (!Shell("/bin/sh", installer, root))
-                throw new IOException("установщик завершился с ошибкой");
-            if (InstalledTag() != tag)
-                throw new IOException("версия после установки не совпала с тегом релиза");
-            if (!Healthy())
-                throw new IOException("новая служба работает со сбоями");
-        }
-        catch (Exception e)
-        {
-            Say(e.Message);
-            // Сначала сохраняем сбойный тег: даже неудачный откат не должен потерять его.
-            RememberFailed(tag);
-            Rollback();
-            return 1;
-        }
+            Snapshot();
+            Say($"ставим {tag}");
+            try
+            {
+                if (!Shell("/bin/systemctl", "reset-failed", null, Service))
+                    throw new IOException("не удалось сбросить счётчик перезапусков службы");
+                var info = new ProcessStartInfo("/bin/bash") { WorkingDirectory = root };
+                info.ArgumentList.Add(installer);
+                var result = Execute(info, TimeSpan.FromMinutes(15), operation);
+                if (result.Code != 0)
+                    throw new IOException($"установщик вернул {result.Code}: {Last(result.Error + result.Output)}");
+                if (InstalledTag() != tag)
+                    throw new IOException("версия после установки не совпала с тегом релиза");
+                if (!Healthy())
+                    throw new IOException("новая служба работает со сбоями");
+            }
+            catch (Exception e)
+            {
+                Say(e.Message);
+                // Сбойный тег сохраняется до отката.
+                RememberFailed(tag);
+                Rollback();
+                return (1, false);
+            }
 
-        Say($"обновились до {tag}");
-        return 0;
+            Say($"обновились до {tag}");
+            return (0, false);
+        }
     }
 
     // --- Обновление с флешки ---------------------------------------------------
@@ -439,10 +452,13 @@ public static class Updater
         }
 
         var work = Directory.CreateTempSubdirectory("astra-update-").FullName;
+        var deferred = false;
         Say($"ставим {tag} с флешки (было {installed})");
         try
         {
-            return InstallArchive(tag, archive, work);
+            var result = InstallArchive(tag, archive, work);
+            deferred = result.Deferred;
+            return result.Code;
         }
         catch (Exception e)
         {
@@ -453,7 +469,8 @@ public static class Updater
         finally
         {
             Wipe(work);
-            ClearOfflineSpool();
+            if (!deferred)
+                ClearOfflineSpool();
         }
     }
 
@@ -745,13 +762,16 @@ public static class Updater
         }
     }
 
-    private static (int Code, string Output, string Error) Execute(ProcessStartInfo info, TimeSpan timeout)
+    private static (int Code, string Output, string Error) Execute(ProcessStartInfo info, TimeSpan timeout,
+        IDisposable? operation = null)
     {
         info.UseShellExecute = false;
         info.RedirectStandardOutput = true;
         info.RedirectStandardError = true;
         using var deadline = new CancellationTokenSource(timeout);
-        using var proc = Process.Start(info) ?? throw new IOException("процесс не запустился");
+        using var proc = operation is null
+            ? Process.Start(info) ?? throw new IOException("процесс не запустился")
+            : OperationGuard.StartInstaller(info, operation);
         try
         {
             var output = proc.StandardOutput.ReadToEndAsync(deadline.Token);
