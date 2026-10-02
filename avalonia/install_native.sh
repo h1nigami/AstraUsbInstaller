@@ -31,7 +31,7 @@ UNITS_ONLY=0
 [ "$1" = "--units-only" ] && UNITS_ONLY=1
 
 if [ "$(id -u)" -ne 0 ]; then
-    SUDO="sudo"
+    exec sudo --preserve-env=USB_DB_PATH bash "$SRC_DIR/install_native.sh" "$@"
 else
     SUDO=""
 fi
@@ -40,6 +40,26 @@ echo "--- Проверка сборки..."
 if [ ! -x "$SRC_DIR/AstraUsb" ]; then
     echo "В каталоге нет исполняемого файла AstraUsb."
     echo "Соберите версию для станции: ./publish.sh linux-x64"
+    exit 1
+fi
+
+# Блокировка удерживается до завершения установки и перезапуска службы.
+OPERATIONS_LOCK="${USB_DB_PATH:-$APP_DIR/data/devices.db}.operations.lock"
+mkdir -p "$(dirname "$OPERATIONS_LOCK")"
+if [ -n "${ASTRA_OPERATIONS_LOCK_FD:-}" ]; then
+    case "$ASTRA_OPERATIONS_LOCK_FD" in
+        *[!0-9]*) echo "ОШИБКА: неверный дескриптор блокировки"; exit 1 ;;
+    esac
+    if [ ! "/proc/self/fd/$ASTRA_OPERATIONS_LOCK_FD" -ef "$OPERATIONS_LOCK" ]; then
+        echo "ОШИБКА: блокировка относится к другой базе"
+        exit 1
+    fi
+else
+    exec 9>>"$OPERATIONS_LOCK"
+    ASTRA_OPERATIONS_LOCK_FD=9
+fi
+if ! flock -n -x "$ASTRA_OPERATIONS_LOCK_FD"; then
+    echo "ОШИБКА: станция занята, установка отложена"
     exit 1
 fi
 

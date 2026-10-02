@@ -391,7 +391,7 @@ public sealed class UpdateTests : IDisposable
         Assert.NotNull(method);
         try
         {
-            return ((int, string, string))method.Invoke(null, [info, timeout])!;
+            return ((int, string, string))method.Invoke(null, [info, timeout, null])!;
         }
         catch (TargetInvocationException e) when (e.InnerException is not null)
         {

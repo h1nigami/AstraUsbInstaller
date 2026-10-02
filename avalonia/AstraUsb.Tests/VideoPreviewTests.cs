@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Reflection;
 using AstraUsb.Services;
 using Xunit;
 
@@ -10,6 +12,25 @@ namespace AstraUsb.Tests;
 /// </summary>
 public sealed class VideoPreviewTests
 {
+    [Fact]
+    public async Task A_preview_process_without_eof_is_stopped_at_the_timeout()
+    {
+        var run = typeof(VideoPreview).GetMethod("Run", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var info = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        info.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+        info.ArgumentList.Add(OperatingSystem.IsWindows() ? "ping -n 20 127.0.0.1 >nul" : "sleep 20");
+
+        var result = await Task.Run(() => run.Invoke(null, [info, 100, ""]))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(false, result);
+    }
+
     [Fact]
     public void The_length_is_read_from_the_probe_output()
     {

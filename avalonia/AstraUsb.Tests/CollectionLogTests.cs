@@ -1,4 +1,5 @@
 using AstraUsb.Services;
+using Microsoft.Data.Sqlite;
 using Xunit;
 
 namespace AstraUsb.Tests;
@@ -12,6 +13,111 @@ public sealed class CollectionLogTests : IDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-collect-").FullName;
 
     private CollectionLog NewLog() => new(Path.Combine(_dir, "devices.db"));
+
+    [Fact]
+    public void A_cancelled_selection_does_not_return_rows()
+    {
+        var log = NewLog();
+        log.Record([File("/dest/Device1/a.mp4", DateTime.Now)]);
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        Assert.Throws<OperationCanceledException>(() => log.CollectedBetween(
+            DateTime.MinValue, DateTime.MaxValue, token: cancellation.Token));
+    }
+
+    [Fact]
+    public async Task Cancellation_interrupts_sqlite_before_it_finishes_sorting()
+    {
+        var log = NewLog();
+        using (var database = new SqliteConnection($"Data Source={log.DatabasePath}"))
+        {
+            database.Open();
+            using var command = database.CreateCommand();
+            command.CommandText = """
+                DROP TABLE collected_files;
+                CREATE VIEW collected_files AS
+                WITH RECURSIVE numbers(n) AS (
+                    SELECT 1 UNION ALL SELECT n + 1 FROM numbers WHERE n < 5000000
+                )
+                SELECT 1 AS device_id, '/dest/Device1/a.mp4' AS dest_path,
+                    1 AS size_bytes, NULL AS shot_at,
+                    printf('2026-09-02T12:00:00.%07d', n) AS collected_at,
+                    0 AS important, '' AS note FROM numbers;
+                """;
+            command.ExecuteNonQuery();
+        }
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        var query = Task.Run(() => log.CollectedBetween(DateTime.MinValue,
+            DateTime.MaxValue, token: cancellation.Token));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await query.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
+
+    [Fact]
+    public async Task Cancellation_stops_sqlite_busy_retry_without_waiting_for_the_writer()
+    {
+        var log = NewLog();
+        using var writer = new SqliteConnection($"Data Source={log.DatabasePath};Pooling=False");
+        writer.Open();
+        using var command = writer.CreateCommand();
+        command.CommandText = "BEGIN EXCLUSIVE";
+        command.ExecuteNonQuery();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var query = Task.Run(() => log.CollectedBetween(DateTime.MinValue,
+            DateTime.MaxValue, token: cancellation.Token));
+        try
+        {
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+                await query.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            command.CommandText = "ROLLBACK";
+            command.ExecuteNonQuery();
+            try { await query; } catch (OperationCanceledException) { }
+        }
+    }
+
+    [Fact]
+    public async Task A_cancellable_read_retries_when_the_writer_outlives_one_short_attempt()
+    {
+        var log = NewLog();
+        using var writer = new SqliteConnection($"Data Source={log.DatabasePath};Pooling=False");
+        writer.Open();
+        using var command = writer.CreateCommand();
+        command.CommandText = "BEGIN EXCLUSIVE";
+        command.ExecuteNonQuery();
+        using var cancellation = new CancellationTokenSource();
+        var query = Task.Run(() => log.CollectedBetween(DateTime.MinValue,
+            DateTime.MaxValue, token: cancellation.Token));
+        try
+        {
+            await Task.Delay(1400);
+            Assert.False(query.IsCompleted);
+        }
+        finally
+        {
+            command.CommandText = "ROLLBACK";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Empty(await query.WaitAsync(TimeSpan.FromSeconds(2)));
+    }
+
+    [Fact]
+    public void Protection_waits_for_exclusive_archive_maintenance()
+    {
+        var log = NewLog();
+        var path = "/dest/Device1/a.mp4";
+        log.Record([File(path, DateTime.Now)]);
+        using var maintenance = OperationGuard.Acquire(exclusive: true, dbPath: log.DatabasePath);
+
+        Assert.Throws<StationBusyException>(() => log.SetImportant(path, true));
+        Assert.False(Assert.Single(log.CollectedBetween(DateTime.MinValue, DateTime.MaxValue)).Important);
+    }
 
     private static CollectedFile File(string path, DateTime collected,
         DateTime? shot = null, long device = 1, long size = 100) =>

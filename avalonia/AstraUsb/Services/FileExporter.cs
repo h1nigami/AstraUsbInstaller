@@ -21,10 +21,15 @@ public static class FileExporter
     /// <param name="stamp">Метка времени в имени папки выгрузки.</param>
     /// <param name="progress">Сколько файлов из скольких уже сделано.</param>
     public static ExportResult Export(IReadOnlyList<string> paths, string destination,
-        DateTime stamp, Action<int, int>? progress = null)
+        DateTime stamp, Action<int, int>? progress = null, string? archiveRoot = null, string? dbPath = null)
     {
-        var folder = Path.Combine(destination, $"Выгрузка_{stamp:yyyyMMdd_HHmmss}");
-        Directory.CreateDirectory(folder);
+        using var operation = OperationGuard.Acquire(dbPath: dbPath);
+        var settings = Settings.Load();
+        using var sourceArchive = ArchiveGuard.Open(archiveRoot ?? settings.ResolveBackupRoot(), settings: settings);
+        var resolve = settings.ArchivePathResolver(sourceArchive.Root);
+        using var root = ArchiveGuard.Open(destination, create: true, requireMarker: false);
+        using var directory = root.CreateDirectory($"Выгрузка_{stamp:yyyyMMdd_HHmmss}");
+        var folder = directory.Path;
 
         var copied = 0;
         var missing = 0;
@@ -37,18 +42,17 @@ public static class FileExporter
             progress?.Invoke(i, paths.Count);
 
             var source = paths[i];
-            if (!File.Exists(source))
-            {
-                missing++;
-                continue;
-            }
-
             try
             {
-                var target = Path.Combine(folder, FreeName(folder, Path.GetFileName(source), taken));
-                File.Copy(source, target);
-                bytes += new FileInfo(target).Length;
+                var relative = Path.GetRelativePath(sourceArchive.Root, resolve(source));
+                var name = FreeName(folder, Path.GetFileName(source), taken);
+                bytes += directory.CopyFile(sourceArchive, relative, name);
                 copied++;
+            }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException
+                                         || error.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 2 or 3 })
+            {
+                missing++;
             }
             catch (Exception)
             {

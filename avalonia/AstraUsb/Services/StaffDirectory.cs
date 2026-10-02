@@ -27,10 +27,14 @@ public sealed record Employee(
 public sealed class StaffDirectory
 {
     private readonly string _dbPath;
+    private readonly bool _readOnly;
 
-    public StaffDirectory(string dbPath)
+    public StaffDirectory(string dbPath, bool initialize = true)
     {
         _dbPath = dbPath;
+        _readOnly = !initialize;
+        if (!initialize)
+            return;
         var dir = Path.GetDirectoryName(dbPath);
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
@@ -153,32 +157,36 @@ public sealed class StaffDirectory
             ("$id", departmentId)) is long count ? (int)count : 0;
     }
 
-    public IReadOnlyList<Department> Departments()
+    public IReadOnlyList<Department> Departments(CancellationToken token = default)
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
         cmd.CommandText = "SELECT id, code, name, parent_id FROM departments ORDER BY name";
 
-        var list = new List<Department>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        return CollectionLog.ReadCancelable(cmd, token, () =>
         {
-            list.Add(new Department(
-                reader.GetInt64(0),
-                reader.GetString(1),
-                reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetInt64(3)));
-        }
-        return list;
+            var list = new List<Department>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                token.ThrowIfCancellationRequested();
+                list.Add(new Department(
+                    reader.GetInt64(0),
+                    reader.GetString(1),
+                    reader.GetString(2),
+                    reader.IsDBNull(3) ? null : reader.GetInt64(3)));
+            }
+            return list;
+        });
     }
 
     /// <summary>Путь отдела сверху вниз: «Охрана / Смена 1».</summary>
-    public string DepartmentPath(long? id)
+    public string DepartmentPath(long? id, CancellationToken token = default)
     {
         if (id is null)
             return "";
 
-        var all = Departments().ToDictionary(d => d.Id);
+        var all = Departments(token).ToDictionary(d => d.Id);
         var parts = new List<string>();
         var current = id;
 
@@ -233,7 +241,7 @@ public sealed class StaffDirectory
         Run(db, "UPDATE employees SET active = 0 WHERE id = $id", ("$id", employeeId));
     }
 
-    public IReadOnlyList<Employee> Employees(bool activeOnly = false)
+    public IReadOnlyList<Employee> Employees(bool activeOnly = false, CancellationToken token = default)
     {
         using var db = Open();
         using var cmd = db.CreateCommand();
@@ -242,17 +250,21 @@ public sealed class StaffDirectory
             FROM employees
             """ + (activeOnly ? " WHERE active = 1" : "") + " ORDER BY full_name";
 
-        var list = new List<Employee>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        return CollectionLog.ReadCancelable(cmd, token, () =>
         {
-            list.Add(new Employee(
-                reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetString(4),
-                reader.IsDBNull(5) ? null : reader.GetInt64(5),
-                reader.GetInt64(6) != 0));
-        }
-        return list;
+            var list = new List<Employee>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                token.ThrowIfCancellationRequested();
+                list.Add(new Employee(
+                    reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                    reader.GetString(3), reader.GetString(4),
+                    reader.IsDBNull(5) ? null : reader.GetInt64(5),
+                    reader.GetInt64(6) != 0));
+            }
+            return list;
+        });
     }
 
     public Employee? FindByPersonnelNo(string personnelNo) =>
@@ -279,7 +291,11 @@ public sealed class StaffDirectory
 
     private SqliteConnection Open()
     {
-        var db = new SqliteConnection($"Data Source={_dbPath}");
+        var db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = _dbPath,
+            Mode = _readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWriteCreate,
+        }.ToString());
         db.Open();
         return db;
     }

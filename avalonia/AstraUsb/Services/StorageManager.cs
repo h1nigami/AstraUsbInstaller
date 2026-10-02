@@ -39,14 +39,20 @@ public static class StorageManager
     {
         try
         {
-            var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(root)) ?? root);
+            using var archive = ArchiveGuard.Open(root);
+            var drive = DriveInfo.GetDrives()
+                .Where(d => ArchiveGuard.IsArchiveMedia(d.RootDirectory.FullName, archive.Root))
+                .OrderByDescending(d => d.RootDirectory.FullName.Length)
+                .FirstOrDefault();
+            if (drive is null)
+                return new StorageStatus(0, 0, false);
             if (!drive.IsReady)
                 return new StorageStatus(0, 0, false);
-
+            var total = drive.TotalSize;
+            var free = drive.AvailableFreeSpace;
+            archive.Verify();
             return new StorageStatus(
-                drive.TotalSize,
-                drive.AvailableFreeSpace,
-                drive.AvailableFreeSpace < minFreeBytes);
+                total, free, free < minFreeBytes);
         }
         catch (Exception)
         {
@@ -73,10 +79,17 @@ public static class StorageManager
         if (mode != StorageMode.Overwrite || bytesToFree <= 0)
             return 0;
 
-        var freed = 0L;
-        var known = log?.CollectedBefore(DateTime.Now) ?? [];
+        using var operation = OperationGuard.Acquire(exclusive: true, dbPath: log?.DatabasePath);
+        var settings = Settings.Load();
+        using var archive = ArchiveGuard.Open(root, settings: settings);
+        var resolve = settings.ArchivePathResolver(archive.Root);
 
-        foreach (var entry in known)
+        var freed = 0L;
+        var known = log?.CollectedBetween(DateTime.MinValue, DateTime.MaxValue) ?? [];
+        var protectedPaths = ProtectedPaths(known, resolve);
+        var now = DateTime.Now;
+
+        foreach (var entry in known.Where(entry => entry.CollectedAt < now).OrderBy(entry => entry.CollectedAt))
         {
             if (freed >= bytesToFree)
                 break;
@@ -86,29 +99,33 @@ public static class StorageManager
             if (entry.Important)
                 continue;
 
-            freed += Remove(root, entry.DestPath, log) ?? 0;
+            if (Resolve(resolve, entry.DestPath) is { } path && !protectedPaths.Contains(path))
+                freed += Remove(archive, path, log, entry.DestPath) ?? 0;
         }
 
         // Файлы, которых журнал не знает: копии старше журнала или принесённые
         // мимо станции. Их очередь определяется датой на диске.
         var accounted = known
-            .Select(e => Full(e.DestPath))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .Select(e => Resolve(resolve, e.DestPath))
+            .Where(path => path is not null)
+            .Select(path => Full(path!))
+            .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
-        foreach (var file in OldestFirst(root))
+        foreach (var file in OldestFirst(archive))
         {
             if (freed >= bytesToFree)
                 break;
 
             // Файл из журнала, до которого очередь не дошла: он новее тех,
             // что уже удалены, и трогать его рано.
-            if (accounted.Contains(Full(file.FullName)))
+            var path = Path.Combine(root, Path.GetRelativePath(archive.Path, file.FullName));
+            if (accounted.Contains(Full(path)))
                 continue;
 
-            freed += Remove(root, file.FullName, log: null) ?? 0;
+            freed += Remove(archive, path, log: null) ?? 0;
         }
 
-        RemoveEmptyFolders(root);
+        archive.RemoveEmptyDeviceFolders();
         return freed;
     }
 
@@ -122,16 +139,24 @@ public static class StorageManager
     public static (int Files, long Bytes) DeleteExpired(CollectionLog log, DateTime olderThan,
         string root)
     {
+        using var operation = OperationGuard.Acquire(exclusive: true, dbPath: log.DatabasePath);
+        var settings = Settings.Load();
+        using var archive = ArchiveGuard.Open(root, settings: settings);
+        var resolve = settings.ArchivePathResolver(archive.Root);
         var files = 0;
         var bytes = 0L;
+        var known = log.CollectedBetween(DateTime.MinValue, DateTime.MaxValue);
+        var protectedPaths = ProtectedPaths(known, resolve);
 
-        foreach (var entry in log.CollectedBefore(olderThan))
+        foreach (var entry in known.Where(entry => entry.CollectedAt < olderThan).OrderBy(entry => entry.CollectedAt))
         {
             // Срок хранения важного не касается.
             if (entry.Important)
                 continue;
 
-            if (Remove(root, entry.DestPath, log) is { } removed)
+            if (Resolve(resolve, entry.DestPath) is { } path
+                && !protectedPaths.Contains(path)
+                && Remove(archive, path, log, entry.DestPath) is { } removed)
             {
                 bytes += removed;
                 files++;
@@ -139,7 +164,7 @@ public static class StorageManager
         }
 
         if (files > 0)
-            RemoveEmptyFolders(root);
+            archive.RemoveEmptyDeviceFolders();
 
         return (files, bytes);
     }
@@ -148,33 +173,13 @@ public static class StorageManager
     /// Удаляет файл и забывает запись о нём. Пропавший файл тоже забывается:
     /// запись о том, чего нет, только вводит оператора в заблуждение.
     /// </summary>
-    private static long? Remove(string root, string path, CollectionLog? log)
+    private static long? Remove(ArchiveDirectory archive, string path, CollectionLog? log, string? loggedPath = null)
     {
         var size = 0L;
 
         try
         {
-            var relative = Path.GetRelativePath(root, path);
-            if (Path.IsPathRooted(relative) || relative == ".."
-                || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                || Markers.IsService(Path.GetFileName(path)))
-                return null;
-
-            var file = new FileInfo(path);
-            for (var dir = file.Directory; dir is not null; dir = dir.Parent)
-            {
-                if (dir.Exists && (dir.Attributes & FileAttributes.ReparsePoint) != 0)
-                    return null;
-                if (Path.GetRelativePath(root, dir.FullName) == ".")
-                    break;
-            }
-            if (file.Exists)
-            {
-                if ((file.Attributes & FileAttributes.ReparsePoint) != 0)
-                    return null;
-                size = file.Length;
-                file.Delete();
-            }
+            size = archive.DeleteFile(Path.GetRelativePath(archive.Root, path));
         }
         catch (Exception)
         {
@@ -182,9 +187,21 @@ public static class StorageManager
             return null;
         }
 
-        log?.Forget(path);
+        log?.Forget(loggedPath ?? path);
         return size;
     }
+
+    private static string? Resolve(Func<string, string> resolve, string path)
+    {
+        try { return resolve(path); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { return null; }
+    }
+
+    private static HashSet<string> ProtectedPaths(IEnumerable<CollectedFile> known, Func<string, string> resolve) =>
+        known.Where(entry => entry.Important).Select(entry => Resolve(resolve, entry.DestPath))
+            .Where(path => path is not null).Select(path => path!)
+            .ToHashSet(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 
     private static string Full(string path)
     {
@@ -199,15 +216,15 @@ public static class StorageManager
     }
 
     /// <summary>Файлы хранилища от самых ранних к поздним.</summary>
-    private static IEnumerable<FileInfo> OldestFirst(string root)
+    private static IEnumerable<FileInfo> OldestFirst(ArchiveDirectory archive)
     {
         FileInfo[] files;
         try
         {
-            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-                return [];
-            files = new DirectoryInfo(root)
-                .EnumerateFiles("*", Walk)
+            archive.Verify();
+            files = new DirectoryInfo(archive.Path).EnumerateDirectories()
+                .Where(d => ArchiveGuard.IsDeviceFolderName(d.Name) && !d.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                .SelectMany(d => d.EnumerateFiles("*", Walk))
                 .ToArray();
         }
         catch (Exception)
@@ -218,24 +235,4 @@ public static class StorageManager
         return files.OrderBy(f => f.LastWriteTimeUtc);
     }
 
-    /// <summary>Прибирает каталоги, оставшиеся пустыми после удаления.</summary>
-    private static void RemoveEmptyFolders(string root)
-    {
-        try
-        {
-            if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-                return;
-            foreach (var dir in new DirectoryInfo(root)
-                         .EnumerateDirectories("*", Walk)
-                         .OrderByDescending(d => d.FullName.Length))
-            {
-                if (!dir.EnumerateFileSystemInfos().Any())
-                    dir.Delete();
-            }
-        }
-        catch (Exception)
-        {
-            // Не смогли прибрать, не беда: пустая папка никому не мешает.
-        }
-    }
 }

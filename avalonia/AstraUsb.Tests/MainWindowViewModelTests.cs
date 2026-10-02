@@ -207,9 +207,10 @@ public sealed class MainWindowViewModelTests : IDisposable
         typeof(MainWindowViewModel).GetMethod("Apply", fields)!.Invoke(model,
             [new UsbDevice[] { new("second", second), new("first", first) }, StorageState.Unknown("archive")]);
 
-        Assert.Equal(PortState.Failed, model.Ports[0].State);
-        Assert.Contains("Дубликат ID устройства 7", model.Ports[0].Detail);
-        Assert.Equal(PortState.Done, model.Ports[1].State);
+        var duplicate = model.Ports.Single(p => p.MountPoint == second);
+        Assert.Equal(PortState.Failed, duplicate.State);
+        Assert.Contains("Дубликат ID устройства 7", duplicate.Detail);
+        Assert.Equal(PortState.Done, model.Ports.Single(p => p.MountPoint == first).State);
     }
 
     [AvaloniaFact]
@@ -264,9 +265,9 @@ public sealed class MainWindowViewModelTests : IDisposable
         var cancels = Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels");
         try
         {
-            Assert.Equal(PortState.Failed, model.Ports[duplicateFirst ? 0 : 1].State);
+            Assert.Equal(PortState.Failed, model.Ports.Single(p => p.MountPoint == duplicate).State);
             Assert.Equal(charging ? PortState.ChargeOnly : PortState.Detected,
-                model.Ports[duplicateFirst ? 1 : 0].State);
+                model.Ports.Single(p => p.MountPoint == owner).State);
             Assert.False(cancels.ContainsKey(duplicate));
         }
         finally
@@ -386,6 +387,416 @@ public sealed class MainWindowViewModelTests : IDisposable
     }
 
     private const BindingFlags PrivateFields = BindingFlags.Instance | BindingFlags.NonPublic;
+
+    [AvaloniaFact]
+    public async Task Stop_reports_an_unreadable_operation_lock_without_throwing()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var path = AppPaths.Database + ".operations.lock";
+        File.Delete(path);
+        Directory.CreateDirectory(path);
+        model.Ports[0].SafeToRemove = true;
+
+        await model.StopCollectionCommand.ExecuteAsync(null);
+
+        Assert.True(model.SafeRemovalActive);
+        Assert.False(model.SafeRemovalReady);
+        Assert.Contains("Не удалось", model.SafeRemovalStatus);
+        Assert.All(model.Ports, port => Assert.False(port.SafeToRemove));
+    }
+
+    [AvaloniaFact]
+    public async Task An_unreadable_operation_lock_revokes_safe_removal_readiness()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        await model.StopCollectionCommand.ExecuteAsync(null);
+        Assert.True(model.SafeRemovalReady);
+        var path = AppPaths.Database + ".operations.lock";
+        File.Delete(path);
+        Directory.CreateDirectory(path);
+
+        ApplyDevices(model);
+
+        Assert.False(model.SafeRemovalReady);
+        Assert.All(model.Ports, port => Assert.False(port.SafeToRemove));
+    }
+
+    [AvaloniaFact]
+    public void A_changed_service_serial_does_not_spend_a_card_return_attempt()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Path.Combine(_dir, "card");
+        CacheCard(model, mount, 7);
+        Field<HashSet<string>>(model, "_chargeOnly").Add(mount);
+        ApplyDevices(model, new UsbDevice("card", mount, "same-uuid", "first"));
+
+        ApplyDevices(model, new UsbDevice("card", mount, "same-uuid", "second"));
+
+        Assert.Empty(Field<Dictionary<string, int>>(model, "_returnAttempts"));
+        Assert.Equal(PortState.ChargeOnly, model.Ports[0].State);
+    }
+
+    [AvaloniaFact]
+    public async Task Backup_deferred_by_an_update_retries_on_the_next_poll()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var mount = Directory.CreateDirectory(Path.Combine(_dir, "deferred-card", "LOG")).Parent!.FullName;
+        File.WriteAllText(Path.Combine(mount, "LOG", "card.txt"), "#ID:7\n");
+        File.WriteAllText(Path.Combine(mount, "clip.mp4"), "recording");
+        var settings = Services.Settings.Load();
+        settings.MinFreeGb = 0;
+        Assert.True(settings.SelectBackupRoot(AppPaths.BackupsRoot));
+        settings.Save();
+        using (var registry = new DeviceRegistry(AppPaths.Database))
+            registry.ResolveByCard(mount, 1, "CAM", "card");
+        var device = new UsbDevice("card", mount);
+        using var model = new MainWindowViewModel(() => [device]);
+        CacheCard(model, mount);
+        var workers = Field<Dictionary<string, Task>>(model, "_workers");
+        using (OperationGuard.Acquire(exclusive: true))
+        {
+            ApplyDevices(model, device);
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (workers.Count > 0 && DateTime.UtcNow < deadline) await Task.Delay(10);
+            Assert.Empty(workers);
+            Assert.Equal(PortState.Detected, model.Ports[0].State);
+            Assert.False(Field<Dictionary<string, BackupStage>>(model, "_finished").ContainsKey(mount));
+        }
+
+        ApplyDevices(model, device);
+        var finish = DateTime.UtcNow.AddSeconds(5);
+        while (workers.Count > 0 && DateTime.UtcNow < finish) await Task.Delay(10);
+
+        Assert.Empty(workers);
+        Assert.Equal(PortState.Done, model.Ports[0].State);
+        Assert.Equal("recording", File.ReadAllText(Path.Combine(AppPaths.BackupsRoot, "Device7", "clip.mp4")));
+    }
+
+    [AvaloniaFact]
+    public async Task A_new_mounted_device_during_the_pause_revokes_safe_removal()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        await model.StopCollectionCommand.ExecuteAsync(null);
+        Assert.True(model.SafeRemovalReady);
+        var mount = Path.Combine(_dir, "new-mounted-card");
+
+        ApplyDevices(model, UuidDevice("sdb1", mount, "uuid-new"));
+
+        Assert.False(model.SafeRemovalReady);
+        Assert.Empty(Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels"));
+        Assert.Empty(Field<HashSet<string>>(model, "_identifying"));
+    }
+
+    [AvaloniaFact]
+    public void An_open_modal_cannot_act_on_a_replacement_device_in_the_same_tile()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Path.Combine(_dir, "same-mount");
+        CacheCard(model, mount, 7);
+        Field<HashSet<string>>(model, "_chargeOnly").Add(mount);
+        ApplyDevices(model, UuidDevice("sdb1", mount, "old"));
+        model.OpenBayCommand.Execute(model.Ports[0]);
+        ApplyDevices(model, UuidDevice("sdb1", mount, "new"));
+        CacheCard(model, mount, 8);
+        typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+        ApplyDevices(model, UuidDevice("sdb1", mount, "new"));
+        using var cancel = new CancellationTokenSource();
+        Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels")[mount] = cancel;
+        model.BayConfirm = "charge";
+
+        model.ChargeOnlyBayCommand.Execute(null);
+
+        Assert.False(cancel.IsCancellationRequested);
+        Assert.DoesNotContain(mount, Field<HashSet<string>>(model, "_chargeOnly"));
+        Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels").Clear();
+    }
+
+    [AvaloniaFact]
+    public void A_corrupted_config_revokes_previously_opened_access()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        model.AskForTab(1);
+        model.PasswordInput = PasswordGate.Default();
+        model.ConfirmPasswordCommand.Execute(null);
+        Assert.True(model.AccessAllowed);
+        File.WriteAllText(Services.Settings.FilePath, "broken");
+
+        Assert.False(model.AccessAllowed);
+    }
+
+    [AvaloniaFact]
+    public void Only_three_returns_can_resume_after_repeated_disconnections()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Path.Combine(_dir, "card0");
+        CacheCard(model, mount, 7);
+        Field<HashSet<string>>(model, "_chargeOnly").Add(mount);
+        ApplyDevices(model, UuidDevice("sdb1", mount, "uuid-a"));
+        for (var attempt = 1; attempt <= 4; attempt++)
+        {
+            ApplyDevices(model);
+            mount = Path.Combine(_dir, "card" + attempt);
+            CacheCard(model, mount, 7);
+            ApplyDevices(model, UuidDevice("sd" + (char)('b' + attempt) + "1", mount, "uuid-a"));
+            Assert.Equal(attempt <= 3 ? PortState.ChargeOnly : PortState.Failed, model.Ports[0].State);
+        }
+        Assert.Empty(Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels"));
+    }
+
+    [AvaloniaFact]
+    public void A_returned_uuid_with_a_different_strict_id_cannot_resume_the_session()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var oldMount = Path.Combine(_dir, "old-card");
+        var newMount = Path.Combine(_dir, "new-card");
+        CacheCard(model, oldMount, 7);
+        Field<HashSet<string>>(model, "_chargeOnly").Add(oldMount);
+        ApplyDevices(model, UuidDevice("sdb1", oldMount, "uuid-a"));
+        ApplyDevices(model);
+        CacheCard(model, newMount, 8);
+
+        ApplyDevices(model, UuidDevice("sdf1", newMount, "uuid-a"));
+
+        Assert.Equal(PortState.Failed, model.Ports[0].State);
+        Assert.Contains("ID", model.Ports[0].Detail);
+        Assert.False(Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels").ContainsKey(newMount));
+    }
+
+    [AvaloniaFact]
+    public void A_missing_card_waits_120_seconds_before_releasing_its_tile()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var clock = typeof(MainWindowViewModel).GetField("_now", PrivateFields);
+        Assert.NotNull(clock);
+        var now = DateTime.UtcNow;
+        clock.SetValue(model, new Func<DateTime>(() => now));
+        var mount = Path.Combine(_dir, "waiting-card");
+        CacheCard(model, mount, 7);
+        Field<HashSet<string>>(model, "_chargeOnly").Add(mount);
+        ApplyDevices(model, UuidDevice("sdb1", mount, "uuid-a"));
+
+        now = now.AddSeconds(119);
+        ApplyDevices(model);
+        Assert.Equal("7", model.Ports[0].CameraId);
+        Assert.NotEqual(PortState.Done, model.Ports[0].State);
+        now = now.AddSeconds(2);
+        ApplyDevices(model);
+        Assert.True(model.Ports[0].IsFree);
+    }
+
+    [AvaloniaFact]
+    public void The_same_uuid_and_strict_id_return_to_their_previous_tile_under_a_new_name()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var oldMount = Path.Combine(_dir, "old-card");
+        var newMount = Path.Combine(_dir, "new-card");
+        CacheCard(model, oldMount, 7);
+        Field<HashSet<string>>(model, "_chargeOnly").Add(oldMount);
+        ApplyDevices(model, UuidDevice("sdb1", oldMount, "uuid-a"));
+        var tile = model.Ports.Single(p => p.MountPoint == oldMount);
+        ApplyDevices(model);
+        CacheCard(model, newMount, 7);
+
+        ApplyDevices(model, UuidDevice("sdf1", newMount, "uuid-a"));
+
+        Assert.Equal(newMount, tile.MountPoint);
+        Assert.Equal("7", tile.CameraId);
+        Assert.Equal(PortState.ChargeOnly, tile.State);
+    }
+
+    [AvaloniaFact]
+    public void A_replacement_uuid_under_the_same_name_does_not_inherit_the_old_success()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mount = Path.Combine(_dir, "card");
+        CacheCard(model, mount, 7);
+        Field<Dictionary<string, BackupStage>>(model, "_finished")[mount] = BackupStage.Done;
+        ApplyDevices(model, UuidDevice("sdb1", mount, "uuid-old"));
+        model.Ports[0].State = PortState.Done;
+
+        ApplyDevices(model, UuidDevice("sdb1", mount, "uuid-new"));
+
+        Assert.DoesNotContain(model.Ports, p => p.State == PortState.Done && p.MountPoint == mount);
+        Assert.False(Field<Dictionary<string, BackupStage>>(model, "_finished").ContainsKey(mount));
+    }
+
+    private static UsbDevice UuidDevice(string name, string mount, string uuid)
+    {
+        var constructor = typeof(UsbDevice).GetConstructors().SingleOrDefault(c => c.GetParameters().Length == 4);
+        Assert.NotNull(constructor);
+        return (UsbDevice)constructor.Invoke([name, mount, uuid, "serial"]);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Stop_waits_for_workers_before_releasing_media_and_resume_allows_new_work(bool deviceError)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var command = typeof(MainWindowViewModel).GetProperty("StopCollectionCommand");
+        Assert.NotNull(command);
+        var mount = Path.Combine(_dir, "active");
+        using var cancel = new CancellationTokenSource();
+        Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels")[mount] = cancel;
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Field<Dictionary<string, Task>>(model, "_workers")[mount] = completed.Task;
+        Field<Dictionary<string, Mounted>>(model, "_mounted")["camera"] = new Mounted(mount, true);
+        var released = false;
+        typeof(MainWindowViewModel).GetField("_releaseMount", PrivateFields)!.SetValue(model,
+            new Func<Mounted?, bool>(media =>
+            {
+                Assert.True(media!.Ours);
+                return released = true;
+            }));
+        var stopping = ((CommunityToolkit.Mvvm.Input.IAsyncRelayCommand)command.GetValue(model)!).ExecuteAsync(null);
+        Assert.True(cancel.IsCancellationRequested);
+        Assert.False(released);
+        Assert.False(stopping.IsCompleted);
+        if (deviceError) completed.SetException(new DeviceLostException(
+            new IOException("EIO", new System.ComponentModel.Win32Exception(5))));
+        else completed.SetResult();
+        await stopping;
+        Assert.True(released);
+        Assert.True((bool)typeof(MainWindowViewModel).GetProperty("SafeRemovalReady")!.GetValue(model)!);
+        typeof(MainWindowViewModel).GetProperty("ResumeCollectionCommand")!.GetValue(model)!
+            .GetType().GetMethod("Execute")!.Invoke(
+                typeof(MainWindowViewModel).GetProperty("ResumeCollectionCommand")!.GetValue(model), [null]);
+        Assert.False((bool)typeof(MainWindowViewModel).GetProperty("SafeRemovalActive")!.GetValue(model)!);
+        Field<Dictionary<string, CancellationTokenSource>>(model, "_cancels").Clear();
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Failed_or_foreign_unmount_never_reports_safe_removal_ready(bool foreign)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var command = typeof(MainWindowViewModel).GetProperty("StopCollectionCommand");
+        Assert.NotNull(command);
+        Field<Dictionary<string, Mounted>>(model, "_mounted")["camera"] = new Mounted("/media/CAM", !foreign);
+        typeof(MainWindowViewModel).GetField("_releaseMount", PrivateFields)!.SetValue(model,
+            new Func<Mounted?, bool>(_ => false));
+
+        await ((CommunityToolkit.Mvvm.Input.IAsyncRelayCommand)command.GetValue(model)!).ExecuteAsync(null);
+
+        Assert.False((bool)typeof(MainWindowViewModel).GetProperty("SafeRemovalReady")!.GetValue(model)!);
+        Assert.NotEmpty((string)typeof(MainWindowViewModel).GetProperty("SafeRemovalStatus")!.GetValue(model)!);
+    }
+
+    [AvaloniaFact]
+    public async Task Safe_removal_waits_for_other_station_operations_and_holds_the_lock_during_release()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        Field<Dictionary<string, Mounted>>(model, "_mounted")["camera"] = new Mounted("/mnt/usb_backup/CAM", true);
+        var released = false;
+        var releaseWasProtected = false;
+        typeof(MainWindowViewModel).GetField("_releaseMount", PrivateFields)!.SetValue(model,
+            new Func<Mounted?, bool>(_ =>
+            {
+                released = true;
+                try { using var operation = OperationGuard.Acquire(); }
+                catch (StationBusyException) { releaseWasProtected = true; }
+                return true;
+            }));
+
+        using (OperationGuard.Acquire())
+        {
+            await model.StopCollectionCommand.ExecuteAsync(null);
+            Assert.False(released);
+            Assert.False(model.SafeRemovalReady);
+            Assert.Contains("обслуживание", model.SafeRemovalStatus);
+        }
+
+        await model.StopCollectionCommand.ExecuteAsync(null);
+
+        Assert.True(released);
+        Assert.True(releaseWasProtected);
+        Assert.True(model.SafeRemovalReady);
+        using (OperationGuard.Acquire())
+        {
+            ApplyDevices(model);
+            Assert.False(model.SafeRemovalReady);
+        }
+        ApplyDevices(model);
+        Assert.True(model.SafeRemovalReady);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Unreadable_settings_block_the_default_password_for_tabs_and_exit(bool exit)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        File.WriteAllText(Services.Settings.FilePath, "{broken");
+        var granted = false;
+        model.ExitRequested += () => granted = true;
+        model.AccessGranted += _ => granted = true;
+        if (exit) model.ExitCommand.Execute(null);
+        else model.AskForTab(1);
+        model.PasswordInput = PasswordGate.Default();
+
+        model.ConfirmPasswordCommand.Execute(null);
+
+        Assert.False(granted);
+        Assert.False(model.AccessAllowed);
+        Assert.NotEmpty(model.PasswordError);
+    }
+
+    [AvaloniaFact]
+    public void A_device_keeps_its_tile_when_the_poll_order_changes()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var first = Path.Combine(_dir, "first");
+        var second = Path.Combine(_dir, "second");
+        CacheCard(model, first, 7);
+        CacheCard(model, second, 8);
+        Field<HashSet<string>>(model, "_chargeOnly").UnionWith([first, second]);
+        ApplyDevices(model, new("first", first), new("second", second));
+        var tile = model.Ports.Single(p => p.MountPoint == first);
+
+        ApplyDevices(model, new("second", second), new("first", first));
+
+        Assert.Equal(first, tile.MountPoint);
+        Assert.Equal("7", tile.CameraId);
+        Assert.Equal(PortState.ChargeOnly, tile.State);
+    }
+
+    [AvaloniaFact]
+    public void Window_count_changes_immediately_and_busy_tiles_cannot_be_hidden()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        model.Settings.BayCount = 12;
+        model.Settings.SaveBayCountCommand.Execute(null);
+        Assert.Equal(12, model.Ports.Count);
+        model.Ports[11].State = PortState.Copying;
+        model.Settings.BayCount = 6;
+
+        model.Settings.SaveBayCountCommand.Execute(null);
+
+        Assert.Equal(12, model.Ports.Count);
+        Assert.Equal(12, Services.Settings.Load().BayCount);
+        Assert.Contains("заняты", model.Settings.Hint);
+        model.Ports[11].Clear();
+        model.Settings.SaveBayCountCommand.Execute(null);
+        Assert.Equal(6, model.Ports.Count);
+        Assert.False(model.Settings.RestartNeeded);
+    }
+
+    [AvaloniaFact]
+    public async Task Overflow_is_visible_and_extra_media_are_still_processed()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var found = Enumerable.Range(0, 11).Select(i => new UsbDevice("card" + i,
+            Directory.CreateDirectory(Path.Combine(_dir, "card" + i)).FullName)).ToArray();
+        for (var i = 0; i < found.Length; i++) CacheCard(model, found[i].MountPoint!, 100 + i);
+        typeof(MainWindowViewModel).GetField("_priority", PrivateFields)!.SetValue(model, "busy");
+
+        ApplyDevices(model, found);
+
+        Assert.Contains("не показан", model.Status);
+        Assert.True(Field<Dictionary<long, string>>(model, "_astraOwners").ContainsKey(110));
+        await Task.Yield();
+    }
 
     private static void Prioritize(MainWindowViewModel model, bool remote)
     {

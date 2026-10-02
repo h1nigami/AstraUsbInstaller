@@ -131,14 +131,14 @@
     <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
 
       <TabItem Header="СБОР ДАННЫХ">
-        <Grid RowDefinitions="Auto,*" Margin="10,8">
+        <Grid RowDefinitions="Auto,Auto,*" Margin="10,8">
 
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="4,0,4,6">
             <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
               <TextBlock Text="Сбор данных" Classes="h1" FontSize="22" LineHeight="26" />
               <TextBlock Classes="hint" MaxWidth="420" FontSize="11"
                          HorizontalAlignment="Left"
-                         Text="Забирать регистратор можно, когда окно стало бирюзовым" />
+                         Text="Перед извлечением остановите сбор и дождитесь подтверждения" />
             </StackPanel>
 
             <Border Grid.Column="1" Padding="4" CornerRadius="20" VerticalAlignment="Center"
@@ -157,12 +157,23 @@
             </Border>
           </Grid>
 
+          <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="4,0,4,8">
+            <StackPanel Orientation="Horizontal" Spacing="6">
+              <Button Content="Остановить сбор" Height="42" Padding="14,0"
+                      Command="{Binding StopCollectionCommand}" />
+              <Button Content="Возобновить сбор" Height="42" Padding="14,0"
+                      IsVisible="{Binding SafeRemovalActive}" Command="{Binding ResumeCollectionCommand}" />
+            </StackPanel>
+            <TextBlock Grid.Column="1" Margin="12,0,0,0" FontSize="11" TextWrapping="Wrap"
+                       VerticalAlignment="Center" Text="{Binding SafeRemovalStatus}" />
+          </Grid>
+
           <!-- Сетка: до двенадцати окон, компоновка по умолчанию -->
-          <ScrollViewer Classes="fade" Grid.Row="1" IsVisible="{Binding IsGridLayout}">
+          <ScrollViewer Classes="fade" Grid.Row="2" IsVisible="{Binding IsGridLayout}">
           <ItemsControl ItemsSource="{Binding Ports}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
-                <UniformGrid Columns="3" />
+                <UniformGrid Columns="{Binding BaysPerRow}" />
               </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
@@ -209,7 +220,7 @@
           </ScrollViewer>
 
           <!-- Список: строки, когда окон больше двенадцати -->
-          <ScrollViewer Classes="fade" Grid.Row="1" IsVisible="{Binding IsListLayout}">
+          <ScrollViewer Classes="fade" Grid.Row="2" IsVisible="{Binding IsListLayout}">
             <ItemsControl ItemsSource="{Binding Ports}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:PortViewModel">
@@ -261,10 +272,10 @@
           </ScrollViewer>
 
           <!-- Схема стойки: карта отсеков для сверки номеров с железом -->
-          <Border Grid.Row="1" Classes="panel fade" Padding="10" IsVisible="{Binding IsRackLayout}">
+          <Border Grid.Row="2" Classes="panel fade" Padding="10" IsVisible="{Binding IsRackLayout}">
             <Grid RowDefinitions="Auto,*">
               <TextBlock Grid.Row="0" Margin="4,2,0,8" Classes="hint"
-                         Text="Номера соответствуют физическим отсекам после сопоставления портов" />
+                           Text="Окна заполняются в порядке обнаружения регистраторов" />
               <!-- Карта отсеков стоит по центру панели: клетки одного
                    размера, как отсеки в железе, а свободное место делится
                    сверху и снизу, чтобы схема не выглядела осевшей. -->
@@ -747,8 +758,12 @@
             </Grid>
           </Border>
 
-          <TextBlock Grid.Row="2" Text="{Binding Log.Hint}" FontSize="11" Margin="0,6,0,0"
-                     Foreground="{StaticResource Accent700Brush}" />
+          <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,6,0,0">
+            <TextBlock Text="{Binding Log.Hint}" FontSize="11" TextWrapping="Wrap"
+                       VerticalAlignment="Center" Foreground="{StaticResource Accent700Brush}" />
+            <Button Grid.Column="1" Content="Выгрузить диагностику" Height="44" FontSize="12" Margin="8,0,0,0"
+                    IsEnabled="{Binding !Log.Exporting}" Click="ExportDiagnostics_Click" />
+          </Grid>
         </Grid>
       </TabItem>
 
@@ -765,9 +780,6 @@
             <Button Classes="nav" Content="Доступ"
                     Classes.primary="{Binding Settings.IsAccessSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="access" />
-            <Button Classes="nav" Content="Разметка гнёзд"
-                    Classes.primary="{Binding Settings.IsSlotsSection}"
-                    Command="{Binding Settings.OpenSectionCommand}" CommandParameter="slots" />
             <Button Classes="nav" Content="Отправка на сервер"
                     Classes.primary="{Binding Settings.IsFtpSection}"
                     Command="{Binding Settings.OpenSectionCommand}" CommandParameter="ftp" />
@@ -816,7 +828,7 @@
                                 Command="{Binding Settings.SaveBayCountCommand}" />
                       </Grid>
                       <TextBlock Classes="hint" Margin="0,4,0,0"
-                                 Text="всего от 6 до 30, в строке от 2 до 6; вступает в силу после перезапуска" />
+                                 Text="всего от 6 до 30, в строке от 2 до 6; занятые окна скрыть нельзя" />
                     </StackPanel>
                   </UniformGrid>
 
@@ -925,40 +937,6 @@
                   </StackPanel>
                 </StackPanel>
               </ScrollViewer>
-
-              <!-- Разметка гнёзд -->
-              <Grid Classes="fade" Grid.Row="0" IsVisible="{Binding Settings.IsSlotsSection}"
-                    RowDefinitions="Auto,Auto,*,Auto">
-                <TextBlock Grid.Row="0" Text="Разметка гнёзд" Classes="section" />
-                <TextBlock Grid.Row="1" Classes="hint" Margin="0,4,0,8"
-                           Text="Отключите все регистраторы. Вставляйте по одному и нажимайте «Сопоставить» напротив нужного окна." />
-
-                <!-- Отступ справа под полосу прокрутки: без него она
-                     наезжала на кнопки сопоставления. -->
-                <ScrollViewer Grid.Row="2" Padding="0,0,14,0">
-                  <ItemsControl ItemsSource="{Binding Settings.Slots}">
-                    <ItemsControl.ItemTemplate>
-                      <DataTemplate x:DataType="vm:SlotRow">
-                        <Grid ColumnDefinitions="70,*,Auto" Height="42">
-                          <TextBlock Grid.Column="0" Text="{Binding SlotLabel}" FontSize="12"
-                                     VerticalAlignment="Center" />
-                          <TextBlock Grid.Column="1" Text="{Binding PortLabel}" Classes="mono"
-                                     FontSize="11" VerticalAlignment="Center"
-                                     TextTrimming="CharacterEllipsis"
-                                     Foreground="{StaticResource FgMutedBrush}" />
-                          <Button Grid.Column="2" Classes="compact" Content="Сопоставить"
-                                  Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).MapSlotCommand}"
-                                  CommandParameter="{Binding}" />
-                        </Grid>
-                      </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                  </ItemsControl>
-                </ScrollViewer>
-
-                <Button Grid.Row="3" Content="Снять разметку" HorizontalAlignment="Left"
-                        Margin="0,8,0,0"
-                        Command="{Binding Settings.ClearSlotsCommand}" />
-              </Grid>
 
               <!-- Отправка на сервер -->
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
@@ -1179,7 +1157,7 @@
 
                 <TextBlock Text="Заводской сброс" Classes="h2" FontSize="16" Margin="0,12,0,0" />
                 <TextBlock Classes="hint" TextWrapping="Wrap"
-                           Text="Удаляет все устройства, историю выгрузок, файлы архива, пароль и настройки. Журнал действий, справочник сотрудников и разметка гнёзд остаются. После сброса программа перезапустится." />
+                           Text="Удаляет все устройства, историю выгрузок, файлы архива, пароль и настройки. Журнал действий и справочник сотрудников остаются. После сброса программа перезапустится." />
                 <Button Classes="danger" Content="Сбросить до заводских" Height="52"
                         HorizontalAlignment="Left" IsVisible="{Binding !Settings.ResetArmed}"
                         IsEnabled="{Binding !Settings.ResetRunning}"

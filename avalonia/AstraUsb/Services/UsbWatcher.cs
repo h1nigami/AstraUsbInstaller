@@ -1,18 +1,14 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 
 namespace AstraUsb.Services;
 
 /// <summary>Подключённый носитель.</summary>
 /// <param name="Name">Имя устройства: sdb1 или буква диска.</param>
 /// <param name="MountPoint">Точка монтирования, если носитель смонтирован.</param>
-/// <param name="PortPath">
-/// Адрес физического гнезда на шине, например «1-4.2». Не меняется при
-/// переподключении того же гнезда, поэтому по нему плитка закрепляется за
-/// конкретным разъёмом станции.
-/// </param>
-public sealed record UsbDevice(string Name, string? MountPoint, string? PortPath = null);
+public sealed record UsbDevice(string Name, string? MountPoint,
+    string? FileSystemUuid = null, string? Serial = null);
 
 /// <summary>
 /// Обнаружение съёмных носителей. Логика перенесена из Python-версии
@@ -21,9 +17,6 @@ public sealed record UsbDevice(string Name, string? MountPoint, string? PortPath
 /// </summary>
 public static class UsbWatcher
 {
-    /// <summary>Из пути sysfs достаём адрес гнезда: usb1/1-4/1-4.2/... → 1-4.2.</summary>
-    private static readonly Regex PortInSysPath = new(@"/(\d+-[\d.]+)(?=/|$)", RegexOptions.Compiled);
-
     public static IReadOnlyList<UsbDevice> List() =>
         OperatingSystem.IsWindows() ? ListWindows() : ListLinux();
 
@@ -35,7 +28,12 @@ public static class UsbWatcher
             try
             {
                 if (drive.DriveType == DriveType.Removable && drive.IsReady)
-                    found.Add(new UsbDevice(drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName));
+                {
+                    GetVolumeInformation(drive.Name, IntPtr.Zero, 0, out var serial,
+                        out _, out _, IntPtr.Zero, 0);
+                    found.Add(new UsbDevice(drive.Name.TrimEnd('\\'), drive.RootDirectory.FullName,
+                        serial == 0 ? null : serial.ToString("X8")));
+                }
             }
             catch (IOException)
             {
@@ -45,25 +43,66 @@ public static class UsbWatcher
         return found;
     }
 
-    private static IReadOnlyList<UsbDevice> ListLinux()
+    private static IReadOnlyList<UsbDevice> ListLinux(string sysRoot = "/sys/class/block",
+        string uuidRoot = "/dev/disk/by-uuid", string mountsPath = "/proc/mounts",
+        Func<string?>? readLsblk = null)
     {
-        var json = RunLsblk();
+        var json = (readLsblk ?? RunLsblk)();
         if (json is null)
-            return Array.Empty<UsbDevice>();
+            return ListSysfs(sysRoot, uuidRoot, mountsPath);
 
         var found = new List<UsbDevice>();
         try
         {
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("blockdevices", out var disks))
-                return found;
+                return ListSysfs(sysRoot, uuidRoot, mountsPath);
 
             foreach (var disk in disks.EnumerateArray())
                 CollectFromDisk(disk, found);
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
-            return Array.Empty<UsbDevice>();
+            return ListSysfs(sysRoot, uuidRoot, mountsPath);
+        }
+        return found;
+    }
+
+    private static IReadOnlyList<UsbDevice> ListSysfs(string sysRoot, string uuidRoot, string mountsPath)
+    {
+        var found = new List<UsbDevice>();
+        try
+        {
+            var paths = Directory.GetDirectories(sysRoot);
+            var mounts = MountTable.Parse(File.ReadAllLines(mountsPath));
+            var uuids = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (Directory.Exists(uuidRoot))
+                foreach (var link in Directory.EnumerateFiles(uuidRoot))
+                {
+                    var target = new FileInfo(link).LinkTarget;
+                    if (target is not null)
+                        uuids[Path.GetFileName(target)] = Path.GetFileName(link);
+                }
+
+            foreach (var path in paths)
+            {
+                var real = new DirectoryInfo(path).ResolveLinkTarget(true)?.FullName ?? path;
+                if (!real.Split(Path.DirectorySeparatorChar).Any(p => p.StartsWith("usb", StringComparison.Ordinal)))
+                    continue;
+                var name = Path.GetFileName(path);
+                var partition = File.Exists(Path.Combine(path, "partition"));
+                if (!partition && paths.Any(p => p != path && File.Exists(Path.Combine(p, "partition"))
+                    && (new DirectoryInfo(p).ResolveLinkTarget(true)?.FullName ?? p).StartsWith(real + "/", StringComparison.Ordinal)))
+                    continue;
+                var serialFile = Path.Combine(partition ? Path.GetDirectoryName(real)! : real, "device", "serial");
+                var serial = File.Exists(serialFile) ? File.ReadAllText(serialFile).Trim() : null;
+                found.Add(new UsbDevice(name, mounts.FirstOrDefault(m => m.Device == "/dev/" + name)?.MountPoint,
+                    uuids.GetValueOrDefault(name), serial));
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            // Устройство могло исчезнуть во время обхода sysfs.
         }
         return found;
     }
@@ -77,8 +116,6 @@ public static class UsbWatcher
         if (string.IsNullOrEmpty(name))
             return;
 
-        var port = ReadPortPath(name);
-
         if (disk.TryGetProperty("children", out var children)
             && children.ValueKind == JsonValueKind.Array
             && children.GetArrayLength() > 0)
@@ -89,36 +126,13 @@ public static class UsbWatcher
             {
                 var partName = Text(part, "name");
                 if (!string.IsNullOrEmpty(partName))
-                    found.Add(new UsbDevice(partName, Text(part, "mountpoint"), port));
+                    found.Add(new UsbDevice(partName, Text(part, "mountpoint"),
+                        Text(part, "uuid"), Text(part, "serial") ?? Text(disk, "serial")));
             }
             return;
         }
 
-        found.Add(new UsbDevice(name, Text(disk, "mountpoint"), port));
-    }
-
-    /// <summary>
-    /// Адрес гнезда, в которое воткнут носитель. Берётся из пути sysfs:
-    /// /sys/class/block/sdb → .../usb1/1-4/1-4.2/... Последний такой участок и
-    /// есть разъём; он одинаков при каждом подключении в тот же порт.
-    /// </summary>
-    public static string? ReadPortPath(string deviceName)
-    {
-        try
-        {
-            var disk = new string(deviceName.TakeWhile(c => !char.IsDigit(c)).ToArray());
-            var link = $"/sys/class/block/{(disk.Length > 0 ? disk : deviceName)}";
-            if (!Directory.Exists(link))
-                return null;
-
-            var real = Path.GetFullPath(new DirectoryInfo(link).ResolveLinkTarget(true)?.FullName ?? link);
-            var matches = PortInSysPath.Matches(real.Replace('\\', '/'));
-            return matches.Count > 0 ? matches[^1].Groups[1].Value : null;
-        }
-        catch (Exception)
-        {
-            return null;
-        }
+        found.Add(new UsbDevice(name, Text(disk, "mountpoint"), Text(disk, "uuid"), Text(disk, "serial")));
     }
 
     private static string? Text(JsonElement el, string property) =>
@@ -128,26 +142,43 @@ public static class UsbWatcher
 
     private static string? RunLsblk()
     {
+        return RunProcess(new ProcessStartInfo
+        {
+            FileName = "lsblk",
+            Arguments = "-J -o NAME,TRAN,TYPE,MOUNTPOINT,UUID,SERIAL",
+        }, 5000);
+    }
+
+    internal static string? RunProcess(ProcessStartInfo info, int timeoutMilliseconds,
+        CancellationToken token = default)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(timeoutMilliseconds);
+        using var proc = new Process { StartInfo = info };
         try
         {
-            using var proc = Process.Start(new ProcessStartInfo
-            {
-                FileName = "lsblk",
-                Arguments = "-J -o NAME,TRAN,TYPE,MOUNTPOINT",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-            });
-            if (proc is null)
+            info.RedirectStandardOutput = true;
+            info.RedirectStandardError = true;
+            info.UseShellExecute = false;
+            info.CreateNoWindow = true;
+            token.ThrowIfCancellationRequested();
+            if (!proc.Start())
                 return null;
-
-            var output = proc.StandardOutput.ReadToEnd();
-            return proc.WaitForExit(5000) && proc.ExitCode == 0 ? output : null;
+            var output = proc.StandardOutput.ReadToEndAsync(timeout.Token);
+            var errors = proc.StandardError.ReadToEndAsync(timeout.Token);
+            proc.WaitForExitAsync(timeout.Token).GetAwaiter().GetResult();
+            Task.WhenAll(output, errors).WaitAsync(timeout.Token).GetAwaiter().GetResult();
+            return proc.ExitCode == 0 ? output.Result : null;
         }
         catch (Exception)
         {
-            // lsblk может отсутствовать: тогда носителей просто не видно.
+            try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+            catch (Exception) { }
             return null;
         }
     }
+
+    [DllImport("kernel32.dll", EntryPoint = "GetVolumeInformationW", CharSet = CharSet.Unicode)]
+    private static extern bool GetVolumeInformation(string root, IntPtr volumeName, uint volumeSize,
+        out uint serial, out uint maxComponent, out uint flags, IntPtr filesystem, uint filesystemSize);
 }

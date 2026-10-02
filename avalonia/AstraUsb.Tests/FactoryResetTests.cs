@@ -48,8 +48,9 @@ public sealed class FactoryResetTests : IDisposable
         var result = FactoryReset.Run(db, archive);
 
         Assert.Equal(1, result.Devices);
-        Assert.True(result.Entries >= 2);
-        Assert.Empty(Directory.GetFileSystemEntries(archive));
+        Assert.Equal(1, result.Entries);
+        Assert.True(ArchiveGuard.Available(archive));
+        Assert.False(Directory.Exists(Path.Combine(archive, "Device1")));
         Assert.False(File.Exists(Settings.FilePath));
         Assert.Empty(new CollectionLog(db).CollectedBefore(DateTime.Now.AddDays(1)));
         using var check = new SqliteConnection($"Data Source={db}");
@@ -78,9 +79,32 @@ public sealed class FactoryResetTests : IDisposable
         var folder = Directory.CreateDirectory(Path.Combine(_root, "not-archive")).FullName;
         File.WriteAllText(Path.Combine(folder, "important.txt"), "чужой файл");
 
-        var result = FactoryReset.Run(AppPaths.Database, folder);
-
-        Assert.Equal(0, result.Entries);
+        Assert.ThrowsAny<IOException>(() => FactoryReset.Run(AppPaths.Database, folder));
         Assert.True(File.Exists(Path.Combine(folder, "important.txt")));
+    }
+
+    [Fact]
+    public void Reset_keeps_foreign_folders_and_root_files()
+    {
+        var archive = Archive();
+        var foreign = Directory.CreateDirectory(Path.Combine(archive, "Documents")).FullName;
+        File.WriteAllText(Path.Combine(foreign, "notes.txt"), "keep");
+        File.WriteAllText(Path.Combine(archive, "report.txt"), "keep");
+        FactoryReset.Run(AppPaths.Database, archive);
+        Assert.True(File.Exists(Path.Combine(foreign, "notes.txt")));
+        Assert.True(File.Exists(Path.Combine(archive, "report.txt")));
+    }
+
+    [Fact]
+    public void Missing_archive_does_not_clear_database_or_settings()
+    {
+        var archive = Archive();
+        var clip = Path.Combine(archive, "Device1", "clip.mp4");
+        new CollectionLog(AppPaths.Database).Record([new CollectedFile(1, clip, 1, DateTime.Now, DateTime.Now)]);
+        Assert.True(new Settings { BackupRoot = archive }.Save());
+        File.Delete(Path.Combine(archive, Markers.Archive));
+        Assert.ThrowsAny<IOException>(() => FactoryReset.Run(AppPaths.Database, archive));
+        Assert.Equal(1, new CollectionLog(AppPaths.Database).Count());
+        Assert.True(File.Exists(Settings.FilePath));
     }
 }

@@ -1,10 +1,16 @@
-name: Release — сборка станции для всех систем
+name: Проверки и выпуск C# станции
 
 # Кроссплатформенная версия собирается отдельно от Python-версии: у них разные
 # архивы и разные установщики. Станция качает архив своей платформы и сверяет
 # его контрольную сумму, поэтому сумма кладётся рядом с каждым архивом.
 
 on:
+  pull_request:
+    branches: [master]
+    paths: ['avalonia/**', '.github/workflows/release-station.yml']
+  push:
+    branches: [master]
+    paths: ['avalonia/**', '.github/workflows/release-station.yml']
   release:
     types: [published]
   workflow_dispatch:
@@ -17,7 +23,54 @@ permissions:
   contents: write
 
 jobs:
+  verify:
+    permissions:
+      contents: read
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.sha }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Полный набор C# на Windows
+        if: runner.os == 'Windows'
+        run: dotnet test avalonia/AstraUsb.Tests/AstraUsb.Tests.csproj -c Release
+      - name: Проверки C# на Linux
+        if: runner.os == 'Linux'
+        # Положительные тесты временного архива идут на Windows: Linux
+        # запрещает назначение на системном диске, включая /tmp runner.
+        run: >-
+          dotnet test avalonia/AstraUsb.Tests/AstraUsb.Tests.csproj -c Release
+          --filter 'FullyQualifiedName~CollectionLogTests|FullyQualifiedName~OperationGuardTests|FullyQualifiedName~UpdateTests|FullyQualifiedName~UsbWatcherTests|FullyQualifiedName~DeviceIdentifierTests|FullyQualifiedName~DeviceRegistryTests|FullyQualifiedName~VideoPreviewTests|FullyQualifiedName~ArchivePathTests|FullyQualifiedName~Successive_mountpoints|(FullyQualifiedName~ArchiveGuardTests&FullyQualifiedName!~Marking_makes_the_volume_usable)'
+      - name: Native I/O, обновление и установщики Linux
+        if: runner.os == 'Linux'
+        run: |
+          set -eu
+          for script in avalonia/*.sh avalonia/packaging/*.sh avalonia/AstraUsb.Tests/*.sh; do
+            bash -n "$script"
+          done
+          docker run --rm --network none -e ARCHIVE_LEAF_TEST_CONTAINER=1 \
+            -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
+            sh /src/avalonia/AstraUsb.Tests/archive-leaf-integration.sh
+          for scenario in busy offline-busy offline-lock mismatch restarts success handoff; do
+            docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 \
+              -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
+              sh /src/avalonia/AstraUsb.Tests/updater-integration.sh "$scenario"
+          done
+          for script in installer-guard package-guard; do
+            docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 \
+              -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
+              bash "/src/avalonia/AstraUsb.Tests/$script.sh"
+          done
+
   build:
+    needs: verify
     if: (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: ubuntu-latest
 
@@ -52,9 +105,6 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Проверки
-        run: dotnet test avalonia/AstraUsb.Tests/AstraUsb.Tests.csproj -c Release
-
       - name: Сборка архивов
         env:
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -65,7 +115,7 @@ jobs:
           [ -n "$DATE" ] || DATE="$(date +%F)"
           mkdir -p dist
 
-          for RID in linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64; do
+          for RID in linux-x64 linux-arm64 win-x64; do
             echo "--- $RID"
             OUT="build/$RID"
             dotnet publish avalonia/AstraUsb/AstraUsb.csproj \
@@ -158,6 +208,7 @@ jobs:
   # Windows-машине. Архив при этом никуда не девается, он нужен тем, кто
   # ставит программу без установки.
   windows-setup:
+    needs: verify
     if: (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: windows-latest
 

@@ -13,15 +13,20 @@ public sealed class DeviceRegistry : IDisposable
 
     private readonly SqliteConnection _db;
 
-    public DeviceRegistry(string dbPath)
+    public DeviceRegistry(string dbPath, bool initialize = true)
     {
         var dir = Path.GetDirectoryName(dbPath);
-        if (!string.IsNullOrEmpty(dir))
+        if (initialize && !string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
 
-        _db = new SqliteConnection($"Data Source={dbPath}");
+        _db = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = dbPath,
+            Mode = initialize ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly,
+        }.ToString());
         _db.Open();
-        InitSchema();
+        if (initialize)
+            InitSchema();
     }
 
     private void InitSchema()
@@ -218,7 +223,7 @@ public sealed class DeviceRegistry : IDisposable
         Scalar("SELECT firmware_id FROM devices WHERE id = $id", ("$id", deviceId)) as string;
 
     /// <summary>Все известные камеры для вкладки «Устройства».</summary>
-    public IReadOnlyList<DeviceRecord> ListDevices()
+    public IReadOnlyList<DeviceRecord> ListDevices(CancellationToken token = default)
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
@@ -231,30 +236,34 @@ public sealed class DeviceRegistry : IDisposable
             ORDER BY d.id
             """;
 
-        var list = new List<DeviceRecord>();
         try
         {
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            return CollectionLog.ReadCancelable(cmd, token, () =>
             {
-                list.Add(new DeviceRecord(
-                    reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
-                    reader.GetString(3), reader.GetString(4), reader.GetString(5),
-                    reader.GetString(6),
-                    reader.IsDBNull(7) ? null : reader.GetInt64(7),
-                    reader.GetString(8),
-                    reader.IsDBNull(9) ? null : reader.GetInt64(9)));
-            }
+                var list = new List<DeviceRecord>();
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    token.ThrowIfCancellationRequested();
+                    list.Add(new DeviceRecord(
+                        reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                        reader.GetString(3), reader.GetString(4), reader.GetString(5),
+                        reader.GetString(6),
+                        reader.IsDBNull(7) ? null : reader.GetInt64(7),
+                        reader.GetString(8),
+                        reader.IsDBNull(9) ? null : reader.GetInt64(9)));
+                }
+                return list;
+            });
         }
-        catch (SqliteException)
+        catch (SqliteException error) when (error.SqliteErrorCode == 1)
         {
             // Справочник сотрудников ещё не создан, читаем без него.
-            return ListDevicesWithoutStaff();
+            return ListDevicesWithoutStaff(token);
         }
-        return list;
     }
 
-    private IReadOnlyList<DeviceRecord> ListDevicesWithoutStaff()
+    private IReadOnlyList<DeviceRecord> ListDevicesWithoutStaff(CancellationToken token)
     {
         using var cmd = _db.CreateCommand();
         cmd.CommandText = """
@@ -263,16 +272,20 @@ public sealed class DeviceRegistry : IDisposable
             FROM devices ORDER BY id
             """;
 
-        var list = new List<DeviceRecord>();
-        using var reader = cmd.ExecuteReader();
-        while (reader.Read())
+        return CollectionLog.ReadCancelable(cmd, token, () =>
         {
-            list.Add(new DeviceRecord(
-                reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
-                reader.GetString(3), reader.GetString(4), reader.GetString(5), "", null,
-                reader.GetString(6), null));
-        }
-        return list;
+            var list = new List<DeviceRecord>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                token.ThrowIfCancellationRequested();
+                list.Add(new DeviceRecord(
+                    reader.GetInt64(0), reader.GetString(1), reader.GetString(2),
+                    reader.GetString(3), reader.GetString(4), reader.GetString(5), "", null,
+                    reader.GetString(6), null));
+            }
+            return list;
+        });
     }
 
     /// <summary>Задаёт камере человекочитаемое имя. Папка бэкапа не меняется.</summary>

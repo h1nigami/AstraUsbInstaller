@@ -25,20 +25,40 @@ public static class UpdaterIntegration
         File.WriteAllText(Path.Combine(AppPaths.DataDir, "recording"), "video");
         var work = Directory.CreateTempSubdirectory("update-test-").FullName;
         var source = Directory.CreateDirectory(Path.Combine(work, "source")).FullName;
-        File.WriteAllText(Path.Combine(source, "AstraUsb"), scenario == "busy"
+        File.WriteAllText(Path.Combine(source, "AstraUsb"), scenario is "busy" or "offline-busy"
             ? "#!/bin/sh\ntouch \"$UPDATER_TEST_APP/data/.copying\"\n"
             : "#!/bin/sh\nexit 0\n");
         var version = scenario == "mismatch" ? "v2.8" : "v2.1";
-        File.WriteAllText(Path.Combine(source, "install_native.sh"),
+        var installerPrefix = scenario == "handoff"
+            ? File.ReadAllText("/src/avalonia/install_native.sh").Split("# --- 1.", 2)[0]
+              + "\nif flock -n -s \"$USB_DB_PATH.operations.lock\" true; then exit 42; fi\n"
+            : "";
+        File.WriteAllText(Path.Combine(source, "install_native.sh"), installerPrefix +
             $"#!/bin/sh\nprintf '{version} 2026-09-14\\n' > \"$UPDATER_TEST_APP/VERSION\"\n"
             + "echo new > \"$UPDATER_TEST_APP/old.keep\"\necho new > \"$UPDATER_TEST_APP/new.file\"\n"
             + (scenario == "restarts" ? "echo 1 > /tmp/update-restarts\n" : ""));
-        var archive = Path.Combine(work, "release.tar.gz");
+        var archive = Path.Combine(work, $"bestcam-station-v2.1-{Updater.Platform()}.tar.gz");
         using (var file = File.Create(archive))
         using (var gzip = new GZipStream(file, CompressionMode.Compress))
             TarFile.CreateFromDirectory(source, gzip, includeBaseDirectory: false);
         var bytes = File.ReadAllBytes(archive);
         var checksum = Encoding.ASCII.GetBytes(Updater.Sha256(archive));
+        if (scenario is "offline-busy" or "offline-lock")
+        {
+            File.WriteAllBytes(archive + ".sha256", checksum);
+            var staged = Updater.StageOffline(archive, Updater.Platform());
+            if (staged.Error is not null)
+                throw new InvalidOperationException(staged.Error);
+            var offline = Updater.TakeOfflineSpool()!.Value;
+            using var operation = scenario == "offline-lock" ? OperationGuard.Acquire(exclusive: true) : null;
+            var run = typeof(Updater).GetMethod("RunOffline", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var code = (int)run.Invoke(null, ["v2.0", offline.Tag, offline.Archive])!;
+            if (code != 0 || Updater.TakeOfflineSpool() is null || Updater.AlreadyFailed("v2.1")
+                || Directory.Exists(app + ".prev") || Updater.InstalledTag() != "v2.0")
+                throw new InvalidOperationException("отложенный офлайн-пакет потерян или установка уже началась");
+            Console.WriteLine($"PASS {scenario}");
+            return 0;
+        }
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var server = Task.Run(async () =>
@@ -59,7 +79,7 @@ public static class UpdaterIntegration
         var result = (int)install.Invoke(null, [new Release("v2.1", DateTime.UtcNow,
             new Dictionary<string, string>()), new ReleaseAsset(url + "archive", url + "sum"), work])!;
         await server;
-        var success = scenario == "success";
+        var success = scenario is "success" or "handoff";
         if (result != (scenario == "busy" || success ? 0 : 1)
             || File.ReadAllText(Path.Combine(app, "old.keep")).Trim() != (success ? "new" : "old")
             || File.Exists(Path.Combine(app, "new.file")) != success
@@ -72,6 +92,7 @@ public static class UpdaterIntegration
             throw new InvalidOperationException("сбойный тег не записан");
         if ((scenario == "busy" || success) && Updater.AlreadyFailed("v2.1"))
             throw new InvalidOperationException("исправный тег помечен сбойным");
+        using var released = OperationGuard.Acquire(exclusive: true);
         Console.WriteLine($"PASS {scenario}");
         return 0;
     }

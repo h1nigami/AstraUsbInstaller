@@ -12,6 +12,8 @@ public enum PortState
     Copying,
     Done,
     Failed,
+    Waiting,
+    Stopped,
 
     /// <summary>Оператор отменил загрузку: регистратор только заряжается.</summary>
     ChargeOnly,
@@ -32,6 +34,7 @@ public sealed partial class PortViewModel : ObservableObject
     public const double BarWidth = 168;
 
     public string? MountPoint { get; set; }
+    public string? DeviceKey { get; set; }
 
     [ObservableProperty] private int _slot;
     [ObservableProperty] private string _cameraId = "";
@@ -41,6 +44,9 @@ public sealed partial class PortViewModel : ObservableObject
     [ObservableProperty] private string _detail = "";
     [ObservableProperty] private string _filesLine = "";
     [ObservableProperty] private PortState _state = PortState.Idle;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(StateHint))]
+    private bool _safeToRemove;
 
     /// <summary>Доля скопированного, 0..1.</summary>
     [ObservableProperty] private double _progress;
@@ -61,6 +67,8 @@ public sealed partial class PortViewModel : ObservableObject
         PortState.Copying => "Копирование",
         PortState.Done => "Готово",
         PortState.Failed => "Ошибка",
+        PortState.Waiting => "Переподключение",
+        PortState.Stopped => "Остановлено",
         PortState.ChargeOnly => "Только зарядка",
         _ => "Свободный",
     };
@@ -71,7 +79,9 @@ public sealed partial class PortViewModel : ObservableObject
         PortState.Detected when string.IsNullOrEmpty(CameraId) => "",
         PortState.Detected or PortState.Scanning => "Чтение списка файлов",
         PortState.Copying => "Не извлекайте регистратор",
-        PortState.Done => "Можно забирать регистратор",
+        PortState.Done => SafeToRemove ? "Можно забирать регистратор" : "Остановите сбор перед извлечением",
+        PortState.Waiting => "Ждём возвращения той же карты",
+        PortState.Stopped => SafeToRemove ? "Можно извлекать регистратор" : "Дождитесь освобождения носителей",
         PortState.Failed => "Часть файлов не скопирована",
         PortState.ChargeOnly => "Загрузка отменена оператором",
         _ => IsFree ? "Вставьте регистратор" : "Нет передачи данных",
@@ -219,6 +229,7 @@ public sealed partial class PortViewModel : ObservableObject
     public void Clear()
     {
         MountPoint = null;
+        DeviceKey = null;
         CameraId = "";
         PersonnelNo = "";
         Employee = "";
@@ -226,6 +237,7 @@ public sealed partial class PortViewModel : ObservableObject
         Detail = "";
         FilesLine = "";
         Progress = 0;
+        SafeToRemove = false;
         State = PortState.Idle;
     }
 }

@@ -54,7 +54,7 @@ public static class MountManager
     /// Сколько ждать, не смонтирует ли устройство система. Двойное монтирование
     /// одного FAT опаснее задержки.
     /// </param>
-    public static Mounted? Ensure(string deviceName, TimeSpan grace)
+    public static Mounted? Ensure(string deviceName, TimeSpan grace, CancellationToken token = default)
     {
         if (OperatingSystem.IsWindows())
             return null;
@@ -64,29 +64,50 @@ public static class MountManager
 
         while (true)
         {
+            if (token.IsCancellationRequested)
+                return null;
             if (FindExisting(deviceName) is { } existing)
                 return new Mounted(existing, IsOurs(existing));
 
             if (waited >= grace)
                 break;
 
-            Thread.Sleep(step);
+            if (token.WaitHandle.WaitOne(step))
+                return null;
             waited += step;
         }
 
-        return MountOurselves(deviceName);
+        return MountOurselves(deviceName, token);
     }
 
     /// <summary>
     /// Отпускает монтирование, если оно наше. Чужое остаётся: рабочий стол
     /// смонтировал его для человека, и отбирать это у него нельзя.
     /// </summary>
-    public static void Release(Mounted? mount)
+    public static bool Release(Mounted? mount)
     {
-        if (mount is null || !mount.Ours || OperatingSystem.IsWindows())
-            return;
+        if (mount is null)
+            return true;
+        if (!mount.Ours || OperatingSystem.IsWindows())
+            return false;
 
-        Run("umount", mount.Path);
+        try
+        {
+            if (!MountTable.Parse(File.ReadAllLines(MountsFile)).Any(entry => entry.MountPoint == mount.Path))
+                return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+
+        if (!Run("umount", [mount.Path]))
+            return false;
+        try
+        {
+            if (MountTable.Parse(File.ReadAllLines(MountsFile)).Any(entry => entry.MountPoint == mount.Path))
+                return false;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
 
         try
         {
@@ -97,11 +118,16 @@ public static class MountManager
         {
             // Пустой каталог в /mnt никому не мешает.
         }
+        return true;
     }
 
-    private static Mounted? MountOurselves(string deviceName)
+    internal static Mounted? MountOurselves(string deviceName, CancellationToken token,
+        Func<string, string[], CancellationToken, bool>? run = null,
+        Func<string, string?>? findExisting = null, string mountBase = MountBase)
     {
-        var target = Path.Combine(MountBase, deviceName);
+        run ??= Run;
+        findExisting ??= FindExisting;
+        var target = Path.Combine(mountBase, deviceName);
 
         try
         {
@@ -115,21 +141,24 @@ public static class MountManager
 
         // utf8 нужен для русских имён на FAT, иначе они приезжают знаками
         // вопроса и файл потом не найти.
-        if (!Run("mount", "-o", "rw,noatime,utf8", $"/dev/{deviceName}", target)
-            && !Run("mount", $"/dev/{deviceName}", target))
-        {
-            try
-            {
-                Directory.Delete(target);
-            }
-            catch (Exception)
-            {
-                // Каталог остался, но это не мешает работе.
-            }
-            return null;
-        }
+        if (run("mount", ["-o", "rw,noatime,utf8", $"/dev/{deviceName}", target], token))
+            return new Mounted(target, Ours: true);
+        if (findExisting(deviceName) is { } existing)
+            return new Mounted(existing, existing == target || IsOurs(existing));
+        if (!token.IsCancellationRequested && run("mount", [$"/dev/{deviceName}", target], token))
+            return new Mounted(target, Ours: true);
+        if (findExisting(deviceName) is { } late)
+            return new Mounted(late, late == target || IsOurs(late));
 
-        return new Mounted(target, Ours: true);
+        try
+        {
+            Directory.Delete(target);
+        }
+        catch (Exception)
+        {
+            // Каталог остался, но это не мешает работе.
+        }
+        return null;
     }
 
     private static IReadOnlyList<MountEntry> Current()
@@ -145,7 +174,7 @@ public static class MountManager
         }
     }
 
-    private static bool Run(string program, params string[] arguments)
+    private static bool Run(string program, string[] arguments, CancellationToken token = default)
     {
         try
         {
@@ -159,13 +188,7 @@ public static class MountManager
             foreach (var argument in arguments)
                 info.ArgumentList.Add(argument);
 
-            using var proc = Process.Start(info);
-            if (proc is null)
-                return false;
-
-            proc.StandardOutput.ReadToEnd();
-            proc.StandardError.ReadToEnd();
-            return proc.WaitForExit(15_000) && proc.ExitCode == 0;
+            return UsbWatcher.RunProcess(info, 15_000, token) is not null;
         }
         catch (Exception)
         {

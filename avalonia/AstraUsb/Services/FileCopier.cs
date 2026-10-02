@@ -1,5 +1,22 @@
 namespace AstraUsb.Services;
 
+public sealed class DeviceLostException : IOException
+{
+    public DeviceLostException(Exception? inner = null) : base("Носитель отключён во время чтения", inner) { }
+
+    internal static bool IsRemoval(IOException error)
+    {
+        for (Exception? current = error; current is not null; current = current.InnerException)
+        {
+            var code = current is System.ComponentModel.Win32Exception native ? native.NativeErrorCode
+                : current is IOException ? current.HResult & 0xffff : -1;
+            if (OperatingSystem.IsLinux() ? code is 5 or 6 or 19 or 116 : code is 21 or 1117 or 1167)
+                return true;
+        }
+        return false;
+    }
+}
+
 /// <summary>Итог сеанса копирования.</summary>
 /// <param name="CopiedFiles">Сколько файлов скопировано в этот раз.</param>
 /// <param name="CopiedBytes">Сколько байт перенесено.</param>
@@ -24,26 +41,41 @@ public sealed record CopyResult(
 /// </summary>
 public static class FileCopier
 {
-    /// <summary>Совпадение времени с точностью до секунды, как в оригинале.</summary>
-    private static readonly TimeSpan SameTime = TimeSpan.FromSeconds(1);
-
     public static CopyResult Copy(
         string sourceRoot,
         string destRoot,
         string timestamp,
-        Action<int, long>? onProgress = null)
+        Action<int, long>? onProgress = null,
+        CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         var copiedFiles = 0;
         var copiedBytes = 0L;
         var failed = 0;
         var backedUp = new Dictionary<string, string>(StringComparer.Ordinal);
+        ArchiveDirectory destination;
+        try { destination = ArchiveGuard.Open(destRoot, create: true, requireMarker: false); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            var errors = 0;
+            var count = EnumerateDirectories(sourceRoot, () => errors++)
+                .Sum(dir => Directory.GetFiles(dir).Count(f => !Markers.IsService(Path.GetFileName(f))));
+            return new CopyResult(0, 0, backedUp, Math.Max(1, count + errors));
+        }
+        using var heldDestination = destination;
 
         // Каталог, который не удалось прочитать, считается неудачей: иначе
         // выдернутый посреди копирования носитель давал бы зелёное «Готово»
         // с неполным числом файлов.
         var walkErrors = 0;
-        foreach (var dir in EnumerateDirectories(sourceRoot, () => walkErrors++))
+        foreach (var dir in EnumerateDirectories(sourceRoot, () =>
+                 {
+                     walkErrors++;
+                     if (!Directory.Exists(sourceRoot))
+                         throw new DeviceLostException();
+                 }))
         {
+            token.ThrowIfCancellationRequested();
             var relative = Path.GetRelativePath(sourceRoot, dir);
             var destDir = relative == "." ? destRoot : Path.Combine(destRoot, relative);
 
@@ -52,8 +84,14 @@ public static class FileCopier
             {
                 files = Directory.GetFiles(dir);
             }
+            catch (IOException error) when (DeviceLostException.IsRemoval(error))
+            {
+                throw new DeviceLostException(error);
+            }
             catch (Exception)
             {
+                if (!Directory.Exists(sourceRoot))
+                    throw new DeviceLostException();
                 walkErrors++;
                 continue;
             }
@@ -62,9 +100,10 @@ public static class FileCopier
                 .Where(f => !Markers.IsService(Path.GetFileName(f)))
                 .ToArray();
 
+            ArchiveDirectory targetDirectory;
             try
             {
-                Directory.CreateDirectory(destDir);
+                targetDirectory = destination.CreateDirectory(relative == "." ? "" : relative);
             }
             catch (Exception)
             {
@@ -73,16 +112,19 @@ public static class FileCopier
                 failed += payload.Length;
                 continue;
             }
+            using var heldDirectory = targetDirectory;
 
             foreach (var sourceFile in payload)
             {
+                token.ThrowIfCancellationRequested();
                 try
                 {
-                    var target = Path.Combine(destDir, Path.GetFileName(sourceFile));
+                    var name = Path.GetFileName(sourceFile);
+                    var target = Path.Combine(destDir, name);
 
-                    if (File.Exists(target))
+                    if (Path.Exists(Path.Combine(targetDirectory.Path, name)))
                     {
-                        if (SameFile(sourceFile, target))
+                        if (targetDirectory.SameFile(sourceFile, name))
                         {
                             backedUp.Add(sourceFile, target);
                             continue;
@@ -90,37 +132,33 @@ public static class FileCopier
 
                         // Файл изменился: прежнюю копию сохраняем, новую кладём
                         // рядом с отметкой времени.
-                        var name = Path.GetFileNameWithoutExtension(sourceFile);
+                        var stem = Path.GetFileNameWithoutExtension(sourceFile);
                         var ext = Path.GetExtension(sourceFile);
-                        target = Path.Combine(destDir, $"{name}_{timestamp}{ext}");
+                        name = $"{stem}_{timestamp}{ext}";
+                        target = Path.Combine(destDir, name);
                     }
 
-                    var size = new FileInfo(sourceFile).Length;
-                    File.Copy(sourceFile, target, overwrite: false);
-                    File.SetLastWriteTimeUtc(target, File.GetLastWriteTimeUtc(sourceFile));
+                    var size = targetDirectory.CopyFile(sourceFile, name, token);
 
                     copiedFiles++;
                     copiedBytes += size;
                     backedUp.Add(sourceFile, target);
                     onProgress?.Invoke(copiedFiles, copiedBytes);
                 }
+                catch (OperationCanceledException) { throw; }
+                catch (DeviceLostException) { throw; }
                 catch (Exception)
                 {
+                    if (!Directory.Exists(sourceRoot))
+                        throw new DeviceLostException();
                     // Намеренно не добавляем в backedUp: файл останется на носителе.
                     failed++;
                 }
             }
         }
 
+        token.ThrowIfCancellationRequested();
         return new CopyResult(copiedFiles, copiedBytes, backedUp, failed + walkErrors);
-    }
-
-    private static bool SameFile(string source, string target)
-    {
-        var a = new FileInfo(source);
-        var b = new FileInfo(target);
-        return a.Length == b.Length
-               && (a.LastWriteTimeUtc - b.LastWriteTimeUtc).Duration() < SameTime;
     }
 
     /// <summary>Обход в глубину, где каждый нечитаемый каталог отмечается через onError.</summary>
@@ -137,6 +175,10 @@ public static class FileCopier
             try
             {
                 nested = Directory.GetDirectories(dir);
+            }
+            catch (IOException error) when (DeviceLostException.IsRemoval(error))
+            {
+                throw new DeviceLostException(error);
             }
             catch (Exception)
             {

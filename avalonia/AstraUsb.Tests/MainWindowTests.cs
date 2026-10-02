@@ -41,6 +41,36 @@ public sealed class MainWindowTests : IDisposable
     }
 
     [AvaloniaFact]
+    public async Task The_collection_screen_can_stop_and_resume_without_a_password()
+    {
+        var model = new MainWindowViewModel(() => []);
+        var window = new MainWindow(model);
+        window.Show();
+        try
+        {
+            var stop = window.GetVisualDescendants().OfType<Button>()
+                .SingleOrDefault(b => Equals(b.Content, "Остановить сбор"));
+            Assert.NotNull(stop);
+            Click(window, stop);
+            await model.StopCollectionCommand.ExecutionTask!;
+            window.UpdateLayout();
+            Assert.True(model.SafeRemovalReady);
+            Assert.False(model.PasswordVisible);
+            var resume = window.GetVisualDescendants().OfType<Button>()
+                .Single(b => Equals(b.Content, "Возобновить сбор") && b.IsEffectivelyVisible);
+            Click(window, resume);
+            Assert.False(model.SafeRemovalActive);
+        }
+        finally
+        {
+            model.ExitCommand.Execute(null);
+            model.PasswordInput = PasswordGate.Default();
+            model.ConfirmPasswordCommand.Execute(null);
+            model.Dispose();
+        }
+    }
+
+    [AvaloniaFact]
     public void Closing_the_window_requires_the_exit_password()
     {
         var window = new MainWindow(new MainWindowViewModel(() => []));
@@ -202,10 +232,36 @@ public sealed class MainWindowTests : IDisposable
     private static void Click(Window window, Control control)
     {
         control.BringIntoView();
+        Dispatcher.UIThread.RunJobs();
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        Dispatcher.UIThread.RunJobs();
         window.UpdateLayout();
         var point = control.TranslatePoint(new Point(control.Bounds.Width / 2, control.Bounds.Height / 2), window)!.Value;
         window.MouseDown(point, MouseButton.Left);
         window.MouseUp(point, MouseButton.Left);
+    }
+
+    [AvaloniaFact]
+    public void Click_uses_the_layout_after_queued_ui_work()
+    {
+        var button = new Button { Content = "Кнопка", Width = 100, Height = 42 };
+        var canvas = new Canvas { Children = { button } };
+        Canvas.SetLeft(button, 20);
+        Canvas.SetTop(button, 20);
+        var window = new Window { Width = 400, Height = 200, Content = canvas };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            var clicks = 0;
+            button.Click += (_, _) => clicks++;
+            Dispatcher.UIThread.Post(() => Canvas.SetLeft(button, 200));
+
+            Click(window, button);
+
+            Assert.Equal(1, clicks);
+        }
+        finally { window.Close(); }
     }
 
     [AvaloniaTheory]

@@ -26,18 +26,31 @@ public enum BackupStage
 public sealed class BackupService
 {
     private readonly string _dbPath;
-    private readonly Settings _settings;
+    private readonly Settings? _configured;
 
-    public BackupService(string dbPath, Settings settings)
+    public BackupService(string dbPath, Settings? settings = null)
     {
         _dbPath = dbPath;
-        _settings = settings;
-        ArchiveGuard.RepairOwnership(settings.BackupRoot);
+        _configured = settings;
+        if (OperatingSystem.IsLinux())
+        {
+            try
+            {
+                var configured = settings ?? Settings.Load();
+                using var operation = OperationGuard.Acquire(dbPath: dbPath);
+                using var archive = ArchiveGuard.Open(configured.ResolveBackupRoot(), settings: configured);
+                ArchiveGuard.RepairOwnership(archive.Root);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                // Выгрузка повторит проверку, когда архив и блокировка станут доступны.
+            }
+        }
     }
 
     /// <summary>Папка камеры в хранилище. Имя не меняется при переименовании камеры.</summary>
     public string FolderFor(long deviceId) =>
-        Path.Combine(_settings.BackupRoot, DeviceRegistry.DeviceDirPrefix + deviceId);
+        Path.Combine((_configured ?? Settings.Load()).ResolveBackupRoot(), DeviceRegistry.DeviceDirPrefix + deviceId);
 
     public async Task RunAsync(long deviceId, string mountPoint,
         IProgress<BackupProgress> progress, CancellationToken token = default)
@@ -47,11 +60,13 @@ public sealed class BackupService
 
         try
         {
-            if (DeviceIdentifier.Read(mountPoint) != deviceId)
+            token.ThrowIfCancellationRequested();
+            var settings = _configured ?? Settings.Load();
+            var root = settings.ResolveBackupRoot();
+            if (ReadDeviceId(mountPoint) != deviceId)
                 throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
-            progress.Report(new BackupProgress(BackupStage.Scanning, 0, "считаем объём"));
 
-            if (_settings.Unreadable)
+            if (settings.Unreadable)
             {
                 progress.Report(new BackupProgress(BackupStage.Failed, 0,
                     "настройки станции не читаются"));
@@ -63,18 +78,24 @@ public sealed class BackupService
             // Том архива мог не смонтироваться. Записать в его прежний путь
             // означало бы создать пустой каталог на системном разделе и
             // отчитаться об успехе, потеряв записи.
-            if (!ArchiveGuard.Available(_settings.BackupRoot))
+            if (!ArchiveGuard.Available(root))
             {
                 progress.Report(new BackupProgress(BackupStage.Failed, 0,
                     "том архива не смонтирован"));
                 new ActionLog(_dbPath).Write(ActionLog.Cleanup,
-                    $"выгрузка остановлена: нет метки тома архива в {_settings.BackupRoot}");
+                    $"выгрузка остановлена: нет метки тома архива в {root}");
                 return;
             }
 
-            var destination = FolderFor(deviceId);
-            var total = await Task.Run(() => Measure(mountPoint), token);
-            if (DeviceIdentifier.Read(mountPoint) != deviceId)
+            var destination = Path.Combine(root, DeviceRegistry.DeviceDirPrefix + deviceId);
+            (int Files, long Bytes) total;
+            using (OperationGuard.Acquire(dbPath: _dbPath))
+            using (ArchiveGuard.Open(root, settings: settings))
+            {
+                progress.Report(new BackupProgress(BackupStage.Scanning, 0, "считаем объём"));
+                total = await Task.Run(() => Measure(mountPoint, token), token);
+            }
+            if (ReadDeviceId(mountPoint) != deviceId)
                 throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
             if (total.Files == 0)
             {
@@ -84,19 +105,27 @@ public sealed class BackupService
 
             // Освобождаем место заранее, если так настроено: иначе копирование
             // упадёт на середине и часть файлов останется недокопированной.
-            PurgeExpired();
-            EnsureSpace(total.Bytes);
+            PurgeExpired(settings, root);
+            EnsureSpace(settings, root, total.Bytes);
+
+            using var operation = OperationGuard.Acquire(dbPath: _dbPath);
+            using var archive = ArchiveGuard.Open(root, settings: settings);
+            token.ThrowIfCancellationRequested();
+            if (ReadDeviceId(mountPoint) != deviceId)
+                throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
 
             var result = await Task.Run(() => FileCopier.Copy(
                 mountPoint, destination, stamp,
                 (files, bytes) => progress.Report(new BackupProgress(
                     BackupStage.Copying,
                     total.Bytes > 0 ? (double)bytes / total.Bytes : 0,
-                    $"{files} из {total.Files}"))), token);
+                    $"{files} из {total.Files}")), token), token);
 
-            ArchiveGuard.RepairOwnership(_settings.BackupRoot, destination);
-            var recorded = RecordCollected(deviceId, result, started);
-            QueueForServer(result);
+            token.ThrowIfCancellationRequested();
+            archive.Verify();
+            ArchiveGuard.RepairOwnership(root, destination);
+            var recorded = RecordCollected(deviceId, result, started, settings, archive.Root);
+            QueueForServer(settings, result);
 
             // Карту могли подменить прямо во время копирования: пути из
             // BackedUp тогда относятся к ушедшей карте, и удаление пошло бы
@@ -105,7 +134,9 @@ public sealed class BackupService
 
             // Без записи в журнале поиск копию не найдёт, поэтому оригиналы
             // на карте остаются, пока сеанс не запишется.
-            if (_settings.DeleteVideoAfterCopy && result.Failed == 0 && sameDevice && recorded)
+            token.ThrowIfCancellationRequested();
+            archive.Verify();
+            if (settings.DeleteVideoAfterCopy && result.Failed == 0 && sameDevice && recorded)
                 SourceCleaner.DeleteBackedUpVideos(mountPoint, result.BackedUp);
 
             var (stage, detail, logLine) =
@@ -132,6 +163,8 @@ public sealed class BackupService
         {
             progress.Report(new BackupProgress(BackupStage.Failed, 0, "выгрузка прервана"));
         }
+        catch (StationBusyException) { throw; }
+        catch (DeviceLostException) { throw; }
         catch (Exception e)
         {
             progress.Report(new BackupProgress(BackupStage.Failed, 0,
@@ -143,9 +176,9 @@ public sealed class BackupService
     /// Ставит собранное в очередь отправки на сервер. Отправка идёт из очереди
     /// отдельно: сеть может пропасть, а записи должны остаться на станции.
     /// </summary>
-    private void QueueForServer(CopyResult result)
+    private void QueueForServer(Settings settings, CopyResult result)
     {
-        if (!_settings.FtpEnabled)
+        if (!settings.FtpEnabled)
             return;
 
         try
@@ -160,34 +193,41 @@ public sealed class BackupService
     }
 
     /// <summary>Считает, сколько предстоит скопировать. Маркеры не учитываются.</summary>
-    private static (int Files, long Bytes) Measure(string mountPoint)
+    private static (int Files, long Bytes) Measure(string mountPoint, CancellationToken token)
     {
         var files = 0;
         var bytes = 0L;
         try
         {
-            foreach (var path in Directory.EnumerateFiles(mountPoint, "*", SearchOption.AllDirectories))
+            foreach (var path in Directory.EnumerateFiles(mountPoint, "*", new EnumerationOptions
+                     { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false }))
             {
+                token.ThrowIfCancellationRequested();
                 if (Markers.IsService(Path.GetFileName(path)))
                     continue;
                 files++;
                 bytes += new FileInfo(path).Length;
             }
         }
-        catch (Exception)
+        catch (OperationCanceledException) { throw; }
+        catch (IOException error) when (DeviceLostException.IsRemoval(error) || !Directory.Exists(mountPoint))
         {
-            // Карту вынули посреди подсчёта, вернём то, что успели.
+            throw new DeviceLostException(error);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException("Не удалось прочитать карту", error);
         }
         return (files, bytes);
     }
 
     /// <summary>Освобождает место под выгрузку, если включена перезапись.</summary>
-    private void EnsureSpace(long needed)
+    private void EnsureSpace(Settings settings, string root, long needed)
     {
-        var status = StorageManager.Check(_settings.BackupRoot, _settings.MinFreeBytes);
-        var shortfall = needed + _settings.MinFreeBytes - status.FreeBytes;
+        var status = StorageManager.Check(root, settings.MinFreeBytes);
+        var shortfall = needed + settings.MinFreeBytes - status.FreeBytes;
         if (shortfall > 0)
-            StorageManager.FreeUpSpace(_settings.BackupRoot, shortfall, _settings.StorageMode,
+            StorageManager.FreeUpSpace(root, shortfall, settings.StorageMode,
                 new CollectionLog(_dbPath));
     }
 
@@ -195,17 +235,17 @@ public sealed class BackupService
     /// Убирает записи, чей срок хранения вышел. Делается перед выгрузкой:
     /// освободившееся место сразу пригодится, и станция не копит лишнего.
     /// </summary>
-    private void PurgeExpired()
+    private void PurgeExpired(Settings settings, string root)
     {
-        if (_settings.KeepDays <= 0)
+        if (settings.KeepDays <= 0)
             return;
 
         try
         {
             var (files, bytes) = StorageManager.DeleteExpired(
                 new CollectionLog(_dbPath),
-                DateTime.Now.AddDays(-_settings.KeepDays),
-                _settings.BackupRoot);
+                DateTime.Now.AddDays(-settings.KeepDays),
+                root);
 
             if (files > 0)
                 new ActionLog(_dbPath).Write(ActionLog.Cleanup,
@@ -223,12 +263,22 @@ public sealed class BackupService
     {
         try
         {
-            return DeviceIdentifier.Read(mountPoint) == deviceId;
+            return ReadDeviceId(mountPoint) == deviceId;
         }
+        catch (DeviceLostException) { throw; }
         catch (Exception)
         {
             return false;
         }
+    }
+
+    private static long ReadDeviceId(string mountPoint)
+    {
+        if (!Directory.Exists(mountPoint))
+            throw new DeviceLostException();
+        try { return DeviceIdentifier.Read(mountPoint); }
+        catch (IOException error) when (DeviceLostException.IsRemoval(error) || !Directory.Exists(mountPoint))
+        { throw new DeviceLostException(error); }
     }
 
     /// <summary>
@@ -236,14 +286,19 @@ public sealed class BackupService
     /// ставит станция: часам камеры доверия нет. false, если записать не
     /// вышло: без журнала поиск копию не найдёт, и оператор должен это увидеть.
     /// </summary>
-    private bool RecordCollected(long deviceId, CopyResult result, DateTime collectedAt)
+    private bool RecordCollected(long deviceId, CopyResult result, DateTime collectedAt,
+        Settings settings, string liveRoot)
     {
         try
         {
+            var resolve = settings.ArchivePathResolver(liveRoot);
+            var recordedRoot = Path.GetFullPath(settings.BackupRoot);
             var log = new CollectionLog(_dbPath);
             log.Record(result.Destinations.Select(saved =>
             {
                 var (source, dest) = saved;
+                // Ключ сохраняет выбранный корень при смене точек монтирования.
+                var loggedPath = Path.Combine(recordedRoot, Path.GetRelativePath(liveRoot, resolve(dest)));
                 // Время съёмки камера пишет прямо в имя файла, и это начало
                 // записи. Дата файла отмечает её закрытие и легче сбивается,
                 // поэтому она идёт запасным вариантом.
@@ -259,7 +314,7 @@ public sealed class BackupService
                 {
                     // Файл уже удалён автоочисткой, размер и дата не критичны.
                 }
-                return new CollectedFile(deviceId, dest, size, shot, collectedAt);
+                return new CollectedFile(deviceId, loggedPath, size, shot, collectedAt);
             }));
             return true;
         }

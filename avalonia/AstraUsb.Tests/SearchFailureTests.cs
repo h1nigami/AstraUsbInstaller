@@ -20,7 +20,9 @@ public sealed class SearchFailureTests : IDisposable
 
     private FoundFile LogFile()
     {
-        var path = Path.Combine(_root, "record.log");
+        var path = Path.Combine(AppPaths.BackupsRoot, "Device1", "record.log");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        ArchiveGuard.Mark(AppPaths.BackupsRoot);
         File.WriteAllText(path, "журнал камеры");
         return new FoundFile
         {
@@ -56,7 +58,9 @@ public sealed class SearchFailureTests : IDisposable
     [Fact]
     public async Task A_failed_view_audit_does_not_throw_from_the_play_button()
     {
-        var model = new SearchViewModel(Path.Combine(_blocked, "devices.db")) { Current = LogFile() };
+        var database = Path.Combine(_root, "broken.db");
+        File.WriteAllText(database, "not a database");
+        var model = new SearchViewModel(database) { Current = LogFile() };
 
         var error = await Record.ExceptionAsync(() => model.PlayCommand.ExecuteAsync(null));
 
@@ -76,6 +80,18 @@ public sealed class SearchFailureTests : IDisposable
 
         Assert.False(model.ViewerVisible);
         Assert.Empty(model.ViewerText);
+    }
+
+    [Fact]
+    public async Task Viewing_does_not_read_files_during_exclusive_station_maintenance()
+    {
+        var model = new SearchViewModel(Path.Combine(_root, "devices.db")) { Current = LogFile() };
+        using var maintenance = OperationGuard.Acquire(exclusive: true, dbPath: Path.Combine(_root, "devices.db"));
+
+        await model.PlayCommand.ExecuteAsync(null);
+
+        Assert.Empty(model.ViewerText);
+        Assert.False(model.ViewerVisible);
     }
 
     [Theory]

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace AstraUsb.Services;
 
@@ -11,6 +12,9 @@ public sealed class Settings
 {
     /// <summary>Куда складывать копии.</summary>
     public string BackupRoot { get; set; } = "";
+    public string BackupUuid { get; set; } = "";
+    public string BackupSerial { get; set; } = "";
+    public string? BackupRelativePath { get; set; }
 
     /// <summary>Что делать при нехватке места: предупреждать или перезаписывать.</summary>
     public StorageMode StorageMode { get; set; } = StorageMode.Warn;
@@ -129,7 +133,10 @@ public sealed class Settings
     /// </summary>
     public int BaysPerRow { get; set; } = 3;
 
+    [JsonIgnore]
     public long MinFreeBytes => (long)MinFreeGb * 1024 * 1024 * 1024;
+
+    private JsonObject? _loaded;
 
     private static readonly JsonSerializerOptions Json = new()
     {
@@ -162,13 +169,16 @@ public sealed class Settings
                 {
                     if (string.IsNullOrEmpty(loaded.BackupRoot))
                         loaded.BackupRoot = AppPaths.BackupsRoot;
+                    loaded._loaded = JsonSerializer.SerializeToNode(loaded, Json)!.AsObject();
                     return loaded;
                 }
             }
             catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
             {
                 // Файла ещё нет: станция не настраивалась, берём значения по умолчанию.
-                return new Settings { BackupRoot = AppPaths.BackupsRoot };
+                var defaults = new Settings { BackupRoot = AppPaths.BackupsRoot };
+                defaults._loaded = JsonSerializer.SerializeToNode(defaults, Json)!.AsObject();
+                return defaults;
             }
             catch (Exception)
             {
@@ -182,8 +192,7 @@ public sealed class Settings
     }
 
     /// <summary>
-    /// Записывает файл целиком через временный и замену: обрыв питания
-    /// посреди записи оставляет прежний файл, а не обрезанный.
+    /// Объединяет изменённые поля с последним файлом и атомарно заменяет его.
     /// </summary>
     /// <param name="replaceUnreadable">
     /// Разрешить перезаписать нечитаемый файл. Только при явном выборе папки
@@ -196,16 +205,39 @@ public sealed class Settings
 
         lock (FileLock)
         {
-            var temp = FilePath + ".tmp";
+            var temp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                AppPaths.EnsureCreated();
+                JsonObject latest = [];
+                if (File.Exists(FilePath))
+                {
+                    try
+                    {
+                        var text = File.ReadAllText(FilePath);
+                        if (JsonSerializer.Deserialize<Settings>(text, Json) is null)
+                            throw new JsonException("Файл настроек пуст");
+                        latest = JsonNode.Parse(text)!.AsObject();
+                    }
+                    catch (Exception) when (replaceUnreadable)
+                    {
+                        File.Copy(FilePath, FilePath + ".corrupt." + Guid.NewGuid().ToString("N"));
+                    }
+                }
+                var current = JsonSerializer.SerializeToNode(this, Json)!.AsObject();
+                foreach (var field in current)
+                    if (_loaded is null || !JsonNode.DeepEquals(field.Value, _loaded[field.Key]))
+                        latest[field.Key] = field.Value?.DeepClone();
+                Directory.CreateDirectory(AppPaths.DataDir);
                 using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
                 {
-                    JsonSerializer.Serialize(stream, this, Json);
+                    JsonSerializer.Serialize(stream, latest, Json);
                     stream.Flush(flushToDisk: true);
                 }
                 File.Move(temp, FilePath, overwrite: true);
+                var merged = latest.Deserialize<Settings>(Json)!;
+                foreach (var property in typeof(Settings).GetProperties().Where(p => p.SetMethod?.IsPublic == true))
+                    property.SetValue(this, property.GetValue(merged));
+                _loaded = JsonSerializer.SerializeToNode(this, Json)!.AsObject();
                 Unreadable = false;
                 return true;
             }
@@ -221,6 +253,70 @@ public sealed class Settings
                 }
                 return false;
             }
+        }
+    }
+
+    public bool SelectBackupRoot(string root)
+    {
+        try
+        {
+            if (!ArchiveGuard.Mark(root))
+                return false;
+            var identity = ArchiveGuard.DescribeDestination(root);
+            BackupRoot = Path.GetFullPath(root);
+            BackupUuid = identity.Uuid;
+            BackupSerial = identity.Serial;
+            BackupRelativePath = identity.RelativePath;
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { return false; }
+    }
+
+    public string ResolveBackupRoot() => ArchiveGuard.ResolveDestination(this);
+
+    public Func<string, string> ArchivePathResolver(string liveRoot) =>
+        ArchivePathResolver(liveRoot, ArchiveGuard.DescribeDestination);
+
+    internal Func<string, string> ArchivePathResolver(string liveRoot,
+        Func<string, ArchiveGuard.DestinationIdentity> describe)
+    {
+        if (Unreadable)
+            throw new IOException("Настройки архива не читаются");
+        var live = Path.GetFullPath(liveRoot);
+        var saved = string.IsNullOrEmpty(BackupRoot) ? live : Path.GetFullPath(BackupRoot);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var remap = !saved.Equals(live, comparison) && (BackupUuid.Length > 0 || BackupSerial.Length > 0);
+        if (remap)
+        {
+            if (BackupRelativePath is null)
+                throw new IOException("Не сохранена папка архива внутри носителя");
+            var identity = describe(live);
+            var matches = BackupUuid.Length > 0 ? identity.Uuid == BackupUuid : identity.Serial == BackupSerial;
+            if (!matches || identity.RelativePath != BackupRelativePath)
+                throw new IOException("Текущий носитель или папка не совпадает с выбранным архивом");
+        }
+
+        return path =>
+        {
+            if (!Path.IsPathFullyQualified(path) || path.Split(['/', '\\']).Any(part => part is "." or ".."))
+                throw new IOException("Файл не принадлежит текущему архиву");
+            var relative = Path.GetRelativePath(live, path);
+            if (!DeviceFile(relative) && remap)
+                relative = Path.GetRelativePath(saved, path);
+            if (!DeviceFile(relative))
+                throw new IOException("Файл не принадлежит текущему архиву");
+            var resolved = Path.Combine(live, relative);
+            ArchiveDirectory.RejectLinks(resolved);
+            return resolved;
+        };
+
+        static bool DeviceFile(string relative)
+        {
+            var parts = relative.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length >= 2 && ArchiveGuard.IsDeviceFolderName(parts[0])
+                && !parts.Any(part => part is "." or ".." || part.Contains(':'))
+                && !Markers.IsService(parts[^1]);
         }
     }
 

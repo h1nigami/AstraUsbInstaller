@@ -31,6 +31,8 @@ public sealed partial class LogViewModel : ObservableObject
     [ObservableProperty] private string _from = DateTime.Now.ToString("dd.MM.yyyy");
     [ObservableProperty] private string _to = DateTime.Now.ToString("dd.MM.yyyy");
     [ObservableProperty] private string _hint = "";
+    [ObservableProperty] private string _exportTarget = "";
+    [ObservableProperty] private bool _exporting;
 
     public LogViewModel() : this(AppPaths.Database)
     {
@@ -40,6 +42,28 @@ public sealed partial class LogViewModel : ObservableObject
     {
         _dbPath = dbPath;
         _ = Reload();
+    }
+
+    [RelayCommand]
+    public async Task ExportDiagnostics()
+    {
+        if (string.IsNullOrWhiteSpace(ExportTarget))
+        {
+            Hint = "выберите папку для диагностики";
+            return;
+        }
+        Exporting = true;
+        try
+        {
+            var destination = ExportTarget.Trim();
+            var bundle = await Task.Run(() => Diagnostics.Export(destination, _dbPath));
+            Hint = $"диагностика сохранена: {bundle}";
+        }
+        catch (Exception error)
+        {
+            Hint = UserError.Report("Не удалось выгрузить диагностику", error);
+        }
+        finally { Exporting = false; }
     }
 
     [RelayCommand]

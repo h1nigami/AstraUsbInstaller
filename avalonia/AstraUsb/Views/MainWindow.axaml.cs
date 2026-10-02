@@ -3,11 +3,30 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform.Storage;
 
 namespace AstraUsb.Views;
 
 public partial class MainWindow : Window
 {
+    private async void ExportDiagnostics_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel vm || vm.Log.Exporting)
+            return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Куда сохранить диагностику", AllowMultiple = false,
+            });
+            if (folders.FirstOrDefault()?.TryGetLocalPath() is not { } destination)
+                return;
+            vm.Log.ExportTarget = destination;
+            await vm.Log.ExportDiagnosticsCommand.ExecuteAsync(null);
+        }
+        catch (Exception error) { vm.ShowError(error); }
+    }
+
     public MainWindow() : this(new MainWindowViewModel())
     {
     }

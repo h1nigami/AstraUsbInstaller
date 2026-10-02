@@ -11,8 +11,7 @@ public sealed record FactoryResetResult(int Devices, int Backups, int Entries);
 /// устройства, история выгрузок, файлы архива, пароль и настройки.
 ///
 /// Журнал действий остаётся: по нему потом видно, кто и когда сбросил
-/// станцию. Справочник сотрудников и разметка гнёзд тоже остаются: это
-/// описание объекта и железа, а не накопленные данные.
+/// станцию. Справочник сотрудников тоже сохраняется.
 /// </summary>
 public static class FactoryReset
 {
@@ -21,13 +20,16 @@ public static class FactoryReset
 
     public static FactoryResetResult Run(string dbPath, string? archiveRoot)
     {
+        using var operation = OperationGuard.Acquire(exclusive: true, dbPath: dbPath);
         // Снос данных под идущей выгрузкой оставил бы архив и базу
         // в рассогласованном состоянии.
         if (BusyMarker.Busy())
             throw new InvalidOperationException("Сброс невозможен: идёт сканирование или копирование");
 
+        using var archive = ArchiveGuard.Open(archiveRoot ?? Settings.Load().ResolveBackupRoot(), settings: Settings.Load());
+        var entries = ClearArchive(archive);
+        archive.Verify();
         var (devices, backups) = ClearDatabase(dbPath);
-        var entries = ClearArchive(archiveRoot);
         Settings.Reset();
 
         try
@@ -111,36 +113,15 @@ public static class FactoryReset
     /// нельзя поручиться, что это архив станции, а не, скажем, корень диска,
     /// оказавшийся в настройках по ошибке.
     /// </summary>
-    private static int ClearArchive(string? archiveRoot)
+    private static int ClearArchive(ArchiveDirectory archive)
     {
-        if (string.IsNullOrWhiteSpace(archiveRoot) || !ArchiveGuard.Available(archiveRoot))
-            return 0;
-
         var entries = 0;
-        FileSystemInfo[] items;
-        try
+        foreach (var item in new DirectoryInfo(archive.Path).EnumerateDirectories())
         {
-            items = new DirectoryInfo(archiveRoot).GetFileSystemInfos();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            return 0;
-        }
-
-        foreach (var item in items)
-        {
-            try
-            {
-                if (item is DirectoryInfo dir && dir.LinkTarget is null)
-                    dir.Delete(recursive: true);
-                else
-                    item.Delete();
-                entries++;
-            }
-            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-            {
-                // Что не удалилось, останется; остальное удаляем дальше.
-            }
+            if (!ArchiveGuard.IsDeviceFolderName(item.Name) || item.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                continue;
+            archive.DeleteDeviceFolder(item.Name);
+            entries++;
         }
         return entries;
     }

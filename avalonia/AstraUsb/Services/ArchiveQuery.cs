@@ -46,6 +46,8 @@ public sealed record ArchiveRow(
     string Department)
 {
     public MediaKind Kind => MediaKinds.Of(File.DestPath);
+    public string Path { get; init; } = File.DestPath;
+    public IReadOnlyList<string> LoggedPaths { get; init; } = [File.DestPath];
 }
 
 /// <summary>Род файла по его расширению.</summary>

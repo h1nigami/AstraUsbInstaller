@@ -7,6 +7,7 @@ namespace AstraUsb.Tests;
 /// Выгрузка найденного наружу. Это то, ради чего записи и собирают, поэтому
 /// проверяется, что ничего не теряется и не затирается по дороге.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class FileExporterTests : IDisposable
 {
     private static readonly DateTime Stamp = new(2026, 9, 2, 16, 30, 0);
@@ -14,18 +15,21 @@ public sealed class FileExporterTests : IDisposable
     private readonly string _dir = Directory.CreateTempSubdirectory("astra-export-").FullName;
     private readonly string _store;
     private readonly string _target;
+    private readonly string _appRoot = AppPaths.Root;
 
     public FileExporterTests()
     {
         _store = Path.Combine(_dir, "store");
         _target = Path.Combine(_dir, "flash");
-        Directory.CreateDirectory(_store);
+        AppPaths.Root = _dir;
+        Assert.True(ArchiveGuard.Mark(_store));
+        Assert.True(new Settings { BackupRoot = _store, MinFreeGb = 0 }.Save());
         Directory.CreateDirectory(_target);
     }
 
     private string File_(string relative, string content = "видео")
     {
-        var path = Path.Combine(_store, relative);
+        var path = Path.Combine(_store, relative.StartsWith("Device", StringComparison.Ordinal) ? relative : Path.Combine("Device1", relative));
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, content);
         return path;
@@ -113,8 +117,66 @@ public sealed class FileExporterTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(ExportFolder));
     }
 
+    [Fact]
+    public void Export_rejects_a_linked_bundle_folder()
+    {
+        var outside = Directory.CreateDirectory(Path.Combine(_dir, "outside")).FullName;
+        FileCopierTests.MakeDirectoryLink(ExportFolder, outside);
+        try
+        {
+            Assert.ThrowsAny<IOException>(() => FileExporter.Export([File_("clip.mp4")], _target, Stamp));
+            Assert.Empty(Directory.GetFiles(outside));
+        }
+        finally { Directory.Delete(ExportFolder); }
+    }
+
+    [Fact]
+    public void Export_refuses_an_ordinary_file_outside_the_selected_archive()
+    {
+        var outside = Path.Combine(_dir, "private.txt");
+        File.WriteAllText(outside, "must not export");
+        var result = FileExporter.Export([outside], _target, Stamp);
+        Assert.Equal(0, result.Copied);
+        Assert.Equal(1, result.Failed);
+        Assert.Empty(Directory.GetFiles(ExportFolder));
+    }
+
+    [Fact]
+    public void Export_does_not_follow_a_linked_source_device_folder()
+    {
+        var outside = Directory.CreateDirectory(Path.Combine(_dir, "outside")).FullName;
+        var secret = Path.Combine(outside, "private.mp4");
+        File.WriteAllText(secret, "must not export");
+        var linked = Path.Combine(_store, "Device8");
+        FileCopierTests.MakeDirectoryLink(linked, outside);
+        try
+        {
+            var result = FileExporter.Export([Path.Combine(linked, "private.mp4")], _target, Stamp,
+                archiveRoot: _store, dbPath: AppPaths.Database);
+            Assert.Equal(0, result.Copied);
+            Assert.Equal(1, result.Failed);
+            Assert.Empty(Directory.GetFiles(ExportFolder));
+        }
+        finally { Directory.Delete(linked); }
+    }
+
+    [Fact]
+    public void Old_search_results_are_refused_after_selecting_another_archive()
+    {
+        var source = File_("Device1/clip.mp4");
+        var replacement = Path.Combine(_dir, "new archive");
+        var settings = Settings.Load();
+        Assert.True(settings.SelectBackupRoot(replacement));
+        Assert.True(settings.Save());
+        var result = FileExporter.Export([source], _target, Stamp);
+        Assert.Equal(0, result.Copied);
+        Assert.Equal(1, result.Failed);
+        Assert.Empty(Directory.GetFiles(ExportFolder));
+    }
+
     public void Dispose()
     {
+        AppPaths.Root = _appRoot;
         try
         {
             Directory.Delete(_dir, recursive: true);
