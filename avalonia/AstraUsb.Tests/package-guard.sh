@@ -95,7 +95,7 @@ if sh "$work/control/preinst" upgrade 2.1 > "$work/output" 2>&1; then
     exit 1
 fi
 unset PACKAGE_TEST_REFUSE_STOP
-cp -r "$work/payload/." /opt/astra-usb-avalonia/
+dpkg-deb -x "$work/out/bestcam-station_2.1_amd64.deb" /
 reset_state
 sh "$work/control/postinst" configure > "$work/output"
 grep -qx 'enable --now astra-usb-avalonia-update.timer' "$work/commands"
