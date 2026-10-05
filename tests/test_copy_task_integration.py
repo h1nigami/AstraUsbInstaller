@@ -2,12 +2,14 @@
 resolution + scan + copy + DB persistence wired together, and the thin
 platform-specific wrappers (copy_task_linux/_windows, _make_submit_fn)."""
 
+import queue
 import json
 import os
 import sys
 import sqlite3
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -366,12 +368,23 @@ class CopyTaskLinuxWrapperTest(unittest.TestCase):
         self.assertEqual(args[1], sys_mp)  # mountpoint: the system's own
         self.assertFalse(args[5])  # should_unmount False: not ours to tear down
 
-    def test_mount_failure_returns_zero_tuple(self):
-        with mock.patch.object(um.os.path, "ismount", return_value=False), \
+    def test_mount_failure_is_shown_and_retried(self):
+        # Регистратор отдаёт USB-диск раньше карты: первое монтирование падает
+        # с «не найден носитель». Устройство нельзя молча забыть до переподключения.
+        q = queue.Queue()
+        with mock.patch.object(um.platform, "system", return_value="Linux"), \
+             mock.patch.object(um.os.path, "ismount", return_value=False), \
              mock.patch.object(um, "_wait_for_system_mount", return_value=None), \
-             mock.patch.object(um, "_mount_device", return_value=None):
-            result = um.copy_task_linux("sda1", None, None, None)
-        self.assertEqual(result, (0, 0, 0))
+             mock.patch.object(um, "_mount_device", return_value=None), \
+             mock.patch.object(um, "_interrupted_devices", set()) as interrupted:
+            run = ThreadPoolExecutor(max_workers=1)
+            try:
+                um._make_submit_fn(q)(run, "sdd", None, None, None).result()
+            finally:
+                run.shutdown()
+            self.assertIn("sdd", interrupted)
+        key, _label, state, *_rest = q.get_nowait()
+        self.assertEqual((key, state), ("identity:sdd", "error"))
 
     def test_already_mounted_path_used_directly_without_unmount_flag(self):
         with mock.patch.object(um.os.path, "ismount", return_value=True), \

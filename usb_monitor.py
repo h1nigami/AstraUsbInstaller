@@ -2024,7 +2024,9 @@ def _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=
                     progress_obj.update(task_id, description=f"[red]Mount failed: {devname}", total=1, completed=1)
                 else:
                     print(f"[{datetime.now().strftime('%H:%M:%S')}] Mount failed: {devname}", flush=True)
-                return 0, 0, 0
+                # Регистратор отдаёт USB-диск раньше карты («не найден носитель»).
+                # OSError ловит _run: показывает ошибку и ставит устройство на повтор.
+                raise OSError(f"Не удалось смонтировать {devname}")
             mountpoint = mp
             should_unmount = _is_own_mount(mp)
     should_unmount = should_unmount or _is_own_mount(mountpoint)
