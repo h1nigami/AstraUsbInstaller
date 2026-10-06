@@ -303,6 +303,7 @@ class _LogTee:
         for part in data.splitlines(keepends=True):
             if self._line_start and part.strip():
                 stamped.append(datetime.now().strftime("%d.%m.%Y %H:%M:%S  "))
+                part = part.lstrip(" ")
             stamped.append(part)
             self._line_start = part.endswith("\n")
         try:
@@ -1720,6 +1721,10 @@ def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, tot
 def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     copied_files = 0
     copied_bytes = 0
+    # Обработано: скопировано плюс уже лежало в архиве. По ним идёт прогресс,
+    # иначе законченная выгрузка показывает «99%» и меньше файлов, чем было.
+    done_files = 0
+    done_bytes = 0
     failed = 0
     # Source paths that are now safely present at the destination — either just
     # copied or already identical. Only these may be auto-deleted from source.
@@ -1727,6 +1732,18 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
     # Отказов чтения подряд: сброшенный шиной носитель валит их пачкой.
     lost_in_row = 0
     last_emit_t = 0.0
+
+    def report(file_name, size):
+        nonlocal last_emit_t
+        if USE_RICH and progress_obj:
+            progress_obj.update(task_id, advance=size)
+        elif not IS_TTY:
+            _log_progress(progress_label, done_files, total_files, done_bytes, total_bytes, file_name, start_time)
+        if emit_fn is not None:
+            now = time.time()
+            if now - last_emit_t >= 1.0 or done_bytes >= total_bytes:
+                emit_fn("copying", done_bytes, total_bytes, "")
+                last_emit_t = now
     walk_errors = []
     for root, dirs, files in os.walk(src_root, onerror=walk_errors.append):
         rel_path = os.path.relpath(root, src_root)
@@ -1751,6 +1768,9 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
                             _require_archive_device(dst_stat.st_dev)
                             if src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1:
                                 backed_up.add(src_file)  # identical copy already exists
+                                done_files += 1
+                                done_bytes += src_stat.st_size
+                                report(file_name, src_stat.st_size)
                                 continue
                             base, ext = os.path.splitext(file_name)
                             dst_file = os.path.join(dest_dir, f"{base}_{timestamp}{ext}")
@@ -1758,17 +1778,11 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
                         _copy_archive_file(src_file, dst_file)
                         copied_files += 1
                         copied_bytes += file_size
+                        done_files += 1
+                        done_bytes += file_size
                         backed_up.add(src_file)
                         lost_in_row = 0
-                        if USE_RICH and progress_obj:
-                            progress_obj.update(task_id, advance=file_size)
-                        elif not IS_TTY:
-                            _log_progress(progress_label, copied_files, total_files, copied_bytes, total_bytes, file_name, start_time)
-                        if emit_fn is not None:
-                            now = time.time()
-                            if now - last_emit_t >= 1.0:
-                                emit_fn("copying", copied_bytes, total_bytes, "")
-                                last_emit_t = now
+                        report(file_name, file_size)
                     except (OSError, KeyError, ValueError) as e:
                         # Copy failed for this file — deliberately NOT added to
                         # backed_up, so it will be preserved on the source.
@@ -2035,7 +2049,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             msg = f"Носитель сменился: {friendly} — исходные файлы сохранены"
             _emit("error", copied_bytes, total_bytes, "Носитель сменился, файлы сохранены")
         else:
-            msg = f"{friendly}: готово, файлов {copied_files}, {_format_size(copied_bytes)}"
+            msg = f"{friendly}: готово, скопировано файлов: {copied_files}, {_format_size(copied_bytes)}"
             _emit("done", copied_bytes, total_bytes, f"Готово: ID {_label()}")
 
         if USE_RICH and progress_obj:
@@ -2242,6 +2256,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         else:
             known.discard(dev)
         dn = os.path.basename(dev)
+        print(f"  Устройство отключено: {dn}", flush=True)
         if progress_queue is not None:
             progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
 
