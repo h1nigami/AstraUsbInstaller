@@ -2366,7 +2366,9 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             # New devices: present in current but not yet in known
             with _operations_lock:
-                _interrupted_devices.intersection_update(current_keys)
+                # Отметку на повтор снимает только подтверждённое отключение (_forget).
+                # Камера, отдавшая карту позже диска, на миг пропадает из опроса, пока
+                # ядро пересоздаёт диск, — и без отметки её больше не пробовали.
                 retry_devices = _interrupted_devices & current_keys - set(active)
             new_devices = sorted(((current_keys - known_keys) | retry_devices) - set(active))
 
