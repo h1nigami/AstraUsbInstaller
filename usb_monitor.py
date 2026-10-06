@@ -1733,11 +1733,13 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
     lost_in_row = 0
     last_emit_t = 0.0
 
-    def report(file_name, size):
+    def report(file_name, size, copied=True):
         nonlocal last_emit_t
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, advance=size)
-        elif not IS_TTY:
+        elif not IS_TTY and (copied or done_bytes >= total_bytes):
+            # Пропуск уже лежащих в архиве файлов мгновенный: в журнал о нём
+            # только итог, иначе за секунду набегают десятки строк.
             _log_progress(progress_label, done_files, total_files, done_bytes, total_bytes, file_name, start_time)
         if emit_fn is not None:
             now = time.time()
@@ -1770,7 +1772,7 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
                                 backed_up.add(src_file)  # identical copy already exists
                                 done_files += 1
                                 done_bytes += src_stat.st_size
-                                report(file_name, src_stat.st_size)
+                                report(file_name, src_stat.st_size, copied=False)
                                 continue
                             base, ext = os.path.splitext(file_name)
                             dst_file = os.path.join(dest_dir, f"{base}_{timestamp}{ext}")

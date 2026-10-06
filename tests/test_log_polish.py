@@ -45,6 +45,33 @@ class ProgressCountsSkippedFilesTest(unittest.TestCase):
         self.assertEqual(emitted[-1], 400)
 
 
+    def test_skipped_files_do_not_flood_the_log(self):
+        # На станции 32 строки прогресса за 6 секунд описывали файлы, которые
+        # просто уже лежали в архиве. Для них в журнал идут только итоговые 100%.
+        with tempfile.TemporaryDirectory() as tmp:
+            src, dst = os.path.join(tmp, "card"), os.path.join(tmp, "archive")
+            os.makedirs(src)
+            os.makedirs(dst)
+            for i in range(20):
+                for root in (src, dst):
+                    with open(os.path.join(root, f"old{i:02}.log"), "wb") as f:
+                        f.write(b"x" * 100)
+                stamp = os.stat(os.path.join(src, f"old{i:02}.log")).st_mtime
+                os.utime(os.path.join(dst, f"old{i:02}.log"), (stamp, stamp))
+            with open(os.path.join(src, "new.mp4"), "wb") as f:
+                f.write(b"y" * 100)
+
+            out = io.StringIO()
+            um._log_progress_cache.clear()
+            with mock.patch.object(um, "USE_RICH", False), mock.patch.object(um, "IS_TTY", False),                  mock.patch.object(um, "_require_archive_device"), contextlib.redirect_stdout(out):
+                copied, *_ = um._copy_files_open(src, dst, "20261006_120000", "ID 7", 21, 2100,
+                                                 None, None, time.time())
+        lines = [line for line in out.getvalue().splitlines() if "% |" in line]
+        self.assertEqual(copied, 1)
+        self.assertLessEqual(len(lines), 2, lines)
+        self.assertIn("100.0% | 21/21 файлов", lines[-1])
+
+
 class RemovalIsLoggedTest(unittest.TestCase):
     def test_confirmed_removal_is_written_to_log(self):
         polls = iter([{"sdd": None}, {}, {}, {}, {}])
