@@ -5,6 +5,7 @@ import subprocess
 import errno
 import json
 import platform
+import re
 import sys
 import sqlite3
 import threading
@@ -122,6 +123,7 @@ def safe_removal_status():
 @contextmanager
 def _worker_guard(devname):
     with operation_guard():
+        _log_once("station_busy", None)  # блокировку дали: занятость кончилась
         outer = not hasattr(_worker_local, "generation")
         if outer:
             _worker_local.generation = _stop_generation
@@ -1711,6 +1713,25 @@ def _unmount(mountpoint):
     return True
 
 
+def _same_timestamped_copy(dest_dir, file_name, src_stat):
+    """Есть ли уже копия «имя_ГГГГММДД_ЧЧММСС.расш», совпадающая с файлом на карте.
+
+    Без этой проверки файл, однажды изменившийся на карте, сравнивался только со
+    старой версией без метки и при каждом подключении ложился в архив заново.
+    """
+    base, ext = os.path.splitext(file_name)
+    pattern = re.compile(re.escape(base) + r"_\d{8}_\d{6}" + re.escape(ext))
+    # ponytail: перебор папки на каждый изменённый файл; изменённых на карте единицы.
+    for name in os.listdir(dest_dir):
+        if not pattern.fullmatch(name):
+            continue
+        st = os.stat(os.path.join(dest_dir, name), follow_symlinks=False)
+        if (stat.S_ISREG(st.st_mode) and st.st_size == src_stat.st_size
+                and abs(st.st_mtime - src_stat.st_mtime) < 1):
+            return True
+    return False
+
+
 def _copy_files(src_root, dest_root, timestamp, progress_label, total_files, total_bytes, progress_obj, task_id, start_time, emit_fn=None):
     with _archive_directory(dest_root, create=True) as directory:
         return _copy_files_open(src_root, directory, timestamp, progress_label,
@@ -1768,7 +1789,8 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
                             if not stat.S_ISREG(dst_stat.st_mode):
                                 raise OSError("Архивный файл не должен быть ссылкой")
                             _require_archive_device(dst_stat.st_dev)
-                            if src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1:
+                            if ((src_stat.st_size == dst_stat.st_size and abs(src_stat.st_mtime - dst_stat.st_mtime) < 1)
+                                    or _same_timestamped_copy(dest_dir, file_name, src_stat)):
                                 backed_up.add(src_file)  # identical copy already exists
                                 done_files += 1
                                 done_bytes += src_stat.st_size
@@ -2163,6 +2185,9 @@ def _make_submit_fn(progress_queue=None):
         except OSError as error:
             with _operations_lock:
                 _interrupted_devices.add(dev)
+            if isinstance(error, StationBusy):
+                # Повтор каждые 2 с, пока держат блокировку: в журнал один раз.
+                _log_once("station_busy", "  Станция занята другой операцией, выгрузка подождёт")
             if progress_queue is not None:
                 progress_queue.put_nowait((f"identity:{dev}", "", "error", 0, 0, str(error), dev))
             return None, 0, 0
@@ -2363,7 +2388,8 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     known.add(dev)
                 pending_removals.pop(dev, None)
                 mp = current[dev] if is_linux else None
-                print(f"  Новое USB-устройство: {dev}", flush=True)
+                if dev not in retry_devices:
+                    print(f"  Новое USB-устройство: {dev}", flush=True)
                 active[dev] = submit(executor, dev, mp, None, None)
 
     except KeyboardInterrupt:
