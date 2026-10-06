@@ -1247,7 +1247,7 @@ class App:
                 # Без этой строки выход не оставляет в журнале ни следа, и
                 # потом не отличить «кто-то вышел по паролю» от «станция не
                 # запустилась»: systemd чистый выход намеренно не перезапускает.
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Выход по паролю — "
+                print(f"Выход по паролю — "
                       f"станция остановлена оператором", flush=True)
                 dlg.destroy()
                 self.stop_event.set()
@@ -1405,7 +1405,7 @@ class App:
                 if len(results) >= 500:
                     break
         except (sqlite3.Error, OSError, ValueError) as e:
-            print(f"[search] error: {e}", flush=True)
+            print(f"Ошибка поиска: {e}", flush=True)
 
         try:
             self.root.after(0, self._apply_search_results, results, gen)

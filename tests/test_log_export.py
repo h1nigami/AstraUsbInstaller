@@ -79,6 +79,22 @@ class LogExportTest(unittest.TestCase):
             self.assertEqual(content.count("marker-line-1"), 1)
             self.assertEqual(content.count("marker-line-2"), 1)
 
+    def test_file_lines_start_with_date_and_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log_path = os.path.join(tmp, "app.log")
+            with open(log_path, "w", encoding="utf-8") as fh:
+                tee = um._LogTee(open(os.devnull, "w"), fh)
+                tee.write("первая ")
+                tee.write("строка\nвторая\n")
+                tee.write("\n")
+            with open(log_path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        stamp = r"\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}  "
+        self.assertEqual(len(lines), 3)
+        self.assertRegex(lines[0], "^" + stamp + "первая строка$")
+        self.assertRegex(lines[1], "^" + stamp + "вторая$")
+        self.assertEqual(lines[2], "")  # пустую строку не штампуем
+
     def test_log_follows_archive_folder(self):
         with tempfile.TemporaryDirectory() as tmp:
             fallback = os.path.join(tmp, "data", "app.log")
@@ -113,9 +129,9 @@ class LogExportTest(unittest.TestCase):
                 with open(path, encoding="utf-8") as f:
                     return f.read()
             name = um.ARCHIVE_LOG_NAME
-            self.assertEqual(read(os.path.join(first, name)).strip(), "line-in-first")
-            self.assertEqual(read(os.path.join(second, name)).strip(), "line-in-second")
-            self.assertEqual(read(fallback).strip(), "line-in-fallback")
+            self.assertTrue(read(os.path.join(first, name)).strip().endswith("  line-in-first"))
+            self.assertTrue(read(os.path.join(second, name)).strip().endswith("  line-in-second"))
+            self.assertTrue(read(fallback).strip().endswith("  line-in-fallback"))
             # Выгрузка берёт тот журнал, в который пишется сейчас.
             self.assertIn("line-in-fallback", read(os.path.join(bundle, "app.log")))
 
