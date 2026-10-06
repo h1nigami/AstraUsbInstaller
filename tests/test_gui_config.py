@@ -3,6 +3,7 @@
 При отсутствии Tkinter набор пропускается; только тест размещения требует экран.
 """
 
+import gc
 import os
 import queue
 import sys
@@ -35,6 +36,9 @@ class GuiConfigTest(unittest.TestCase):
     def tearDown(self):
         self._patcher.stop()
         self.tmpdir.cleanup()
+        # Переменные Tk надо собрать здесь, в главном потоке. Иначе их соберёт
+        # чей-то фоновый поток в следующих тестах, и Tcl_AsyncDelete уронит процесс.
+        gc.collect()
 
     def test_load_config_missing_file_returns_empty_dict(self):
         self.assertEqual(gui_mod._load_config(), {})
@@ -188,6 +192,18 @@ class GuiConfigTest(unittest.TestCase):
         self.assertEqual(app.ports[app.port_assignment[9]]["device_id"], 9)
         self.assertEqual(app.workers_data[9]["state_raw"], "done")
         self.assertEqual(app._overflow_status.get(), "")
+
+    def test_late_worker_error_lands_on_existing_tile(self):
+        # Сбой после определения номера приходит без номера, только с именем
+        # устройства. Вторая плитка не нужна: краснеть должна та, что зависла.
+        app = self._bay_app(8)
+        app.progress_queue.put((7, "7", "copying", 50, 100, "Копирование", "sdd"))
+        app.progress_queue.put(("identity:sdd", "", "error", 0, 0, "Сбой воркера: boom", "sdd"))
+        app._poll_queue()
+        self.assertEqual(set(app.workers_data), {7})
+        self.assertEqual(app.workers_data[7]["state_raw"], "error")
+        self.assertEqual(app.workers_data[7]["message"], "Сбой воркера: boom")
+        self.assertFalse(gui_mod._is_busy(app.workers_data))
 
     def test_only_hidden_copy_still_blocks_updates(self):
         app = self._bay_app(8)

@@ -8,6 +8,7 @@
 
 from contextlib import ExitStack
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -114,7 +115,8 @@ def _service_healthy():
         if shown.returncode != 0:
             return False
         restarts = int(shown.stdout.strip())
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        _log(f"не удалось проверить службу: {error}")
         return False
     return active and restarts == 0
 
@@ -147,7 +149,7 @@ def _read_failed_tag(path=None):
     try:
         with open(path or FAILED_TAG_FILE) as f:
             return f.read().strip() or None
-    except Exception:
+    except (OSError, UnicodeError):
         return None
 
 
@@ -155,14 +157,15 @@ def _write_failed_tag(tag, path=None):
     try:
         with open(path or FAILED_TAG_FILE, "w") as f:
             f.write(tag)
-    except Exception:
-        pass
+    except OSError as error:
+        # Без этой метки сломанный релиз будет ставиться и откатываться каждый запуск.
+        _log(f"не удалось запомнить сбойный релиз {tag}: {error}")
 
 
 def _clear_failed_tag(path=None):
     try:
         os.remove(path or FAILED_TAG_FILE)
-    except Exception:
+    except OSError:
         pass
 
 
@@ -186,7 +189,7 @@ def find_offline_archives(directory):
     found = []
     try:
         names = os.listdir(directory)
-    except Exception:
+    except OSError:
         return []
     for name in names:
         match = OFFLINE_ARCHIVE_RE.fullmatch(name)
@@ -204,13 +207,13 @@ def _verify_checksum_file(tarball_path, sha_path):
     try:
         with open(sha_path) as stream:
             expected = parse_sha256(stream.read())
-    except Exception:
+    except (OSError, UnicodeError):
         return "рядом нет файла контрольной суммы (.sha256)"
     if not expected:
         return "файл контрольной суммы пуст"
     try:
         actual = sha256_of(tarball_path)
-    except Exception as error:
+    except OSError as error:
         return f"архив не читается: {error}"
     if actual != expected:
         return "контрольная сумма не сошлась — архив битый"
@@ -246,7 +249,7 @@ def stage_offline_package(tarball_path, spool_dir=None):
                         os.path.join(dest, "release.tar.gz.sha256"))
         with open(os.path.join(dest, "tag"), "w") as stream:
             stream.write(tag)
-    except Exception as error:
+    except OSError as error:
         shutil.rmtree(dest, ignore_errors=True)
         return None, f"не удалось подготовить обновление: {error}"
     return tag, None
@@ -255,15 +258,20 @@ def stage_offline_package(tarball_path, spool_dir=None):
 def _take_offline_spool(spool_dir=None):
     """(tag, tarball) из спула или None. Спул чистит вызывающий."""
     directory = spool_dir or OFFLINE_SPOOL_DIR
+    if not os.path.isdir(directory):
+        return None
     try:
         with open(os.path.join(directory, "tag")) as stream:
             tag = stream.read().strip()
-    except Exception:
+    except (OSError, UnicodeError) as error:
+        _log(f"офлайн-пакет в {directory} без тега ({error}) — пропуск")
         return None
     if not re.fullmatch(r"v1\.[0-9]+(?:\.[0-9]+)*", tag or ""):
+        _log(f"офлайн-пакет с неверным тегом {tag!r} — пропуск")
         return None
     tarball = os.path.join(directory, "release.tar.gz")
     if not os.path.isfile(tarball):
+        _log(f"офлайн-пакет {tag} без архива — пропуск")
         return None
     return tag, tarball
 
@@ -347,6 +355,7 @@ def _apply_locked(src_dir, tag, lock_fd):
         installed_tag = installed[0] if installed else None
         if installed_tag != tag:
             raise RuntimeError(f"после установки VERSION даёт {installed_tag}, а не {tag}")
+    # Любая ошибка установки, даже неожиданная, обязана закончиться откатом.
     except Exception as e:
         _log(f"установка не удалась ({e})")
         _write_failed_tag(tag)
@@ -402,7 +411,7 @@ def main(spool_dir=None):
 
     try:
         release = json.loads(_fetch(LATEST_URL))
-    except Exception as e:
+    except (OSError, ValueError, http.client.HTTPException) as e:
         _log(f"релиз не проверен ({e}) — пробуем в следующий раз")
         return 0
 
@@ -431,7 +440,7 @@ def main(spool_dir=None):
             with open(archive, "wb") as f:
                 f.write(_fetch(tarball_url, timeout=300))
             expected = parse_sha256(_fetch(checksum_url).decode())
-        except Exception as e:
+        except (OSError, ValueError, http.client.HTTPException) as e:
             _log(f"загрузка не удалась ({e})")
             return 0
 
