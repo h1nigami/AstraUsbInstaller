@@ -264,6 +264,7 @@ def is_copying(path=None, max_age=60):
 
 LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
 LOG_MAX_BYTES = 1024 * 1024
+ARCHIVE_LOG_NAME = "astra-usb-monitor.log"
 
 _log_once_last = {}
 
@@ -283,6 +284,7 @@ def _log_once(key, msg):
 _orig_stdout = None
 _orig_stderr = None
 _log_fh = None
+_log_path = None
 
 
 class _LogTee:
@@ -298,6 +300,9 @@ class _LogTee:
         try:
             self._fh.write(data)
             self._fh.flush()
+        except ValueError:
+            # Старый файл закрыт при переезде журнала: следующая строка уйдёт в новый.
+            return
         except OSError as error:
             # Сказать один раз и только в исходный поток (systemd): файл больше не пишется.
             if not self._failing:
@@ -314,7 +319,7 @@ class _LogTee:
         try:
             self._stream.flush()
             self._fh.flush()
-        except OSError:
+        except (OSError, ValueError):
             pass
 
     def isatty(self):
@@ -325,11 +330,11 @@ class _LogTee:
 
 
 def setup_file_logging(path=None):
-    """Дублировать stdout/stderr в файл. Идемпотентно; вызывать один раз на старте."""
-    global _orig_stdout, _orig_stderr, _log_fh
-    if _orig_stdout is not None:
-        return True
+    """Дублировать stdout/stderr в файл. Повторный вызов с другим путём переносит запись туда."""
+    global _orig_stdout, _orig_stderr, _log_fh, _log_path
     target = path or LOG_PATH
+    if _orig_stdout is not None and target == _log_path:
+        return True
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         if os.path.isfile(target) and os.path.getsize(target) > LOG_MAX_BYTES:
@@ -338,19 +343,42 @@ def setup_file_logging(path=None):
                 tail = f.read()
             with open(target, "wb") as f:
                 f.write(tail)
-        _log_fh = open(target, "a", encoding="utf-8", errors="replace")
+        fh = open(target, "a", encoding="utf-8", errors="replace")
     except OSError as error:
         print(f"Журнал не пишется в файл {target}: {error}", flush=True)
         return False
-    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
-    sys.stdout = _LogTee(_orig_stdout, _log_fh)
-    sys.stderr = _LogTee(_orig_stderr, _log_fh)
+    old_fh, _log_fh, _log_path = _log_fh, fh, target
+    if _orig_stdout is None:
+        _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+        sys.stdout = _LogTee(_orig_stdout, fh)
+        sys.stderr = _LogTee(_orig_stderr, fh)
+    else:
+        sys.stdout._fh = sys.stderr._fh = fh
+        try:
+            old_fh.close()
+        except OSError:
+            pass
     return True
+
+
+def update_log_location(start=False):
+    """Писать журнал в корень архива, пока его диск на месте, иначе в data/app.log.
+
+    Запись в файл включает только старт (start=True). Смена папки архива и
+    возврат её диска лишь переносят уже включённый журнал.
+    """
+    if not start and _orig_stdout is None:
+        return False
+    try:
+        target = os.path.join(get_dest_base(), ARCHIVE_LOG_NAME) if dest_available() else LOG_PATH
+    except Exception:
+        target = LOG_PATH
+    return setup_file_logging(target)
 
 
 def restore_stdout():
     """Вернуть stdout/stderr. Нужно только тестам; в бою не вызывается."""
-    global _orig_stdout, _orig_stderr, _log_fh
+    global _orig_stdout, _orig_stderr, _log_fh, _log_path
     if _orig_stdout is not None:
         sys.stdout, sys.stderr = _orig_stdout, _orig_stderr
         _orig_stdout, _orig_stderr = None, None
@@ -360,6 +388,7 @@ def restore_stdout():
         except OSError:
             pass
         _log_fh = None
+    _log_path = None
 
 
 def collect_diagnostics(db_path=None):
@@ -414,7 +443,7 @@ def export_logs(dest_dir, db_path=None, log_path=None):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bundle = os.path.join(dest_dir, f"bestcam-logs-{stamp}")
     os.makedirs(bundle, exist_ok=False)
-    src_log = log_path or LOG_PATH
+    src_log = log_path or _log_path or LOG_PATH
     try:
         if os.path.isfile(src_log):
             shutil.copy2(src_log, os.path.join(bundle, "app.log"))
@@ -2085,6 +2114,7 @@ def _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=
         if (cfg_dest and _dest_identity_matches(resolved_dest, _load_config())
                 and ensure_dest_marker(resolved_dest)):
             remember_configured_dest(resolved_dest, update_path=False)
+        update_log_location()
         print(f"  Destination drive connected, keeping mounted: {mountpoint}", flush=True)
         if progress_queue is not None:
             progress_queue.put_nowait(("_status_", "", "info", 0, 0,

@@ -67,6 +67,8 @@ sudo systemctl start astra-usb-monitor    # поднять после выход
 sudo systemctl disable --now astra-usb-monitor   # удалить из автозапуска
 ```
 
+Журнал программы лежит и в файле: `astra-usb-monitor.log` в корне папки архива. Если диска архива нет, он пишется в `/opt/astra-usb-monitor/data/app.log`.
+
 После выхода из программы по паролю сервис намеренно не перезапускается — иначе выйти из киоска было бы невозможно. Вернуть интерфейс: перезагрузка или `sudo systemctl start astra-usb-monitor`.
 
 ## Удаление

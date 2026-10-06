@@ -79,6 +79,46 @@ class LogExportTest(unittest.TestCase):
             self.assertEqual(content.count("marker-line-1"), 1)
             self.assertEqual(content.count("marker-line-2"), 1)
 
+    def test_log_follows_archive_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fallback = os.path.join(tmp, "data", "app.log")
+            first, second = os.path.join(tmp, "a1"), os.path.join(tmp, "a2")
+            os.mkdir(first)
+            os.mkdir(second)
+            dest = {"path": first, "ok": True}
+            real_stdout, real_stderr = sys.stdout, sys.stderr
+            try:
+                with mock.patch.object(um, "LOG_PATH", fallback), \
+                     mock.patch.object(um, "get_dest_base", lambda: dest["path"]), \
+                     mock.patch.object(um, "dest_available", lambda: dest["ok"]):
+                    # Без старта запись в файл не включается.
+                    self.assertFalse(um.update_log_location())
+                    self.assertIs(sys.stdout, real_stdout)
+                    um.update_log_location(start=True)
+                    print("line-in-first")
+                    dest["path"] = second
+                    um.update_log_location()
+                    print("line-in-second")
+                    dest["ok"] = False
+                    um.update_log_location()
+                    print("line-in-fallback")
+                    out = os.path.join(tmp, "out")
+                    os.mkdir(out)
+                    bundle = um.export_logs(out, db_path=os.path.join(tmp, "d.db"))
+            finally:
+                um.restore_stdout()
+                sys.stdout, sys.stderr = real_stdout, real_stderr
+
+            def read(path):
+                with open(path, encoding="utf-8") as f:
+                    return f.read()
+            name = um.ARCHIVE_LOG_NAME
+            self.assertEqual(read(os.path.join(first, name)).strip(), "line-in-first")
+            self.assertEqual(read(os.path.join(second, name)).strip(), "line-in-second")
+            self.assertEqual(read(fallback).strip(), "line-in-fallback")
+            # Выгрузка берёт тот журнал, в который пишется сейчас.
+            self.assertIn("line-in-fallback", read(os.path.join(bundle, "app.log")))
+
 
 if __name__ == "__main__":
     unittest.main()

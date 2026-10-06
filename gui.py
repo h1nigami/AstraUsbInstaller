@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
-from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
+from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs, update_log_location, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
 from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status, _log_once
 import updater
 
@@ -1135,6 +1135,7 @@ class App:
             messagebox.showerror("Ошибка", CONFIG_ERROR, parent=self.root)
             return
         self.backup_dest_var.set(new_path)
+        update_log_location()
         messagebox.showinfo("Готово", f"Папка для резервных копий изменена:\n{new_path}")
 
     def _refresh_pw_status(self):
@@ -1925,6 +1926,8 @@ class App:
 
 
 def launch():
+    # Служба запускает GUI напрямую, минуя main.py.
+    update_log_location(start=True)
     App().run()
 
 
