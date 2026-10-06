@@ -229,7 +229,7 @@ def read_version(path=None):
     try:
         with open(path or VERSION_FILE) as f:
             parts = f.read().split()
-    except Exception:
+    except (OSError, UnicodeError):
         return None
     if len(parts) != 2:
         return None
@@ -320,7 +320,7 @@ class _LogTee:
     def isatty(self):
         try:
             return self._stream.isatty()
-        except Exception:
+        except (AttributeError, ValueError):
             return False
 
 
@@ -377,7 +377,7 @@ def collect_diagnostics(db_path=None):
         info["version"] = f"{ver[0]} {ver[1]}"
     try:
         conn = _connect(db_path)
-    except Exception:
+    except sqlite3.Error:
         conn = None
     if conn is not None:
         try:
@@ -629,7 +629,7 @@ def _iter_mounts():
                     continue
                 yield (_unescape_mount_field(fields[0]),
                        _unescape_mount_field(fields[1]))
-    except Exception as error:
+    except (OSError, ValueError) as error:
         _log_once("proc_mounts", f"Не удалось прочитать /proc/mounts: {error}")
         return
     _log_once("proc_mounts", None)
@@ -641,14 +641,14 @@ def _find_mount_for_path(path):
         return None
     try:
         target = os.path.realpath(path)
-    except Exception:
+    except (OSError, ValueError):
         return None
 
     best = None
     for src, mountpoint in _iter_mounts():
         try:
             real_mp = os.path.realpath(mountpoint)
-        except Exception:
+        except (OSError, ValueError):
             real_mp = mountpoint
         if target == real_mp or target.startswith(real_mp.rstrip(os.sep) + os.sep):
             if best is None or len(real_mp) > len(best[1]):
@@ -666,7 +666,7 @@ def _get_filesystem_uuid(devpath):
         )
         val = result.stdout.strip()
         return val or None
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
 
 
@@ -889,6 +889,7 @@ def _copy_archive_file(source, destination):
                     os.fchmod(dst.fileno(), stat.S_IMODE(info.st_mode))
                 os.utime(dst.fileno() if os.utime in os.supports_fd else target,
                          ns=(info.st_atime_ns, info.st_mtime_ns))
+            # Любой сбой, даже Ctrl+C: убрать недописанный файл и пробросить дальше.
             except BaseException:
                 dst.close()
                 os.unlink(target)
@@ -1277,6 +1278,7 @@ def _resolve_device_id(conn, mountpoint, serial, label, devname):
                     or _connected_device_ids.get(owner) is not reservation):
                 raise OSError("Устройство отключено")
         return device_id
+    # Любая ошибка, даже неожиданная: снимаем заявку на ID и пробрасываем дальше.
     except Exception:
         with _device_id_lock:
             if _connected_device_ids.get(owner) is reservation:
@@ -1360,7 +1362,7 @@ def _get_device_serial_linux(devname):
                 val = line.split("=", 1)[1].strip()
                 if val:
                     return val
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     try:
         result = subprocess.run(
@@ -1383,14 +1385,14 @@ def _get_device_serial_linux(devname):
         serial = walk(data.get("blockdevices", []))
         if serial:
             return serial
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):
         pass
     try:
         target = os.path.realpath(f"/dev/{devname}")
         for entry in os.listdir("/dev/disk/by-id/"):
             if os.path.realpath(f"/dev/disk/by-id/{entry}") == target and "usb-" in entry:
                 return entry
-    except Exception:
+    except OSError:
         pass
     return None
 
@@ -1403,7 +1405,7 @@ def _get_device_serial_windows(drive_letter):
             f"{drive_letter}:\\", None, 0, ctypes.byref(serial), None, None, None, 0
         )
         return f"WIN_{serial.value:08X}"
-    except Exception:
+    except (AttributeError, OSError):
         return f"WIN_{drive_letter}"
 
 
@@ -1436,7 +1438,7 @@ def _get_drive_label_linux(mountpoint):
             for child in dev.get("children", []):
                 if child.get("mountpoint") == mountpoint and child.get("label"):
                     return child["label"]
-    except Exception:
+    except (OSError, subprocess.SubprocessError, ValueError):
         pass
     return ""
 
@@ -1462,7 +1464,7 @@ def get_drive_label_windows(drive_letter):
             f"{drive_letter}:\\", buf, 256, None, None, None, None, 0
         )
         return buf.value or ""
-    except Exception:
+    except (AttributeError, OSError):
         return ""
 
 
@@ -1514,7 +1516,7 @@ def _get_lsblk_partitions():
             capture_output=True, text=True, check=True, timeout=5
         )
         parts = _parse_lsblk_tree(json.loads(result.stdout))
-    except Exception as error:
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
         _log_once("lsblk", f"lsblk не ответил: {error}")
         return None
     _log_once("lsblk", None)
@@ -1546,7 +1548,7 @@ def _get_sys_block_partitions():
                     subsystem = os.path.realpath(os.path.join(devpath, "device", "subsystem"))
                     if "usb" not in subsystem:
                         continue
-                except Exception:
+                except OSError:
                     continue
             found = []
             for entry in os.listdir(devpath):
@@ -1561,7 +1563,7 @@ def _get_sys_block_partitions():
                     result[p] = None
             else:
                 result[dev] = None
-    except Exception as error:
+    except (OSError, ValueError) as error:
         _log_once("sys_block", f"Не удалось прочитать /sys/block: {error}")
         return None
     _log_once("sys_block", None)
@@ -1591,13 +1593,13 @@ def _find_existing_mount(devname):
     dev = f"/dev/{devname}"
     try:
         realdev = os.path.realpath(dev)
-    except Exception:
+    except (OSError, ValueError):
         realdev = dev
     try:
         for src, mountpoint in _iter_mounts():
             if src == dev or os.path.realpath(src) == realdev:
                 return mountpoint
-    except Exception:
+    except (OSError, ValueError):
         pass
     return None
 
@@ -1647,7 +1649,7 @@ def _mount_device(devname):
                 subprocess.run(["mount", "-t", fstype, f"/dev/{devname}", mountpoint],
                                 check=True, capture_output=True, text=True)
                 return mountpoint
-        except Exception:
+        except (OSError, subprocess.SubprocessError):
             pass
         print(f"Mount error /dev/{devname}: {detail}", flush=True)
         return None
@@ -1730,7 +1732,7 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
                             if now - last_emit_t >= 1.0:
                                 emit_fn("copying", copied_bytes, total_bytes, "")
                                 last_emit_t = now
-                    except Exception as e:
+                    except (OSError, KeyError, ValueError) as e:
                         # Copy failed for this file — deliberately NOT added to
                         # backed_up, so it will be preserved on the source.
                         failed += 1
@@ -1811,17 +1813,14 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
         def _label():
             try:
                 return _short_device_label(device_id, _get_device_name(conn, device_id))
-            except Exception:
+            except sqlite3.Error:
                 return str(device_id)
 
         def _emit(state, current=0, total=0, msg=""):
             if state == "done":
                 _worker_local.completed = True
             if progress_queue is not None:
-                try:
-                    progress_queue.put_nowait((device_id, _label(), state, current, total, msg, devname))
-                except Exception:
-                    pass
+                progress_queue.put_nowait((device_id, _label(), state, current, total, msg, devname))
 
         def _still_same_device():
             try:
@@ -1970,7 +1969,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             if should_unmount:
                 _unmount(mountpoint)
             return device_id, 0, 0
-        except Exception as error:
+        except (OSError, KeyError, ValueError) as error:
             return _fail(error)
         if _archive_path_allowed(dest):
             _repair_archive_ownership(dest_base, dest)
@@ -2014,7 +2013,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
                 (device_id, dest, copied_files, copied_bytes, started_at.isoformat(), finished_at.isoformat()),
             )
             conn.commit()
-        except Exception as error:
+        except sqlite3.Error as error:
             # Файлы уже скопированы и удалены с источника, а без строки в
             # backups поиск по вкладке их не найдёт — молчать тут нельзя.
             print(f"  Сеанс не записан в базу: {error}", flush=True)
@@ -2088,11 +2087,8 @@ def _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=
             remember_configured_dest(resolved_dest, update_path=False)
         print(f"  Destination drive connected, keeping mounted: {mountpoint}", flush=True)
         if progress_queue is not None:
-            try:
-                progress_queue.put_nowait(("_status_", "", "info", 0, 0,
-                                           f"Диск назначения подключён: {os.path.basename(mountpoint)}", ""))
-            except Exception:
-                pass
+            progress_queue.put_nowait(("_status_", "", "info", 0, 0,
+                                       f"Диск назначения подключён: {os.path.basename(mountpoint)}", ""))
         return 0, 0, 0
     if not should_unmount:
         with _operations_lock:
@@ -2116,6 +2112,7 @@ def _make_submit_fn(progress_queue=None):
             if progress_queue is not None:
                 progress_queue.put_nowait((f"identity:{dev}", "", "error", 0, 0, str(error), dev))
             return None, 0, 0
+        # Последний рубеж воркера: сюда должна попасть и ошибка, которую никто не ждал.
         except Exception as error:
             # Не повторяем: ошибка в коде повторилась бы на каждом опросе.
             print(f"  {dev}: сбой воркера\n{traceback.format_exc()}", flush=True)
@@ -2140,7 +2137,7 @@ def _make_submit_fn(progress_queue=None):
 def monitor_usb(interval=2, stop_event=None, progress_queue=None):
     try:
         sys.stdout.reconfigure(line_buffering=True)
-    except Exception:
+    except AttributeError:
         pass
     system = platform.system()
     is_linux = system != "Windows"
@@ -2208,10 +2205,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
             known.discard(dev)
         dn = os.path.basename(dev)
         if progress_queue is not None:
-            try:
-                progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
-            except Exception:
-                pass
+            progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
 
     try:
         while True:
@@ -2221,11 +2215,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             done = [dev for dev, f in active.items() if f.done()]
             for dev in done:
-                fut = active.pop(dev)
-                try:
-                    fut.result()
-                except Exception:
-                    pass
+                active.pop(dev)  # ошибки воркера уже записал и показал _run
 
             now_t = time.time()
             try:
@@ -2249,20 +2239,14 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     # Интерфейс должен знать про сбой: пока шина не вернулась,
                     # гасить плитки нельзя — карты вернутся под другими именами.
                     if progress_queue is not None:
-                        try:
-                            progress_queue.put_nowait(("_bus_", "glitch", "", 0, 0, "", ""))
-                        except Exception:
-                            pass
+                        progress_queue.put_nowait(("_bus_", "glitch", "", 0, 0, "", ""))
                 if now_t - bus_glitch_since < BUS_GLITCH_GRACE:
                     continue
             elif bus_glitch_since is not None:
                 print("  Шина вернулась, устройства на месте", flush=True)
                 bus_glitch_since = None
                 if progress_queue is not None:
-                    try:
-                        progress_queue.put_nowait(("_bus_", "ok", "", 0, 0, "", ""))
-                    except Exception:
-                        pass
+                    progress_queue.put_nowait(("_bus_", "ok", "", 0, 0, "", ""))
                 # «Сбоем шины» считается и честная замена всей линейки: оператор
                 # вынул все камеры и за время ожидания вставил новые, а ядро
                 # выдало им те же имена. Такие карты — новые, а не вернувшиеся:

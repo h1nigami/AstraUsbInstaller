@@ -1,5 +1,6 @@
 """Сквозная симуляция десяти камер через монитор, копирование и очередь GUI."""
 
+import gc
 import hashlib
 import json
 import os
@@ -89,6 +90,8 @@ class CameraSimulationTest(unittest.TestCase):
                 gui.port_assignment = {}
                 gui.C = dict(accent="blue", accent_warn="orange", accent_ok="green", bg_surface="black")
                 gui._overflow_status = gui_module.tk.StringVar(master=gui_module.tk.Tcl())
+                # Переменную Tk собираем в главном потоке, иначе её добьёт фоновый поток.
+                self.addCleanup(gc.collect)
                 gui.ports = [{"device_id": None, "preview": mock.Mock(), "status": mock.Mock()}
                              for _ in range(gui_module._get_bay_count(um._load_config()))]
                 gui.root = mock.Mock()

@@ -7,11 +7,15 @@ def main():
     setup_file_logging()
     if os.environ.get("DISPLAY") or sys.platform == "win32":
         try:
-            from gui import launch
-            launch()
-            return
-        except Exception as e:
-            print(f"GUI failed: {e}", flush=True)
+            from gui import launch, tk
+        except ImportError as e:
+            print(f"Интерфейс недоступен: {e}", flush=True)
+        else:
+            try:
+                launch()
+                return
+            except tk.TclError as e:  # нет дисплея или X11 не пускает
+                print(f"Интерфейс не запустился: {e}", flush=True)
 
     from usb_monitor import monitor_usb
     monitor_usb()
