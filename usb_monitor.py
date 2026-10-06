@@ -264,6 +264,7 @@ def is_copying(path=None, max_age=60):
 
 LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
 LOG_MAX_BYTES = 1024 * 1024
+ARCHIVE_LOG_NAME = "astra-usb-monitor.log"
 
 _log_once_last = {}
 
@@ -283,6 +284,7 @@ def _log_once(key, msg):
 _orig_stdout = None
 _orig_stderr = None
 _log_fh = None
+_log_path = None
 
 
 class _LogTee:
@@ -292,12 +294,23 @@ class _LogTee:
         self._stream = stream
         self._fh = fh
         self._failing = False
+        self._line_start = True
 
     def write(self, data):
         self._stream.write(data)
+        # В файле у каждой строки своя дата: в systemd её ставит journald, здесь — мы.
+        stamped = []
+        for part in data.splitlines(keepends=True):
+            if self._line_start and part.strip():
+                stamped.append(datetime.now().strftime("%d.%m.%Y %H:%M:%S  "))
+            stamped.append(part)
+            self._line_start = part.endswith("\n")
         try:
-            self._fh.write(data)
+            self._fh.write("".join(stamped))
             self._fh.flush()
+        except ValueError:
+            # Старый файл закрыт при переезде журнала: следующая строка уйдёт в новый.
+            return
         except OSError as error:
             # Сказать один раз и только в исходный поток (systemd): файл больше не пишется.
             if not self._failing:
@@ -314,7 +327,7 @@ class _LogTee:
         try:
             self._stream.flush()
             self._fh.flush()
-        except OSError:
+        except (OSError, ValueError):
             pass
 
     def isatty(self):
@@ -325,11 +338,11 @@ class _LogTee:
 
 
 def setup_file_logging(path=None):
-    """Дублировать stdout/stderr в файл. Идемпотентно; вызывать один раз на старте."""
-    global _orig_stdout, _orig_stderr, _log_fh
-    if _orig_stdout is not None:
-        return True
+    """Дублировать stdout/stderr в файл. Повторный вызов с другим путём переносит запись туда."""
+    global _orig_stdout, _orig_stderr, _log_fh, _log_path
     target = path or LOG_PATH
+    if _orig_stdout is not None and target == _log_path:
+        return True
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         if os.path.isfile(target) and os.path.getsize(target) > LOG_MAX_BYTES:
@@ -338,19 +351,42 @@ def setup_file_logging(path=None):
                 tail = f.read()
             with open(target, "wb") as f:
                 f.write(tail)
-        _log_fh = open(target, "a", encoding="utf-8", errors="replace")
+        fh = open(target, "a", encoding="utf-8", errors="replace")
     except OSError as error:
         print(f"Журнал не пишется в файл {target}: {error}", flush=True)
         return False
-    _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
-    sys.stdout = _LogTee(_orig_stdout, _log_fh)
-    sys.stderr = _LogTee(_orig_stderr, _log_fh)
+    old_fh, _log_fh, _log_path = _log_fh, fh, target
+    if _orig_stdout is None:
+        _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
+        sys.stdout = _LogTee(_orig_stdout, fh)
+        sys.stderr = _LogTee(_orig_stderr, fh)
+    else:
+        sys.stdout._fh = sys.stderr._fh = fh
+        try:
+            old_fh.close()
+        except OSError:
+            pass
     return True
+
+
+def update_log_location(start=False):
+    """Писать журнал в корень архива, пока его диск на месте, иначе в data/app.log.
+
+    Запись в файл включает только старт (start=True). Смена папки архива и
+    возврат её диска лишь переносят уже включённый журнал.
+    """
+    if not start and _orig_stdout is None:
+        return False
+    try:
+        target = os.path.join(get_dest_base(), ARCHIVE_LOG_NAME) if dest_available() else LOG_PATH
+    except (OSError, KeyError, ValueError):
+        target = LOG_PATH
+    return setup_file_logging(target)
 
 
 def restore_stdout():
     """Вернуть stdout/stderr. Нужно только тестам; в бою не вызывается."""
-    global _orig_stdout, _orig_stderr, _log_fh
+    global _orig_stdout, _orig_stderr, _log_fh, _log_path
     if _orig_stdout is not None:
         sys.stdout, sys.stderr = _orig_stdout, _orig_stderr
         _orig_stdout, _orig_stderr = None, None
@@ -360,6 +396,7 @@ def restore_stdout():
         except OSError:
             pass
         _log_fh = None
+    _log_path = None
 
 
 def collect_diagnostics(db_path=None):
@@ -414,7 +451,7 @@ def export_logs(dest_dir, db_path=None, log_path=None):
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     bundle = os.path.join(dest_dir, f"bestcam-logs-{stamp}")
     os.makedirs(bundle, exist_ok=False)
-    src_log = log_path or LOG_PATH
+    src_log = log_path or _log_path or LOG_PATH
     try:
         if os.path.isfile(src_log):
             shutil.copy2(src_log, os.path.join(bundle, "app.log"))
@@ -950,9 +987,9 @@ def _delete_source_videos(src_root, allowed=None):
                     os.remove(fp)
                     deleted += 1
                 except OSError as e:
-                    print(f"  Auto-delete skipped {fp}: {e}", flush=True)
+                    print(f"  Не удалось удалить исходный файл {fp}: {e}", flush=True)
     if deleted:
-        print(f"  Auto-deleted {deleted} video file(s) from {src_root}", flush=True)
+        print(f"  Удалено исходных видео: {deleted} ({src_root})", flush=True)
     return deleted
 
 
@@ -990,11 +1027,11 @@ def cleanup_old_backup_videos(dest_base=None, older_than_days=30, device_id=None
 
 
 def _format_size(bytes_val):
-    for unit in ("B", "KB", "MB", "GB", "TB"):
+    for unit in ("Б", "КБ", "МБ", "ГБ", "ТБ"):
         if bytes_val < 1024:
             return f"{bytes_val:.1f} {unit}"
         bytes_val /= 1024
-    return f"{bytes_val:.1f} PB"
+    return f"{bytes_val:.1f} ПБ"
 
 
 def format_filter_dt(year, mon, day, hour, minute, second="00"):
@@ -1037,10 +1074,10 @@ def _log_progress(label, copied_files, total_files, copied_bytes, total_bytes, f
     eta_str = _format_time(eta) if pct > 0.5 else "--:--"
     fname = file_name[:45] if file_name else ""
     line = (
-        f"[{datetime.now().strftime('%H:%M:%S')}] {label}: "
-        f"{pct:5.1f}% | {copied_files}/{total_files} files "
+        f"{label}: "
+        f"{pct:5.1f}% | {copied_files}/{total_files} файлов "
         f"| {_format_size(copied_bytes)}/{_format_size(total_bytes)} "
-        f"| ETA {eta_str} | {fname}"
+        f"| осталось {eta_str} | {fname}"
     )
     print(line, flush=True)
 
@@ -1311,8 +1348,8 @@ def _get_device_name(conn, device_id):
 
 
 def _friendly_device_label(device_id, name):
-    astra_id = f"Astra ID {device_id}"
-    return f"{astra_id} · {name}" if name else astra_id
+    label = f"ID {device_id}"
+    return f"{label} · {name}" if name else label
 
 
 def _short_device_label(device_id, name):
@@ -1651,7 +1688,7 @@ def _mount_device(devname):
                 return mountpoint
         except (OSError, subprocess.SubprocessError):
             pass
-        print(f"Mount error /dev/{devname}: {detail}", flush=True)
+        print(f"Ошибка монтирования /dev/{devname}: {detail}", flush=True)
         return None
 
 
@@ -1736,7 +1773,7 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
                         # Copy failed for this file — deliberately NOT added to
                         # backed_up, so it will be preserved on the source.
                         failed += 1
-                        print(f"  Copy failed {src_file}: {e}", flush=True)
+                        print(f"  Не скопирован {src_file}: {e}", flush=True)
                         code = e.errno     if isinstance(e, OSError) else None
                         if code in _LOST_DEVICE_ERRNOS:
                             lost_in_row += 1
@@ -1751,7 +1788,7 @@ def _copy_files_open(src_root, dest_root, timestamp, progress_label, total_files
             raise
         except OSError as error:
             failed += sum(1 for name in files if name not in SERVICE_ID_FILES)
-            print(f"  Copy failed into {dest_dir}: {error}", flush=True)
+            print(f"  Не удалось записать в {dest_dir}: {error}", flush=True)
     if walk_errors:
         failed += len(walk_errors)
         print(f"  Обход источника прерван: {walk_errors[0]}", flush=True)
@@ -1846,7 +1883,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[red]{msg}", total=1, completed=1)
             else:
-                print(f"[{started_at.strftime('%H:%M:%S')}] {msg} — {friendly} не скопирован", flush=True)
+                print(f"{msg} — {friendly} не скопирован", flush=True)
             if should_unmount:
                 _unmount(mountpoint)
             return device_id, 0, 0
@@ -1856,9 +1893,9 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
         _emit("scanning", 0, 0, f"Сканирование ID {_label()}")
 
         if USE_RICH and progress_obj:
-            progress_obj.update(task_id, description=f"[cyan]Scanning {friendly}...")
+            progress_obj.update(task_id, description=f"[cyan]{friendly}: сканирование")
         else:
-            print(f"[{started_at.strftime('%H:%M:%S')}] Scanning {friendly} ({label or 'no label'})...", flush=True)
+            print(f"{friendly}: сканирование ({label or 'без метки'})", flush=True)
 
         total_files, total_bytes = _scan_drive(mountpoint)
 
@@ -1874,7 +1911,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             монитора, поэтому устройство навсегда зависало на прошлом статусе.
             """
             msg = f"Ошибка копирования: {error}"
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {msg}", flush=True)
+            print(f"{friendly}: {msg}", flush=True)
             _emit("error", 0, 0, msg)
             if should_unmount:
                 _unmount(mountpoint)
@@ -1890,12 +1927,12 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             if should_unmount and not _unmount(mountpoint):
                 _emit("error", 0, 0, "Не удалось размонтировать носитель")
                 return device_id, 0, 0
-            msg = f"Empty: {friendly}"
+            msg = f"{friendly}: файлов нет"
             _emit("done", 0, 0, f"Готово: ID {_label()}")
             if USE_RICH and progress_obj:
                 progress_obj.update(task_id, description=f"[yellow]{msg}", total=1, completed=1)
             else:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+                print(f"{msg}", flush=True)
             return device_id, 0, 0
 
         _emit("copying", 0, total_bytes, f"Копирование ID {_label()}")
@@ -1903,7 +1940,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
         if USE_RICH and progress_obj:
             progress_obj.update(task_id, description=f"[green]{friendly} ({_format_size(total_bytes)})", total=total_bytes, completed=0)
         else:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: {total_files} files, {_format_size(total_bytes)}", flush=True)
+            print(f"{friendly}: файлов {total_files}, {_format_size(total_bytes)}", flush=True)
 
         start_time = time.time()
         # Карту может сбросить шиной посреди копирования: хаб передёргивает
@@ -1928,7 +1965,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
                     attempt += 1
                     if not fs_uuid or attempt > CARD_RETURN_RETRIES:
                         raise
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: карту сбросило "
+                    print(f"{friendly}: карту сбросило "
                           f"шиной ({lost}), ждём возвращения", flush=True)
                     _emit("detached", 0, total_bytes,
                           "Устройство переподключается, копирование продолжится")
@@ -1950,7 +1987,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
                         _await_card_clear(fs_uuid)
                         raise
                     devname = returned
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] {friendly}: карта вернулась "
+                    print(f"{friendly}: карта вернулась "
                           f"как {returned}, копирование продолжается", flush=True)
                     _emit("copying", 0, total_bytes, f"Копирование ID {_label()}")
         except DeviceLost as error:
@@ -1958,7 +1995,7 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             # источника ничего не удаляем: доехавшее останется и на карте.
             msg = (f"Устройство отключилось или сброшено шиной: {friendly} — "
                    f"копирование прервано, карта не изменена")
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg} ({error})", flush=True)
+            print(f"{msg} ({error})", flush=True)
             # Не «ошибка», а «переподключение»: при сбросе порта карта
             # возвращается через несколько секунд и продолжает работу. Красная
             # вспышка на весь экран кричит оператору «сломалось», хотя ничего
@@ -1992,20 +2029,20 @@ def _copy_task(drive_path, mountpoint, devname, progress_obj, task_id, should_un
             msg = f"Ошибки: {friendly} — {failed} файл(ов) не скопировано ({copied_files} успешно)"
             _emit("error", copied_bytes, total_bytes, f"Не скопировано: {failed} файл(ов)")
         elif stopped:
-            msg = f"Копирование остановлено: {friendly} ({copied_files} файлов)"
+            msg = f"{friendly}: копирование остановлено, файлов {copied_files}"
             _emit("stopped", copied_bytes, total_bytes, "Копирование остановлено")
         elif not same_device:
             msg = f"Носитель сменился: {friendly} — исходные файлы сохранены"
             _emit("error", copied_bytes, total_bytes, "Носитель сменился, файлы сохранены")
         else:
-            msg = f"Done: {friendly} ({copied_files} files, {_format_size(copied_bytes)})"
+            msg = f"{friendly}: готово, файлов {copied_files}, {_format_size(copied_bytes)}"
             _emit("done", copied_bytes, total_bytes, f"Готово: ID {_label()}")
 
         if USE_RICH and progress_obj:
             color = "red" if failed or not same_device else "yellow" if stopped else "green"
             progress_obj.update(task_id, description=f"[{color}]{msg}")
         else:
-            print(f"[{finished_at.strftime('%H:%M:%S')}] {msg} -> {dest}", flush=True)
+            print(f"{msg} -> {dest}", flush=True)
 
         try:
             conn.execute(
@@ -2065,9 +2102,9 @@ def _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=
             mp = _mount_device(devname)
             if mp is None:
                 if USE_RICH and progress_obj:
-                    progress_obj.update(task_id, description=f"[red]Mount failed: {devname}", total=1, completed=1)
+                    progress_obj.update(task_id, description=f"[red]{devname}: не удалось смонтировать", total=1, completed=1)
                 else:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Mount failed: {devname}", flush=True)
+                    print(f"{devname}: не удалось смонтировать, повторим при следующем опросе", flush=True)
                 # Регистратор отдаёт USB-диск раньше карты («не найден носитель»).
                 # OSError ловит _run: показывает ошибку и ставит устройство на повтор.
                 raise OSError(f"Не удалось смонтировать {devname}")
@@ -2085,7 +2122,8 @@ def _copy_task_linux(devname, mountpoint, progress_obj, task_id, progress_queue=
         if (cfg_dest and _dest_identity_matches(resolved_dest, _load_config())
                 and ensure_dest_marker(resolved_dest)):
             remember_configured_dest(resolved_dest, update_path=False)
-        print(f"  Destination drive connected, keeping mounted: {mountpoint}", flush=True)
+        update_log_location()
+        print(f"  Подключён диск архива, остаётся смонтированным: {mountpoint}", flush=True)
         if progress_queue is not None:
             progress_queue.put_nowait(("_status_", "", "info", 0, 0,
                                        f"Диск назначения подключён: {os.path.basename(mountpoint)}", ""))
@@ -2151,15 +2189,15 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                 and ensure_dest_marker(resolved_dest)):
             remember_configured_dest(resolved_dest, update_path=False)
         else:
-            print(f"WARNING: backup destination is not available yet: {resolved_dest} "
-                  f"(backups will fail until its disk is mounted)", flush=True)
+            print(f"Внимание: папка архива пока недоступна: {resolved_dest} "
+                  f"(копирование не пойдёт, пока её диск не смонтирован)", flush=True)
 
     archive_root = get_dest_base()
     if not _load_config().get("_config_unreadable") and _archive_path_allowed(archive_root):
         _repair_archive_ownership(archive_root)
 
-    print(f"USB Monitor | Platform: {system} | Workers: {MAX_WORKERS} | DB: {DB_PATH}", flush=True)
-    print("Waiting for USB devices... (Ctrl+C to stop)", flush=True)
+    print(f"Станция запущена: {system}, потоков {MAX_WORKERS}, база {DB_PATH}", flush=True)
+    print("Ожидание USB-устройств (Ctrl+C — остановить)", flush=True)
 
     executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
     active = {}  # dev → future
@@ -2184,7 +2222,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
         mp = known[dev] if is_linux else None
         if is_linux:
             known_fs[dev] = _get_filesystem_uuid(f"/dev/{dev}")
-        print(f"  Connected: {dev}", flush=True)
+        print(f"  Подключено при запуске: {dev}", flush=True)
         active[dev] = submit(executor, dev, mp, None, None)
 
     # dev → timestamp of first consecutive miss; cleared when device reappears
@@ -2297,7 +2335,7 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
             for dev in new_devices:
                 if _offline_hold:
-                    print(f"  New USB held for offline update: {dev}", flush=True)
+                    print(f"  Новое USB-устройство отложено ради офлайн-обновления: {dev}", flush=True)
                     continue
                 with _operations_lock:
                     _interrupted_devices.discard(dev)
@@ -2308,11 +2346,11 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     known.add(dev)
                 pending_removals.pop(dev, None)
                 mp = current[dev] if is_linux else None
-                print(f"  New USB: {dev}", flush=True)
+                print(f"  Новое USB-устройство: {dev}", flush=True)
                 active[dev] = submit(executor, dev, mp, None, None)
 
     except KeyboardInterrupt:
-        print("\nStopped.")
+        print("\nОстановлено.")
     finally:
         _update_connected_devices(set())
         for dev in known:

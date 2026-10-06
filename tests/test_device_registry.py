@@ -228,11 +228,11 @@ class ResolveDeviceIdTest(unittest.TestCase):
 
 class FriendlyLabelTest(unittest.TestCase):
     def test_custom_name_is_shown_after_astra_id(self):
-        self.assertEqual(um._friendly_device_label(3, "Проходная"), "Astra ID 3 · Проходная")
+        self.assertEqual(um._friendly_device_label(3, "Проходная"), "ID 3 · Проходная")
 
     def test_without_name_shows_astra_id(self):
-        self.assertEqual(um._friendly_device_label(3, ""), "Astra ID 3")
-        self.assertEqual(um._friendly_device_label(3, None), "Astra ID 3")
+        self.assertEqual(um._friendly_device_label(3, ""), "ID 3")
+        self.assertEqual(um._friendly_device_label(3, None), "ID 3")
 
 
 class ShortLabelTest(unittest.TestCase):

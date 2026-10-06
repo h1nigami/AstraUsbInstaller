@@ -102,7 +102,7 @@ def has_network(timeout=5):
 
 
 def _log(msg):
-    print(f"[updater] {msg}", flush=True)
+    print(f"Обновление: {msg}", flush=True)
 
 
 def _service_healthy():

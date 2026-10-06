@@ -22,11 +22,11 @@ import usb_monitor as um
 
 class FormatHelpersTest(unittest.TestCase):
     def test_format_size_units(self):
-        self.assertEqual(um._format_size(0), "0.0 B")
-        self.assertEqual(um._format_size(512), "512.0 B")
-        self.assertEqual(um._format_size(1024), "1.0 KB")
-        self.assertEqual(um._format_size(1024 ** 2), "1.0 MB")
-        self.assertEqual(um._format_size(1024 ** 3), "1.0 GB")
+        self.assertEqual(um._format_size(0), "0.0 Б")
+        self.assertEqual(um._format_size(512), "512.0 Б")
+        self.assertEqual(um._format_size(1024), "1.0 КБ")
+        self.assertEqual(um._format_size(1024 ** 2), "1.0 МБ")
+        self.assertEqual(um._format_size(1024 ** 3), "1.0 ГБ")
 
     def test_format_time(self):
         self.assertEqual(um._format_time(0), "0:00")
