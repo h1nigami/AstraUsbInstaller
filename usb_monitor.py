@@ -379,7 +379,7 @@ def update_log_location(start=False):
         return False
     try:
         target = os.path.join(get_dest_base(), ARCHIVE_LOG_NAME) if dest_available() else LOG_PATH
-    except Exception:
+    except (OSError, KeyError, ValueError):
         target = LOG_PATH
     return setup_file_logging(target)
 
