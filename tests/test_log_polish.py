@@ -108,6 +108,37 @@ class FileLogIndentTest(unittest.TestCase):
                 line = f.read().rstrip("\n")
         self.assertRegex(line, r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}  Новое USB-устройство: sdd$")
 
+    def test_lines_from_parallel_workers_do_not_merge(self):
+        # На .41: «ID 1330216: файлов 3, 1.1 КБID 4573372: 100.0% ...» и пустая
+        # строка следом. print пишет текст и перевод строки двумя вызовами,
+        # а воркеры печатают параллельно.
+        import threading
+        stream = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "app.log")
+            with open(path, "w", encoding="utf-8") as fh:
+                tee = um._LogTee(stream, fh)
+
+                def worker(n):
+                    for i in range(300):
+                        tee.write(f"ID {n}: строка {i}")
+                        tee.write(chr(10))
+
+                threads = [threading.Thread(target=worker, args=(n,)) for n in range(4)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+            with open(path, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        pattern = r"^\d{2}\.\d{2}\.\d{4} \d{2}:\d{2}:\d{2}  ID \d: строка \d+$"
+        self.assertEqual(len(lines), 1200)
+        for line in lines:
+            self.assertRegex(line, pattern)
+        self.assertEqual(sorted(stream.getvalue().splitlines()),
+                         sorted(f"ID {n}: строка {i}" for n in range(4) for i in range(300)))
+
+
     def test_indent_stays_in_systemd(self):
         stream = io.StringIO()
         with tempfile.TemporaryDirectory() as tmp:

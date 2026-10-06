@@ -289,6 +289,10 @@ _log_fh = None
 _log_path = None
 
 
+# Одна на stdout и stderr: оба пишут в один файл журнала.
+_log_write_lock = threading.Lock()
+
+
 class _LogTee:
     """Дублирует print в файл. Один flush на запись, чтобы строки не терялись при падении."""
 
@@ -296,18 +300,28 @@ class _LogTee:
         self._stream = stream
         self._fh = fh
         self._failing = False
-        self._line_start = True
+        self._pending = threading.local()  # недописанная строка своего потока
 
     def write(self, data):
-        self._stream.write(data)
+        # print пишет текст и перевод строки двумя вызовами, а воркеры печатают
+        # параллельно: строки склеивались. Копим строку своего потока и отдаём целиком.
+        text = getattr(self._pending, "text", "") + data
+        cut = text.rfind("\n") + 1
+        self._pending.text = text[cut:]
+        if cut:
+            with _log_write_lock:
+                self._write_lines(text[:cut])
+        return len(data)
+
+    def _write_lines(self, text):
+        self._stream.write(text)
         # В файле у каждой строки своя дата: в systemd её ставит journald, здесь — мы.
         stamped = []
-        for part in data.splitlines(keepends=True):
-            if self._line_start and part.strip():
+        for line in text.splitlines(keepends=True):
+            if line.strip():
                 stamped.append(datetime.now().strftime("%d.%m.%Y %H:%M:%S  "))
-                part = part.lstrip(" ")
-            stamped.append(part)
-            self._line_start = part.endswith("\n")
+                line = line.lstrip(" ")
+            stamped.append(line)
         try:
             self._fh.write("".join(stamped))
             self._fh.flush()
