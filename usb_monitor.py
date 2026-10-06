@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import stat
 import tempfile
+import traceback
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -169,7 +170,11 @@ def _find_card_by_uuid(fs_uuid):
     """Имя устройства, под которым сейчас видна карта с этой меткой."""
     if not fs_uuid:
         return None
-    for devname in _get_linux_partitions():
+    try:
+        devices = _get_linux_partitions()
+    except OSError:
+        return None  # опрос не удался — ждём дальше
+    for devname in devices:
         if _get_filesystem_uuid(f"/dev/{devname}") == fs_uuid:
             return devname
     return None
@@ -256,6 +261,21 @@ def is_copying(path=None, max_age=60):
 
 LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
 LOG_MAX_BYTES = 1024 * 1024
+
+_log_once_last = {}
+
+
+def _log_once(key, msg):
+    """Писать сообщение о сбое, только когда оно меняется; None — сбой прошёл.
+
+    Опрос идёт каждые 2 с, и повторяющийся сбой иначе забил бы журнал.
+    """
+    if msg is None:
+        _log_once_last.pop(key, None)
+    elif _log_once_last.get(key) != msg:
+        _log_once_last[key] = msg
+        print(msg, flush=True)
+
 
 _orig_stdout = None
 _orig_stderr = None
@@ -820,9 +840,12 @@ def _archive_directory(path, create=False):
 def _archive_path_allowed(path, create=False):
     try:
         with _archive_directory(path, create=create):
-            return True
-    except (OSError, KeyError, ValueError):
+            pass
+    except (OSError, KeyError, ValueError) as error:
+        _log_once(("archive", path), f"Папка архива {path} не подходит: {error}")
         return False
+    _log_once(("archive", path), None)
+    return True
 
 
 def _dest_identity_matches(path, cfg):
@@ -831,7 +854,8 @@ def _dest_identity_matches(path, cfg):
     try:
         device = os.stat(path).st_dev
         return _dest_device_matches(f"/dev/block/{os.major(device)}:{os.minor(device)}", cfg)
-    except OSError:
+    except OSError as error:
+        _log_once(("archive", path), f"Не удалось проверить диск архива {path}: {error}")
         return False
 
 
@@ -868,7 +892,8 @@ def ensure_dest_marker(dest_base):
                 _require_archive_device(os.fstat(f.fileno()).st_dev)
                 f.write("BestCam backup destination marker. Do not delete.\n")
         return True
-    except (OSError, KeyError, ValueError):
+    except (OSError, KeyError, ValueError) as error:
+        _log_once(("archive", dest_base), f"Папка архива {dest_base} не подходит: {error}")
         return False
 
 
@@ -1046,16 +1071,10 @@ def _init_db():
             finished_at TEXT NOT NULL
         )
     """)
-    try:
-        conn.execute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''")
-    except Exception:
-        pass
-    try:
-        conn.execute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''")
-    except Exception:
-        pass
-    if "id_source" not in {row[1] for row in conn.execute("PRAGMA table_info(devices)")}:
-        conn.execute("ALTER TABLE devices ADD COLUMN id_source TEXT DEFAULT ''")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(devices)")}
+    for column in ("person", "name", "id_source"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE devices ADD COLUMN {column} TEXT DEFAULT ''")
 
     # Устройства, потерянные прежней ошибкой регистрации: бэкапы на них есть,
     # а строки нет. Без неё устройство не видно в списке, ему нельзя задать имя,
@@ -1070,8 +1089,8 @@ def _init_db():
             WHERE d.id IS NULL
             GROUP BY b.device_id
         """)
-    except Exception:
-        pass
+    except sqlite3.Error as error:
+        print(f"Не удалось восстановить устройства из истории выгрузок: {error}", flush=True)
 
     conn.commit()
     return conn
@@ -1433,7 +1452,10 @@ def _get_linux_partitions():
     parts = _get_lsblk_partitions()
     if parts:
         return parts
-    return _get_sys_block_partitions()
+    fallback = _get_sys_block_partitions()
+    if parts is None and fallback is None:
+        raise OSError("Не удалось опросить USB-устройства")
+    return fallback or {}
 
 
 def _parse_lsblk_tree(data):
@@ -1473,9 +1495,12 @@ def _get_lsblk_partitions():
             ["lsblk", "-J", "-o", "NAME,TRAN,TYPE,MOUNTPOINT"],
             capture_output=True, text=True, check=True, timeout=5
         )
-        return _parse_lsblk_tree(json.loads(result.stdout))
-    except Exception:
-        return {}
+        parts = _parse_lsblk_tree(json.loads(result.stdout))
+    except Exception as error:
+        _log_once("lsblk", f"lsblk не ответил: {error}")
+        return None
+    _log_once("lsblk", None)
+    return parts
 
 
 def _get_sys_block_partitions():
@@ -1518,8 +1543,10 @@ def _get_sys_block_partitions():
                     result[p] = None
             else:
                 result[dev] = None
-    except Exception:
-        pass
+    except Exception as error:
+        _log_once("sys_block", f"Не удалось прочитать /sys/block: {error}")
+        return None
+    _log_once("sys_block", None)
     return result
 
 
@@ -2071,6 +2098,13 @@ def _make_submit_fn(progress_queue=None):
             if progress_queue is not None:
                 progress_queue.put_nowait((f"identity:{dev}", "", "error", 0, 0, str(error), dev))
             return None, 0, 0
+        except Exception as error:
+            # Не повторяем: ошибка в коде повторилась бы на каждом опросе.
+            print(f"  {dev}: сбой воркера\n{traceback.format_exc()}", flush=True)
+            if progress_queue is not None:
+                progress_queue.put_nowait((f"identity:{dev}", "", "error", 0, 0,
+                                           f"Сбой воркера: {error}", dev))
+            return None, 0, 0
 
     def _finished(future):
         with _operations_lock:
@@ -2118,7 +2152,10 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
     if is_linux:
         os.makedirs(MOUNT_BASE, exist_ok=True)
-        known = _get_linux_partitions()  # dict: devname → mountpoint
+        try:
+            known = _get_linux_partitions()  # dict: devname → mountpoint
+        except OSError:
+            known = {}
     else:
         known = get_removable_drives()
 
@@ -2173,7 +2210,11 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
                     pass
 
             now_t = time.time()
-            current = _get_linux_partitions() if is_linux else get_removable_drives()
+            try:
+                current = _get_linux_partitions() if is_linux else get_removable_drives()
+            except OSError:
+                # Опрос не удался: это не отключение. Причину уже написал _log_once.
+                continue
 
             known_keys = set(known) if is_linux else known
             current_keys = set(current) if is_linux else current

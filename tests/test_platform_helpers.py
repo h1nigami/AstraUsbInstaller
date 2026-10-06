@@ -84,13 +84,13 @@ class PartitionDiscoveryTest(unittest.TestCase):
         with mock.patch.object(um.subprocess, "run", return_value=_cp(json.dumps(data))):
             self.assertEqual(um._get_lsblk_partitions(), {"sda1": None})
 
-    def test_get_lsblk_partitions_returns_empty_on_error(self):
+    def test_get_lsblk_partitions_returns_none_on_error(self):
         with mock.patch.object(um.subprocess, "run", side_effect=OSError):
-            self.assertEqual(um._get_lsblk_partitions(), {})
+            self.assertIsNone(um._get_lsblk_partitions())
 
     def test_get_sys_block_partitions_swallows_errors(self):
         with mock.patch.object(um.os, "listdir", side_effect=OSError):
-            self.assertEqual(um._get_sys_block_partitions(), {})
+            self.assertIsNone(um._get_sys_block_partitions())
 
     def test_get_linux_partitions_prefers_lsblk(self):
         with mock.patch.object(um, "_get_lsblk_partitions", return_value={"sda1": None}), \

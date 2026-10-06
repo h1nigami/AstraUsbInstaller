@@ -1767,6 +1767,14 @@ class App:
                 else:
                     pct = 0
 
+                if state == "error" and device_id == f"identity:{devname}":
+                    # Сбой после определения номера приходит без номера: красим
+                    # уже существующую плитку этого устройства, а не заводим вторую.
+                    for key, row in self.workers_data.items():
+                        if isinstance(key, int) and row.get("devname") == devname:
+                            device_id, display_id = key, row.get("device", display_id)
+                            break
+
                 if isinstance(device_id, int):
                     pending_id = f"identity:{devname}"
                     self.workers_data.pop(pending_id, None)
