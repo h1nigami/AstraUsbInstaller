@@ -8,12 +8,13 @@ import sqlite3
 import subprocess
 import time
 import threading
+import traceback
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
 from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
-from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status
+from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status, _log_once
 import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
@@ -843,8 +844,10 @@ class App:
                          for letter in sorted(get_removable_drives())]
             else:
                 roots = list(_get_linux_partitions().items())
-        except Exception:
+        except Exception as error:
+            _log_once("offline_roots", f"Не удалось опросить носители для офлайн-обновления: {error}")
             return []
+        _log_once("offline_roots", None)
         return [(dev, mp) for dev, mp in roots
                 if not (mp and _is_dest_path(mp))]
 
@@ -1017,8 +1020,10 @@ class App:
             busy = retry_busy
             msg = ("отложена до конца копирования" if busy
                    else f"Очистка не выполнена: {error}")
+            print(f"Автоочистка архива: {msg}", flush=True)
         except OSError as error:
             msg = f"Очистка не выполнена: {error}"
+            print(f"Автоочистка архива: {msg}", flush=True)
         try:
             self.root.after(0, self._cleanup_status_var.set, prefix + msg)
         except tk.TclError:
@@ -1078,8 +1083,11 @@ class App:
             try:
                 result = factory_reset(config_path=CONFIG_PATH)
             except (OSError, sqlite3.Error) as e:
+                print(f"Заводской сброс не выполнен: {e}", flush=True)
                 self.root.after(0, self._finish_factory_reset, None, str(e))
             else:
+                print(f"Заводской сброс: устройств {result['devices']}, выгрузок {result['backups']}, "
+                      f"записей архива {result['entries']}", flush=True)
                 self.root.after(0, lambda: self._finish_factory_reset(result, None))
 
         threading.Thread(target=_do, daemon=True).start()
@@ -1100,7 +1108,8 @@ class App:
         try:
             main_py = os.path.join(os.path.dirname(os.path.abspath(__file__)), "main.py")
             os.execv(sys.executable, [sys.executable, main_py])
-        except Exception:
+        except Exception as e:
+            print(f"Не удалось перезапустить программу: {e}", flush=True)
             messagebox.showwarning("Перезапуск", "Закройте и запустите программу вручную.",
                                    parent=self.root)
 
@@ -1560,7 +1569,10 @@ class App:
                 _copy_archive_file(r["path"], dst)
                 ok += 1
             except Exception as e:
-                errors.append(str(e))
+                errors.append(f"{r['filename']}: {e}")
+        if errors:
+            print(f"Экспорт в {dest}: выгружено {ok}, не выгружено {len(errors)}:\n  "
+                  + "\n  ".join(errors), flush=True)
         try:
             self.root.after(0, self._export_done, ok, errors)
         except tk.TclError:
@@ -1620,6 +1632,7 @@ class App:
         try:
             conn.execute("UPDATE devices SET name = ? WHERE id = ?", (name, int(dev_id)))
             conn.commit()
+            print(f"Устройство {dev_id}: имя «{name}»", flush=True)
             messagebox.showinfo("Готово", f"Устройство {dev_id} переименовано в {name or '(без имени)'}")
             for did, data in self.workers_data.items():
                 if did == int(dev_id):
@@ -1628,6 +1641,7 @@ class App:
             self._refresh_devices()
             self._refresh_search_filters()
         except Exception as e:
+            print(f"Не удалось переименовать устройство {dev_id}: {e}", flush=True)
             messagebox.showerror("Ошибка", str(e))
         finally:
             conn.close()
@@ -1643,10 +1657,12 @@ class App:
         try:
             conn.execute("UPDATE devices SET person = ? WHERE id = ?", (person, int(dev_id)))
             conn.commit()
+            print(f"Устройство {dev_id}: закреплено за «{person}»", flush=True)
             messagebox.showinfo("Готово", f"{label} назначен на {person or '(не указан)'}")
             self._refresh_devices()
             self._refresh_search_filters()
         except Exception as e:
+            print(f"Не удалось закрепить устройство {dev_id}: {e}", flush=True)
             messagebox.showerror("Ошибка", str(e))
         finally:
             conn.close()
@@ -1694,6 +1710,7 @@ class App:
         try:
             deleted, _freed = cleanup_old_backup_videos(older_than_days=None, device_id=dev_id)
         except (OSError, ValueError) as error:
+            print(f"Удаление видео устройства {dev_id} не выполнено: {error}", flush=True)
             messagebox.showerror("Очистка не выполнена", str(error), parent=self.root)
             return
         messagebox.showinfo("Готово", f"Удалено видеофайлов: {deleted} из {len(videos)}")
@@ -1707,6 +1724,7 @@ class App:
                 self.progress_queue.put(("_status_", "", "info", 0, 0, "Мониторинг USB запущен"))
                 monitor_usb(2, self.stop_event, self.progress_queue)
             except Exception as e:
+                print(f"Мониторинг USB остановился с ошибкой\n{traceback.format_exc()}", flush=True)
                 self.progress_queue.put(("_status_", "", "error", 0, 0, f"Ошибка: {e}"))
 
         self.monitor_thread = threading.Thread(target=_run, daemon=True)

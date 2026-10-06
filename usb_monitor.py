@@ -246,8 +246,11 @@ def touch_copying_marker():
         os.makedirs(os.path.dirname(COPYING_MARKER), exist_ok=True)
         with open(COPYING_MARKER, "w") as f:
             f.write("")
-    except OSError:
-        pass
+    except OSError as error:
+        # Без метки апдейтер считает станцию свободной и может перезапустить её посреди копирования.
+        _log_once("copying_marker", f"Не удалось обновить метку копирования {COPYING_MARKER}: {error}")
+        return
+    _log_once("copying_marker", None)
 
 
 def is_copying(path=None, max_age=60):
@@ -288,14 +291,20 @@ class _LogTee:
     def __init__(self, stream, fh):
         self._stream = stream
         self._fh = fh
+        self._failing = False
 
     def write(self, data):
         self._stream.write(data)
         try:
             self._fh.write(data)
             self._fh.flush()
-        except OSError:
-            pass
+        except OSError as error:
+            # Сказать один раз и только в исходный поток (systemd): файл больше не пишется.
+            if not self._failing:
+                self._failing = True
+                self._stream.write(f"Запись журнала в файл остановилась: {error}\n")
+            return
+        self._failing = False
 
     def writelines(self, lines):
         for line in lines:
@@ -330,7 +339,8 @@ def setup_file_logging(path=None):
             with open(target, "wb") as f:
                 f.write(tail)
         _log_fh = open(target, "a", encoding="utf-8", errors="replace")
-    except OSError:
+    except OSError as error:
+        print(f"Журнал не пишется в файл {target}: {error}", flush=True)
         return False
     _orig_stdout, _orig_stderr = sys.stdout, sys.stderr
     sys.stdout = _LogTee(_orig_stdout, _log_fh)
@@ -547,22 +557,25 @@ def _load_config(path=None):
         with open(path or _CONFIG_PATH, encoding="utf-8") as stream:
             data = json.load(stream)
         if not isinstance(data, dict):
-            return {"_config_unreadable": True}
+            raise ValueError("ожидался объект JSON")
         if "exit_password" in data and (not isinstance(data["exit_password"], str) or not data["exit_password"]):
-            return {"_config_unreadable": True}
+            raise ValueError("неверный exit_password")
         for key in ("lock_timeout_minutes", "auto_cleanup_days"):
             if key in data and (type(data[key]) is not int or data[key] < 0):
-                return {"_config_unreadable": True}
+                raise ValueError(f"неверный {key}")
         if "auto_cleanup_enabled" in data and type(data["auto_cleanup_enabled"]) is not bool:
-            return {"_config_unreadable": True}
+            raise ValueError("неверный auto_cleanup_enabled")
         for key in ("backup_dest", *_DEST_CFG_KEYS):
             if key in data and not isinstance(data[key], str):
-                return {"_config_unreadable": True}
-        return data
+                raise ValueError(f"неверный {key}")
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError, UnicodeError):
+    except (OSError, ValueError, UnicodeError) as error:
+        # Иначе оператор видит только «диск архива недоступен».
+        _log_once(("config", path), f"Настройки {path or _CONFIG_PATH} не читаются: {error}")
         return {"_config_unreadable": True}
+    _log_once(("config", path), None)
+    return data
 
 
 def _save_config(cfg, path=None, repair=False):
@@ -616,8 +629,10 @@ def _iter_mounts():
                     continue
                 yield (_unescape_mount_field(fields[0]),
                        _unescape_mount_field(fields[1]))
-    except Exception:
+    except Exception as error:
+        _log_once("proc_mounts", f"Не удалось прочитать /proc/mounts: {error}")
         return
+    _log_once("proc_mounts", None)
 
 
 def _find_mount_for_path(path):
@@ -1395,15 +1410,18 @@ def _get_device_serial_windows(drive_letter):
 def _scan_drive(drive_path):
     total_files = 0
     total_bytes = 0
-    for root, dirs, files in os.walk(drive_path):
+    errors = []
+    for root, dirs, files in os.walk(drive_path, onerror=errors.append):
         for file in files:
             if file in SERVICE_ID_FILES:
                 continue  # internal marker, never copied — keep totals honest
             total_files += 1
             try:
                 total_bytes += os.path.getsize(os.path.join(root, file))
-            except Exception:
-                pass
+            except OSError as error:
+                errors.append(error)
+    if errors:
+        print(f"  {drive_path}: при подсчёте не прочитано {len(errors)}, первое: {errors[0]}", flush=True)
     return total_files, total_bytes
 
 

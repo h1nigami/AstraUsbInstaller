@@ -146,5 +146,60 @@ class MigrationTest(unittest.TestCase):
                     c.close()
 
 
+class MoreLoggingTest(unittest.TestCase):
+    def setUp(self):
+        um._log_once_last.clear()
+
+    def test_copying_marker_failure_is_logged_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            blocker = os.path.join(tmp, "file")
+            open(blocker, "w").close()
+            out = io.StringIO()
+            with mock.patch.object(um, "COPYING_MARKER", os.path.join(blocker, "data", ".copying")),                  contextlib.redirect_stdout(out):
+                um.touch_copying_marker()
+                um.touch_copying_marker()
+        self.assertEqual(len(out.getvalue().splitlines()), 1)
+        self.assertIn("метку копирования", out.getvalue())
+
+    def test_unreadable_config_reason_is_logged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "config.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"lock_timeout_minutes": -5}')
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                self.assertTrue(um._load_config(path).get("_config_unreadable"))
+                um._load_config(path)
+        self.assertEqual(len(out.getvalue().splitlines()), 1)
+        self.assertIn(path, out.getvalue())
+        self.assertIn("lock_timeout_minutes", out.getvalue())
+
+    def test_unreadable_files_in_scan_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            open(os.path.join(tmp, "a.mp4"), "w").close()
+            out = io.StringIO()
+            with mock.patch.object(um.os.path, "getsize", side_effect=OSError("I/O error")),                  contextlib.redirect_stdout(out):
+                self.assertEqual(um._scan_drive(tmp), (1, 0))
+        self.assertIn("I/O error", out.getvalue())
+
+
+class UpdaterLoggingTest(unittest.TestCase):
+    def test_failed_tag_write_is_logged(self):
+        import updater
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(out):
+            updater._write_failed_tag("v1.99", path=os.path.join(tmp, "no", "such", "dir"))
+        self.assertIn("v1.99", out.getvalue())
+
+    def test_broken_offline_spool_is_logged(self):
+        import updater
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(out):
+            self.assertIsNone(updater._take_offline_spool(os.path.join(tmp, "absent")))
+            self.assertEqual(out.getvalue(), "")  # спула нет — молчим, это норма
+            self.assertIsNone(updater._take_offline_spool(tmp))  # спул есть, тега нет
+        self.assertIn("офлайн", out.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

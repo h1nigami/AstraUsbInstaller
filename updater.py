@@ -114,7 +114,8 @@ def _service_healthy():
         if shown.returncode != 0:
             return False
         restarts = int(shown.stdout.strip())
-    except Exception:
+    except Exception as error:
+        _log(f"не удалось проверить службу: {error}")
         return False
     return active and restarts == 0
 
@@ -155,8 +156,9 @@ def _write_failed_tag(tag, path=None):
     try:
         with open(path or FAILED_TAG_FILE, "w") as f:
             f.write(tag)
-    except Exception:
-        pass
+    except Exception as error:
+        # Без этой метки сломанный релиз будет ставиться и откатываться каждый запуск.
+        _log(f"не удалось запомнить сбойный релиз {tag}: {error}")
 
 
 def _clear_failed_tag(path=None):
@@ -255,15 +257,20 @@ def stage_offline_package(tarball_path, spool_dir=None):
 def _take_offline_spool(spool_dir=None):
     """(tag, tarball) из спула или None. Спул чистит вызывающий."""
     directory = spool_dir or OFFLINE_SPOOL_DIR
+    if not os.path.isdir(directory):
+        return None
     try:
         with open(os.path.join(directory, "tag")) as stream:
             tag = stream.read().strip()
-    except Exception:
+    except Exception as error:
+        _log(f"офлайн-пакет в {directory} без тега ({error}) — пропуск")
         return None
     if not re.fullmatch(r"v1\.[0-9]+(?:\.[0-9]+)*", tag or ""):
+        _log(f"офлайн-пакет с неверным тегом {tag!r} — пропуск")
         return None
     tarball = os.path.join(directory, "release.tar.gz")
     if not os.path.isfile(tarball):
+        _log(f"офлайн-пакет {tag} без архива — пропуск")
         return None
     return tag, tarball
 

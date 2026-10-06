@@ -3,6 +3,7 @@
 При отсутствии Tkinter набор пропускается; только тест размещения требует экран.
 """
 
+import gc
 import os
 import queue
 import sys
@@ -35,6 +36,9 @@ class GuiConfigTest(unittest.TestCase):
     def tearDown(self):
         self._patcher.stop()
         self.tmpdir.cleanup()
+        # Переменные Tk надо собрать здесь, в главном потоке. Иначе их соберёт
+        # чей-то фоновый поток в следующих тестах, и Tcl_AsyncDelete уронит процесс.
+        gc.collect()
 
     def test_load_config_missing_file_returns_empty_dict(self):
         self.assertEqual(gui_mod._load_config(), {})
