@@ -1709,22 +1709,59 @@ def _mount_device(devname):
         return None
 
 
+def _mount_source(mountpoint):
+    """Что смонтировано в mountpoint (например, /dev/sdb), или None."""
+    for source, target in _iter_mounts():
+        if target == mountpoint:
+            return source
+    return None
+
+
 def _unmount(mountpoint):
-    try:
-        subprocess.run(["umount", mountpoint], check=True, capture_output=True)
-    except (OSError, subprocess.SubprocessError) as error:
-        with _operations_lock:
-            _failed_unmounts.add(mountpoint)
-        print(f"Не удалось размонтировать {mountpoint}: {error}", flush=True)
-        return False
+    # Точку уже сняли — например, уборка после отключения, пока воркер ждал карту.
+    if os.path.ismount(mountpoint):
+        try:
+            subprocess.run(["umount", mountpoint], check=True, capture_output=True)
+        except (OSError, subprocess.SubprocessError) as error:
+            source = _mount_source(mountpoint)
+            if not (source and source.startswith("/dev/") and not os.path.exists(source)):
+                # Носитель на месте или неизвестен: насильно не отцепляем,
+                # безопасное извлечение остаётся запрещённым.
+                with _operations_lock:
+                    _failed_unmounts.add(mountpoint)
+                print(f"Не удалось размонтировать {mountpoint}: {error}", flush=True)
+                return False
+            # Носитель отвалился посреди работы. Обычный umount мёртвой точки не
+            # проходит, и она висела бы до перезагрузки (на .41 — с 21 сентября).
+            try:
+                subprocess.run(["umount", "-l", mountpoint], check=True, capture_output=True)
+            except (OSError, subprocess.SubprocessError) as lazy_error:
+                with _operations_lock:
+                    _failed_unmounts.add(mountpoint)
+                print(f"Не удалось снять монтирование пропавшего носителя {source} "
+                      f"в {mountpoint}: {lazy_error}", flush=True)
+                return False
+            print(f"  Носитель {source} пропал, монтирование {mountpoint} снято", flush=True)
     with _operations_lock:
         _failed_unmounts.discard(mountpoint)
         _foreign_mounts.discard(mountpoint)
     try:
         os.rmdir(mountpoint)
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError as error:
+        print(f"  Не удалось удалить папку монтирования {mountpoint}: {error}", flush=True)
     return True
+
+
+def _cleanup_dead_mounts():
+    """Снять свои монтирования, чьих устройств больше нет: носитель отвалился,
+    а размонтировать его не успели или служба перезапустилась."""
+    base = MOUNT_BASE.rstrip("/") + "/"
+    for source, target in list(_iter_mounts()):
+        if source.startswith("/dev/") and target.startswith(base) and not os.path.exists(source):
+            print(f"  Монтирование {target} осталось от отключённого {source}, снимаем", flush=True)
+            _unmount(target)
 
 
 def _same_timestamped_copy(dest_dir, file_name, src_stat):
@@ -2260,6 +2297,8 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
 
     if is_linux:
         os.makedirs(MOUNT_BASE, exist_ok=True)
+        # Хвосты от прошлого запуска: носитель отвалился, а служба перезапустилась.
+        _cleanup_dead_mounts()
         try:
             known = _get_linux_partitions()  # dict: devname → mountpoint
         except OSError:
@@ -2298,6 +2337,9 @@ def monitor_usb(interval=2, stop_event=None, progress_queue=None):
             known.discard(dev)
         dn = os.path.basename(dev)
         print(f"  Устройство отключено: {dn}", flush=True)
+        if is_linux:
+            # Отвалилось посреди работы — его монтирование не должно остаться висеть.
+            _cleanup_dead_mounts()
         if progress_queue is not None:
             progress_queue.put_nowait(("_removed_", dn, "", 0, 0, "", ""))
 
