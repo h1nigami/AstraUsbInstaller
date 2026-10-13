@@ -14,7 +14,7 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from datetime import datetime, timedelta
 
 from usb_monitor import monitor_usb, set_safe_removal, safe_removal_active, DB_PATH, _init_db, DEST_BASE, get_dest_base, ensure_dest_marker, describe_dest_path, VIDEO_EXTS, cleanup_old_backup_videos, _format_size, _friendly_device_label, _short_device_label, format_filter_dt, read_version, touch_copying_marker, factory_reset, export_logs, update_log_location, set_offline_hold, _get_linux_partitions, _mount_device, _unmount, _is_dest_path, get_removable_drives
-from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status, _log_once
+from usb_monitor import _archive_path_allowed, _copy_archive_file, safe_removal_status, _log_once, dest_available
 import updater
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic", ".raw", ".cr2", ".nef"}
@@ -96,6 +96,14 @@ def _detached_too_long(workers_data, now, pulled_grace=None, max_grace=None):
 def _get_bay_count(cfg):
     count = cfg.get("bay_count", 10)
     return count if type(count) is int and 1 <= count <= MAX_BAY_COUNT else 10
+
+
+def _disk_space_text():
+    # Без проверки диска disk_usage посчитал бы место на системном разделе.
+    if not dest_available():
+        return "Диск архива не подключён"
+    usage = shutil.disk_usage(get_dest_base())
+    return f"Диск архива: свободно {_format_size(usage.free)} из {_format_size(usage.total)}"
 
 
 def _is_busy(workers_data):
@@ -528,6 +536,7 @@ class App:
         vsb.pack(fill="y", pady=(0, 5), side="right")
 
         self.search_tree.bind("<Double-1>", self._on_search_dblclick)
+        self.search_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_export_btn())
 
         self._device_filter_ids = {}
         self._reset_search_dates()
@@ -610,13 +619,24 @@ class App:
     def _build_workers_tab(self, nb):
         self._workers_tab = ttk.Frame(nb)
         nb.add(self._workers_tab, text="Загрузка")
+        self._disk_var = tk.StringVar(self.root)
         self._build_ports()
+        self._refresh_disk_space()
+
+    def _refresh_disk_space(self):
+        try:
+            self._disk_var.set(_disk_space_text())
+        except OSError:
+            self._disk_var.set("Диск архива недоступен")
+        self.root.after(10000, self._refresh_disk_space)
 
     def _build_ports(self):
         for child in self._workers_tab.winfo_children():
             child.destroy()
         self.ports = []
         self.port_assignment.clear()
+        ttk.Label(self._workers_tab, textvariable=self._disk_var, font=("Segoe UI", 14, "bold"),
+                  foreground=self.C["fg_main"]).pack(anchor="w", padx=20, pady=(10, 0))
         self._overflow_status = tk.StringVar(self.root)
         ttk.Label(self._workers_tab, textvariable=self._overflow_status,
                   foreground=self.C["accent_warn"], wraplength=960).pack(fill="x", padx=20)
@@ -1325,6 +1345,8 @@ class App:
         try:
             conn = self._get_db()
             try:
+                # Период сверяется с датой файла, а не сеанса: dest_path — это
+                # вся папка DeviceN, и файлы в ней накоплены за все сеансы.
                 sql = """
                     SELECT DISTINCT d.id, d.person, d.name, b.dest_path
                     FROM backups b
@@ -1332,12 +1354,6 @@ class App:
                     WHERE 1=1
                 """
                 params = []
-                if p["dt_from"]:
-                    sql += " AND b.started_at >= ?"
-                    params.append(p["dt_from"])
-                if p["dt_to"]:
-                    sql += " AND b.started_at <= ?"
-                    params.append(p["dt_to"])
                 if p["dev_id"] is not None:
                     sql += " AND d.id = ?"
                     params.append(p["dev_id"])
@@ -1388,7 +1404,13 @@ class App:
                             fsize = os.path.getsize(fpath)
                         except OSError:
                             continue
-                        dt_str = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+                        file_dt = datetime.fromtimestamp(mtime)
+                        file_iso = file_dt.isoformat(timespec="seconds")
+                        if p["dt_from"] and file_iso < p["dt_from"]:
+                            continue
+                        if p["dt_to"] and file_iso > p["dt_to"]:
+                            continue
+                        dt_str = file_dt.strftime("%d.%m.%Y %H:%M")
                         results.append({
                             "path": fpath,
                             "filename": fname,
@@ -1418,18 +1440,25 @@ class App:
         for row in self.search_tree.get_children():
             self.search_tree.delete(row)
         self._search_results = results
-        for r in results:
-            self.search_tree.insert("", "end", values=(
+        for i, r in enumerate(results):
+            self.search_tree.insert("", "end", iid=str(i), values=(
                 r["datetime"], r["device"], r["person"],
                 r["filename"], r["ext"], self._fmt_size(r["size"]), r["path"],
             ))
         count = len(results)
         limit_note = " (лимит 500)" if count >= 500 else ""
-        self._search_status_var.set(f"Найдено: {count} файлов{limit_note}")
-        if count:
-            self._export_btn.configure(state="normal", text=f"Выгрузить ({count})")
-        else:
-            self._export_btn.configure(state="disabled", text="Выгрузить (0)")
+        self._search_status_var.set(f"Найдено: {count} файлов{limit_note}. "
+                                    "Выделите строки (Ctrl/Shift), чтобы выгрузить только их")
+        self._update_export_btn()
+
+    def _export_targets(self):
+        """Выделенные строки, а без выделения — все найденные файлы."""
+        selected = [self._search_results[int(i)] for i in self.search_tree.selection()]
+        return selected or self._search_results
+
+    def _update_export_btn(self):
+        n = len(self._export_targets())
+        self._export_btn.configure(state="normal" if n else "disabled", text=f"Выгрузить ({n})")
 
     def _open_externally(self, path):
         system = platform.system()
@@ -1533,7 +1562,8 @@ class App:
         ttk.Button(bottom, text="Закрыть", command=win.destroy).pack(side="right", padx=8)
 
     def _export_found_files(self):
-        if not self._search_results:
+        targets = self._export_targets()
+        if not targets:
             return
         dest = filedialog.askdirectory(
             title="Выберите папку для выгрузки файлов",
@@ -1546,7 +1576,7 @@ class App:
                                  "Выберите папку на отдельном подключённом диске. "
                                  "Запись архива на системный диск запрещена.", parent=self.root)
             return
-        count = len(self._search_results)
+        count = len(targets)
         if not messagebox.askyesno(
             "Подтверждение",
             f"Выгрузить {count} файлов в:\n{dest}?",
@@ -1555,7 +1585,7 @@ class App:
             return
         self._export_btn.configure(state="disabled", text="Выгрузка...")
         threading.Thread(target=self._export_worker,
-                         args=(list(self._search_results), dest), daemon=True).start()
+                         args=(list(targets), dest), daemon=True).start()
 
     def _export_worker(self, results, dest):
         ok = 0
@@ -1580,9 +1610,7 @@ class App:
             pass
 
     def _export_done(self, ok, errors):
-        n = len(self._search_results)
-        state = "normal" if n > 0 else "disabled"
-        self._export_btn.configure(state=state, text=f"Выгрузить ({n})")
+        self._update_export_btn()
         if errors:
             shown = "\n".join(errors[:5])
             more = f"\n...и ещё {len(errors)-5}" if len(errors) > 5 else ""
