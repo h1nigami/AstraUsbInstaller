@@ -74,10 +74,10 @@ class GuiConfigTest(unittest.TestCase):
         app.mon_status = gui_mod.tk.StringVar(app.root)
         app.workers_data = {}
         app.port_assignment = {}
-        app.C = dict(border="gray", bg_panel="black", fg_main="white",
+        app.C = dict(border="gray", bg_panel="black", fg_main="white", fg_muted="gray",
                      accent="blue", accent_warn="orange", accent_ok="green",
                      bg_surface="black")
-        for owner, name in ((gui_mod.tk, "Frame"), (gui_mod.tk, "Label"),
+        for owner, name in ((gui_mod.tk, "Frame"), (gui_mod.tk, "Label"), (gui_mod.tk, "Canvas"),
                             (gui_mod.ttk, "Frame"), (gui_mod.ttk, "Label")):
             patcher = mock.patch.object(owner, name)
             patcher.start()

@@ -95,18 +95,17 @@ class ExportSelectionTest(unittest.TestCase):
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
-class DiskSpaceTextTest(unittest.TestCase):
-    def test_free_and_total_of_archive_disk(self):
-        usage = types.SimpleNamespace(total=500 * 1024 ** 3, used=0, free=120 * 1024 ** 3)
-        with mock.patch.object(gui_mod, "dest_available", return_value=True), \
-                mock.patch.object(gui_mod.shutil, "disk_usage", return_value=usage):
-            self.assertEqual(gui_mod._disk_space_text(),
-                             f"Диск архива: свободно {um._format_size(120 * 1024 ** 3)} "
-                             f"из {um._format_size(500 * 1024 ** 3)}")
+class ArchiveDiskUsageTest(unittest.TestCase):
+    def test_usage_of_archive_disk(self):
+        usage = types.SimpleNamespace(total=500, used=380, free=120)
+        with mock.patch.object(gui_mod, "dest_available", return_value=True),                 mock.patch.object(gui_mod.shutil, "disk_usage", return_value=usage) as du:
+            self.assertIs(gui_mod._archive_disk_usage(), usage)
+        du.assert_called_once_with(gui_mod.get_dest_base())
 
-    def test_archive_disk_missing(self):
-        with mock.patch.object(gui_mod, "dest_available", return_value=False):
-            self.assertEqual(gui_mod._disk_space_text(), "Диск архива не подключён")
+    def test_missing_archive_disk_is_not_measured(self):
+        with mock.patch.object(gui_mod, "dest_available", return_value=False),                 mock.patch.object(gui_mod.shutil, "disk_usage") as du:
+            self.assertIsNone(gui_mod._archive_disk_usage())
+        du.assert_not_called()
 
 
 if __name__ == "__main__":

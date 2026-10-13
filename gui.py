@@ -98,12 +98,12 @@ def _get_bay_count(cfg):
     return count if type(count) is int and 1 <= count <= MAX_BAY_COUNT else 10
 
 
-def _disk_space_text():
+def _archive_disk_usage():
+    """Место на диске архива или None, пока диск не подключён."""
     # Без проверки диска disk_usage посчитал бы место на системном разделе.
     if not dest_available():
-        return "Диск архива не подключён"
-    usage = shutil.disk_usage(get_dest_base())
-    return f"Диск архива: свободно {_format_size(usage.free)} из {_format_size(usage.total)}"
+        return None
+    return shutil.disk_usage(get_dest_base())
 
 
 def _is_busy(workers_data):
@@ -619,24 +619,58 @@ class App:
     def _build_workers_tab(self, nb):
         self._workers_tab = ttk.Frame(nb)
         nb.add(self._workers_tab, text="Загрузка")
-        self._disk_var = tk.StringVar(self.root)
+        self._disk_usage = None
         self._build_ports()
         self._refresh_disk_space()
 
     def _refresh_disk_space(self):
         try:
-            self._disk_var.set(_disk_space_text())
+            self._disk_usage = _archive_disk_usage()
         except OSError:
-            self._disk_var.set("Диск архива недоступен")
+            self._disk_usage = None
+        self._show_disk_space()
         self.root.after(10000, self._refresh_disk_space)
+
+    def _show_disk_space(self):
+        u = self._disk_usage
+        if not u or not u.total:
+            self._disk_free.configure(text="не подключён", fg=self.C["accent_warn"])
+            self._disk_info.configure(text="")
+        else:
+            used = 1 - u.free / u.total
+            self._disk_free.configure(text=f"{_format_size(u.free)} свободно", fg=self.C["fg_main"])
+            self._disk_info.configure(text=f"из {_format_size(u.total)}  ·  занято {used:.0%}")
+        self._draw_disk_bar()
+
+    def _draw_disk_bar(self):
+        bar, u = self._disk_bar, self._disk_usage
+        bar.delete("all")
+        if u and u.total:
+            color = self.C["accent_warn"] if u.free / u.total < 0.1 else self.C["accent_ok"]
+            bar.create_rectangle(0, 0, bar.winfo_width() * (1 - u.free / u.total),
+                                 bar.winfo_height(), fill=color, width=0)
 
     def _build_ports(self):
         for child in self._workers_tab.winfo_children():
             child.destroy()
         self.ports = []
         self.port_assignment.clear()
-        ttk.Label(self._workers_tab, textvariable=self._disk_var, font=("Segoe UI", 14, "bold"),
-                  foreground=self.C["fg_main"]).pack(anchor="w", padx=20, pady=(10, 0))
+        C = self.C
+        disk = tk.Frame(self._workers_tab, bg=C["bg_panel"],
+                        highlightbackground=C["border"], highlightthickness=1)
+        disk.pack(fill="x", padx=20, pady=(12, 0))
+        caption = tk.Frame(disk, bg=C["bg_panel"])
+        caption.pack(side="left", padx=(16, 0), pady=8)
+        tk.Label(caption, text="ДИСК АРХИВА", font=("Segoe UI", 9, "bold"),
+                 fg=C["fg_muted"], bg=C["bg_panel"]).pack(anchor="w")
+        self._disk_free = tk.Label(caption, font=("Segoe UI", 16, "bold"), bg=C["bg_panel"])
+        self._disk_free.pack(anchor="w")
+        self._disk_info = tk.Label(disk, font=("Segoe UI", 12), fg=C["fg_muted"], bg=C["bg_panel"])
+        self._disk_info.pack(side="right", padx=16)
+        self._disk_bar = tk.Canvas(disk, height=12, bg=C["bg_surface"], highlightthickness=0)
+        self._disk_bar.pack(side="left", fill="x", expand=True, padx=24)
+        self._disk_bar.bind("<Configure>", lambda _e: self._draw_disk_bar())
+        self._show_disk_space()
         self._overflow_status = tk.StringVar(self.root)
         ttk.Label(self._workers_tab, textvariable=self._overflow_status,
                   foreground=self.C["accent_warn"], wraplength=960).pack(fill="x", padx=20)
