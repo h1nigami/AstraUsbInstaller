@@ -51,6 +51,40 @@ class DeviceIdentityReaderTest(unittest.TestCase):
                     pass
             self.assertEqual(um._read_device_id(mount), 7654321)
 
+    def test_reads_only_first_seven_characters_of_log_id(self):
+        for value, expected in (("1212345-0000000", 1212345),
+                                ("12123450000000", 1212345),
+                                ("0123456-0000000", 123456),
+                                ("123", 123)):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as mount:
+                os.makedirs(os.path.join(mount, "LOG"))
+                with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                    out.write(f"#ID:{value} #Включение системы\n")
+                self.assertEqual(um._read_device_id(mount), expected)
+
+    def test_log_id_with_suffix_is_compared_to_recording_id(self):
+        with tempfile.TemporaryDirectory() as mount:
+            os.makedirs(os.path.join(mount, "LOG"))
+            os.makedirs(os.path.join(mount, "DCIM"))
+            with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                out.write("#ID:1212345-0000000\n")
+            recording = os.path.join(mount, "DCIM", "A11_1212345_222222_20260915120000_0001.mp4")
+            with open(recording, "wb"):
+                pass
+            self.assertEqual(um._read_device_id(mount), 1212345)
+            os.rename(recording, os.path.join(mount, "DCIM", "A11_7654321_222222_20260915120000_0001.mp4"))
+            with self.assertRaisesRegex(OSError, "Разные ID"):
+                um._read_device_id(mount)
+
+    def test_invalid_first_seven_characters_of_log_id_are_rejected(self):
+        for value in ("0000000-1212345", "121234x-0000000", "１２１２３４５-0000000", "-1212345"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as mount:
+                os.makedirs(os.path.join(mount, "LOG"))
+                with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
+                    out.write(f"#ID:{value}\n")
+                with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
+                    um._read_device_id(mount)
+
     def test_conflicting_log_and_recording_ids_are_rejected(self):
         with tempfile.TemporaryDirectory() as mount:
             os.makedirs(os.path.join(mount, "LOG"))
@@ -106,13 +140,12 @@ class DeviceIdentityReaderTest(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "Не удалось прочитать журнал"):
                 um._read_device_id(mount)
 
-    def test_very_long_decimal_id_is_rejected_without_parser_crash(self):
+    def test_very_long_log_id_uses_first_seven_characters_without_parser_crash(self):
         with tempfile.TemporaryDirectory() as mount:
             os.makedirs(os.path.join(mount, "LOG"))
             with open(os.path.join(mount, "LOG", "boot.txt"), "w", encoding="utf-8") as out:
                 out.write("#ID:" + "9" * 5000 + "\n")
-            with self.assertRaisesRegex(OSError, "ID регистратора не найден"):
-                um._read_device_id(mount)
+            self.assertEqual(um._read_device_id(mount), 9999999)
 
 
 class ResolveDeviceIdTest(unittest.TestCase):

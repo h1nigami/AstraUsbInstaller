@@ -41,6 +41,35 @@ public sealed class DeviceIdentifierTests : IDisposable
         Assert.Equal(1234567, DeviceIdentifier.Read(_card));
     }
 
+    [Theory]
+    [InlineData("1212345-0000000", 1212345)]
+    [InlineData("12123450000000", 1212345)]
+    [InlineData("0123456-0000000", 123456)]
+    [InlineData("123", 123)]
+    [InlineData("9223372036854775808", 9223372)]
+    public void Reads_only_first_seven_characters_of_log_id(string value, long expected)
+    {
+        Log($"#ID:{value} #Включение системы\n");
+        Assert.Equal(expected, DeviceIdentifier.Read(_card));
+    }
+
+    [Fact]
+    public void Log_id_with_suffix_is_compared_to_recording_id()
+    {
+        Log("#ID:1212345-0000000\n");
+        Recording("1212345");
+        Assert.Equal(1212345, DeviceIdentifier.Read(_card));
+        Recording("7654321", "20260916120000");
+        Assert.Throws<InvalidDataException>(() => DeviceIdentifier.Read(_card));
+    }
+
+    [Fact]
+    public void Very_long_log_id_uses_first_seven_characters()
+    {
+        Log("#ID:" + new string('9', 5000) + "\n");
+        Assert.Equal(9999999, DeviceIdentifier.Read(_card));
+    }
+
     [Fact]
     public void Latest_log_without_id_cannot_reuse_older_number()
     {
@@ -98,9 +127,12 @@ public sealed class DeviceIdentifierTests : IDisposable
 
     [Theory]
     [InlineData("0")]
-    [InlineData("9223372036854775808")]
     [InlineData("123abc")]
     [InlineData("１２３")]
+    [InlineData("0000000-1212345")]
+    [InlineData("121234x-0000000")]
+    [InlineData("１２１２３４５-0000000")]
+    [InlineData("-1212345")]
     public void Invalid_log_id_is_not_used(string value)
     {
         Log($"#ID:{value}\n");
