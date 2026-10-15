@@ -54,8 +54,9 @@ public static class DeviceIdentifier
                 var position = line.IndexOf("#ID:", StringComparison.Ordinal);
                 if (position < 0)
                     continue;
-                id = ParseId(line[(position + 4)..].Split((char[]?)null,
-                    StringSplitOptions.RemoveEmptyEntries).FirstOrDefault());
+                var value = line[(position + 4)..].Split((char[]?)null,
+                    StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+                id = ParseId(value is { Length: > 7 } ? value[..7] : value);
             }
             return id;
         }

@@ -1207,7 +1207,7 @@ def _id_from_latest_log(mountpoint):
             for line in stream:
                 if "#ID:" in line:
                     tokens = line.partition("#ID:")[2].split()
-                    device_id = _positive_id(tokens[0] if tokens else "")
+                    device_id = _positive_id(tokens[0][:7] if tokens else "")
         return device_id
     except (OSError, UnicodeError) as error:
         raise OSError("Не удалось прочитать журнал регистратора") from error
