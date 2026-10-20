@@ -60,11 +60,12 @@ jobs:
             bash -n "$script"
           done
           python3 avalonia/AstraUsb.Tests/install-review-fixes.py "$PWD"
+          docker build -t astra-station-tests -f avalonia/AstraUsb.Tests/Dockerfile .
           leaf="$(mktemp -d)"
           docker run --rm --network none -e ARCHIVE_LEAF_TEST_CONTAINER=1 \
             -v "$PWD:/src:ro" -v "$leaf:/tmp/archive-leaf" mcr.microsoft.com/dotnet/sdk:8.0 \
             sh /src/avalonia/AstraUsb.Tests/archive-leaf-integration.sh
-          python3 avalonia/AstraUsb.Tests/source-cleaner-race.py dotnet "$leaf/bin/ArchiveLeaf.dll"
+          python3 avalonia/AstraUsb.Tests/source-cleaner-race.py "$(command -v dotnet)" "$leaf/bin/ArchiveLeaf.dll"
           docker run --rm --network none -e ARCHIVE_LEAF_TEST_CONTAINER=1 \
             -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
             sh /src/avalonia/AstraUsb.Tests/station-log-integration.sh
@@ -76,7 +77,7 @@ jobs:
 
           for script in installer-guard package-guard; do
             docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 \
-              -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
+              -v "$PWD:/src:ro" astra-station-tests \
               bash "/src/avalonia/AstraUsb.Tests/$script.sh"
           done
 

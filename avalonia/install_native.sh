@@ -67,7 +67,8 @@ fi
 if [ -d /run/systemd/system ]; then
     CONFLICT=0
     for unit in "$PYTHON_SERVICE.service" astra-usb-update.timer astra-usb-update.service; do
-        if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
+        if systemctl is-active --quiet "$unit" || \
+            { [ "$unit" != astra-usb-update.service ] && systemctl is-enabled --quiet "$unit"; }; then
             CONFLICT=1
         fi
     done

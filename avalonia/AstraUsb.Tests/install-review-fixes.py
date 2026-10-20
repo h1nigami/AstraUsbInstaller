@@ -37,7 +37,7 @@ unit="${@: -1}"
 case "$1" in
  list-unit-files) echo 'astra-usb-monitor.service disabled';;
  is-active) case "$unit" in astra-usb-monitor*|astra-usb-update.timer|astra-usb-update.service) [ "$PYTHON_ACTIVE" = 1 ] && [ "${PYTHON_ACTIVE_UNIT:-$unit}" = "$unit" ];; *) exit 3;; esac;;
- is-enabled) case "$unit" in astra-usb-monitor*|astra-usb-update.timer) [ "$PYTHON_ENABLED" = 1 ];; *) exit 1;; esac;;
+ is-enabled) case "$unit" in astra-usb-monitor*|astra-usb-update.timer) [ "$PYTHON_ENABLED" = 1 ];; astra-usb-update.service) [ "${PYTHON_STATIC_UPDATER:-0}" = 1 ];; *) exit 1;; esac;;
  show) echo loaded;;
  *) echo "systemctl $*" >> "$REVIEW_ROOT/commands";;
 esac
@@ -109,21 +109,36 @@ else: pathlib.Path(output).write_bytes(package)
         self.assertNotIn("restart astra-usb-avalonia", self.commands.read_text())
 
     def test_package_preinst_refuses_active_python_before_stopping_csharp(self):
-        subprocess.run(["bash", str(SOURCE / "avalonia/packaging/build_deb.sh"), str(self.root / "payload"),
-                        "v2.7.0", "amd64", str(self.root / "out")], check=True, stdout=subprocess.PIPE)
-        subprocess.run(["dpkg-deb", "-e", str(self.root / "out/bestcam-station_2.7.0_amd64.deb"),
-                        str(self.root / "control")], check=True)
-        preinst = self.copy_script(self.root / "control/preinst", self.root / "preinst")
+        preinst = self.build_preinst()
         self.env["PYTHON_ACTIVE"] = "1"
         result = self.run_script(preinst, "install")
         self.assertNotEqual(0, result.returncode, result.stdout)
         self.assertEqual("", self.commands.read_text())
+
+    def build_preinst(self):
+        subprocess.run(["bash", str(SOURCE / "avalonia/packaging/build_deb.sh"), str(self.root / "payload"),
+                        "v2.7.0", "amd64", str(self.root / "out")], check=True, stdout=subprocess.PIPE)
+        subprocess.run(["dpkg-deb", "-e", str(self.root / "out/bestcam-station_2.7.0_amd64.deb"),
+                        str(self.root / "control")], check=True)
+        return self.copy_script(self.root / "control/preinst", self.root / "preinst")
+
+    def test_inactive_static_python_updater_allows_package_preinst(self):
+        self.env["PYTHON_STATIC_UPDATER"] = "1"
+        result = self.run_script(self.build_preinst(), "install")
+        self.assertEqual(0, result.returncode, result.stdout)
 
     def test_enabled_python_blocks_unattended_native_update(self):
         self.env["PYTHON_ENABLED"] = "1"
         result = self.run_script(self.native)
         self.assertNotEqual(0, result.returncode, result.stdout)
         self.assertEqual("", self.commands.read_text())
+
+    def test_inactive_static_python_updater_allows_native_and_online_install(self):
+        self.env["PYTHON_STATIC_UPDATER"] = "1"
+        for script, args in ((self.native, ()), (self.online, ("v2.7.0",))):
+            with self.subTest(script=script.name):
+                result = self.run_script(script, *args)
+                self.assertEqual(0, result.returncode, result.stdout)
 
     def test_running_python_updater_blocks_native_and_online_install_before_changes(self):
         self.env.update(PYTHON_ACTIVE="1", PYTHON_ACTIVE_UNIT="astra-usb-update.service")

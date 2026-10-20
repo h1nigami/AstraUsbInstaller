@@ -67,4 +67,3 @@ public sealed class FtpSenderReviewFixTests : IDisposable
 
     public void Dispose() { AppPaths.Root = _previous; Directory.Delete(_temp, true); }
 }
-

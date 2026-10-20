@@ -176,5 +176,3 @@ public sealed class WebReviewFixTests : IDisposable
 
     public void Dispose() { AppPaths.Root = _previous; Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); Directory.Delete(_temp, true); }
 }
-
-

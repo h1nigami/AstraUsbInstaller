@@ -291,6 +291,3 @@ public sealed class UIReviewFixTests : IDisposable
         try { Directory.Delete(_dir, true); } catch (IOException) { }
     }
 }
-
-
-
