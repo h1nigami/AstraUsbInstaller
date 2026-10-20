@@ -28,7 +28,7 @@ public static class FtpSender
 
         try
         {
-            var request = Create(settings, "");
+            var request = Create(settings, settings.FtpFolder.Trim());
             request.Method = WebRequestMethods.Ftp.ListDirectory;
 
             using var response = (FtpWebResponse)request.GetResponse();
@@ -44,20 +44,23 @@ public static class FtpSender
         }
     }
 
-    /// <summary>Отправляет один файл. Имя на сервере совпадает с именем в архиве.</summary>
+    /// <summary>Отправляет один файл с сохранением его пути внутри архива.</summary>
     public static FtpResult Send(Settings settings, string path)
     {
-        if (!File.Exists(path))
-            return new FtpResult(false, "файла больше нет в архиве");
-
         try
         {
-            var request = Create(settings, Path.GetFileName(path));
+            using var operation = OperationGuard.Acquire();
+            using var archive = ArchiveGuard.Open(settings.ResolveBackupRoot(), settings: settings);
+            var full = settings.ArchivePathResolver(archive.Root)(path);
+            var relative = Path.GetRelativePath(archive.Root, full).Replace('\\', '/');
+            using var source = archive.OpenRead(relative);
+            var remote = string.Join('/', new[] { settings.FtpFolder.Trim().Trim('/'), relative }.Where(p => p.Length > 0));
+            EnsureDirectories(settings, remote);
+            var request = Create(settings, remote);
             request.Method = WebRequestMethods.Ftp.UploadFile;
             request.UseBinary = true;
-            request.ContentLength = new FileInfo(path).Length;
+            request.ContentLength = source.Length;
 
-            using (var source = File.OpenRead(path))
             using (var target = request.GetRequestStream())
             {
                 source.CopyTo(target);
@@ -70,21 +73,42 @@ public static class FtpSender
         {
             return new FtpResult(false, Explain(e));
         }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return new FtpResult(false, UserError.Report("Файл недоступен в архиве", e));
+        }
         catch (Exception e)
         {
             return new FtpResult(false, UserError.Report("Не удалось отправить файл на FTP", e));
         }
     }
 
-    private static FtpWebRequest Create(Settings settings, string name)
+    private static void EnsureDirectories(Settings settings, string path)
+    {
+        var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        for (var count = 1; count < parts.Length; count++)
+        {
+            var request = Create(settings, string.Join('/', parts[..count]));
+            request.Method = WebRequestMethods.Ftp.MakeDirectory;
+            try { using var response = (FtpWebResponse)request.GetResponse(); }
+            catch (WebException error) when (error.Response is FtpWebResponse
+                { StatusCode: FtpStatusCode.ActionNotTakenFileUnavailable } response)
+            {
+                // FTP возвращает 550 и для существующей папки; STOR отдельно подтвердит доступ к ней.
+                response.Dispose();
+            }
+        }
+    }
+
+    private static FtpWebRequest Create(Settings settings, string path)
     {
         var host = settings.FtpHost.Trim().TrimEnd('/');
         if (!host.StartsWith("ftp://", StringComparison.OrdinalIgnoreCase))
             host = "ftp://" + host;
 
         var port = settings.FtpPort is > 0 and < 65536 ? settings.FtpPort : 21;
-        var folder = settings.FtpFolder.Trim().Trim('/');
-        var path = string.Join('/', new[] { folder, name }.Where(p => p.Length > 0));
+        path = string.Join('/', path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString));
 
 #pragma warning disable SYSLIB0014
         // Встроенный клиент объявлен устаревшим, но замены в платформе нет, а

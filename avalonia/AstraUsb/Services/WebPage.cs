@@ -640,9 +640,9 @@ public static class WebPage
                        <td class="muted">${esc(meta(r))}</td>
                        <td style="display:flex;gap:8px;justify-content:flex-end">
                          <button class="ghost" style="padding:0 14px"
-                                 onclick="watch('${esc(r.path)}')">Смотреть</button>
+                                 data-file-action="watch" data-path="${esc(r.path)}">Смотреть</button>
                          <button class="go" style="min-height:40px;padding:0 16px;font-size:13.5px"
-                                 onclick="download('${esc(r.path)}', '${esc(r.file)}')">Скачать</button>
+                                 data-file-action="download" data-path="${esc(r.path)}" data-file="${esc(r.file)}">Скачать</button>
                        </td>
                      </tr>`).join('')}
                    </tbody></table></div>`
@@ -654,8 +654,8 @@ public static class WebPage
                     </div>
                     <div class="muted">${esc(meta(r))}</div>
                     <div class="acts">
-                      <button onclick="watch('${esc(r.path)}')">Смотреть</button>
-                      <button class="load" onclick="download('${esc(r.path)}', '${esc(r.file)}')">Скачать</button>
+                      <button data-file-action="watch" data-path="${esc(r.path)}">Смотреть</button>
+                      <button class="load" data-file-action="download" data-path="${esc(r.path)}" data-file="${esc(r.file)}">Скачать</button>
                     </div>
                   </div>`).join('');
 
@@ -781,6 +781,13 @@ public static class WebPage
         // Ширина решает, строка это или карточка, поэтому поворот телефона
         // требует перерисовки.
         window.addEventListener('resize', () => tick());
+
+        document.getElementById('view').addEventListener('click', e => {
+          const button = e.target.closest('[data-file-action]');
+          if (!button) return;
+          if (button.dataset.fileAction === 'watch') watch(button.dataset.path);
+          if (button.dataset.fileAction === 'download') download(button.dataset.path, button.dataset.file);
+        });
 
         if (token) start();
         </script>

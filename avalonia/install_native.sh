@@ -63,6 +63,29 @@ if ! flock -n -x "$ASTRA_OPERATIONS_LOCK_FD"; then
     exit 1
 fi
 
+# Отключённые юниты прежнего продукта не мешают обновлению станции C#.
+if [ -d /run/systemd/system ]; then
+    CONFLICT=0
+    for unit in "$PYTHON_SERVICE.service" astra-usb-update.timer astra-usb-update.service; do
+        if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
+            CONFLICT=1
+        fi
+    done
+    if [ "$CONFLICT" -eq 1 ]; then
+        if [ "$UNITS_ONLY" -eq 1 ] || [ ! -t 0 ]; then
+            echo "Установка прервана: Python-версия активна или включена. Сначала выполните явную миграцию."
+            exit 1
+        fi
+        read -r -p "Отключить Python-версию и её обновления? [y/N] " answer
+        case "$answer" in
+            [yY]*)
+                systemctl disable --now "$PYTHON_SERVICE.service" astra-usb-update.timer astra-usb-update.service
+                ;;
+            *) echo "Установка прервана"; exit 1 ;;
+        esac
+    fi
+fi
+
 # --- 1. Системные библиотеки --------------------------------------------------
 # Сборка самодостаточна по .NET, но рисование опирается на системные
 # библиотеки: без libfontconfig приложение падает ещё до первого окна, а без
@@ -119,27 +142,6 @@ fi
 echo "--- Необязательные пакеты: звук, речь, преобразование форматов..."
 if command -v apt-get >/dev/null 2>&1; then
     $SUDO apt-get install -y $OPTIONAL_PACKAGES ||         echo "Не поставились: без них молчат тревога и подсказки, а форматы не переводятся"
-fi
-
-# --- 2. Python-версия на той же станции --------------------------------------
-if systemctl list-unit-files 2>/dev/null | grep -q "^$PYTHON_SERVICE.service"; then
-    echo
-    echo "На станции установлена Python-версия ($PYTHON_SERVICE)."
-    echo "Две программы будут монтировать и чистить одни и те же карты."
-    echo
-    echo "Остановить и отключить её сейчас? Записи и база останутся на месте."
-    read -r -p "Отключить Python-версию? [y/N] " answer
-    case "$answer" in
-        [yY]*)
-            $SUDO systemctl disable --now "$PYTHON_SERVICE.service" || true
-            $SUDO systemctl disable --now astra-usb-update.timer 2>/dev/null || true
-            echo "Python-версия отключена. Её каталог не тронут."
-            ;;
-        *)
-            echo "Установка прервана: сначала решите, какая версия работает на станции."
-            exit 1
-            ;;
-    esac
 fi
 
 fi  # конец шагов, которые пакету .deb не нужны

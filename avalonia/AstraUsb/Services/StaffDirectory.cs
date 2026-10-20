@@ -276,7 +276,7 @@ public sealed class StaffDirectory
     public void AssignDevice(long deviceId, long? employeeId)
     {
         using var db = Open();
-        Run(db, "UPDATE devices SET employee_id = $emp WHERE id = $id",
+        Run(db, "UPDATE devices SET employee_id = $emp, person = CASE WHEN $emp IS NULL THEN '' ELSE person END WHERE id = $id",
             ("$emp", (object?)employeeId ?? DBNull.Value), ("$id", deviceId));
     }
 

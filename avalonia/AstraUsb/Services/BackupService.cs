@@ -117,7 +117,12 @@ public sealed class BackupService
             // Освобождаем место заранее, если так настроено: иначе копирование
             // упадёт на середине и часть файлов останется недокопированной.
             PurgeExpired(settings, root);
-            EnsureSpace(settings, root, total.Bytes);
+            long pendingBytes;
+            using (OperationGuard.Acquire(dbPath: _dbPath))
+            using (ArchiveGuard.Open(root, settings: settings))
+                pendingBytes = await Task.Run(() => FileCopier.PendingBytes(mountPoint, destination, token), token);
+            token.ThrowIfCancellationRequested();
+            EnsureSpace(settings, root, pendingBytes);
 
             using var operation = OperationGuard.Acquire(dbPath: _dbPath);
             using var archive = ArchiveGuard.Open(root, settings: settings);
@@ -173,7 +178,7 @@ public sealed class BackupService
             token.ThrowIfCancellationRequested();
             archive.Verify();
             if (settings.DeleteVideoAfterCopy && result.Failed == 0 && sameDevice && recorded)
-                SourceCleaner.DeleteBackedUpVideos(mountPoint, result.BackedUp);
+                SourceCleaner.DeleteBackedUpVideos(mountPoint, result, token);
 
             var (stage, detail, logLine) =
                 result.Failed > 0
@@ -279,6 +284,7 @@ public sealed class BackupService
     /// <summary>Освобождает место под выгрузку, если включена перезапись.</summary>
     private void EnsureSpace(Settings settings, string root, long needed)
     {
+        if (needed <= 0) return;
         var status = StorageManager.Check(root, settings.MinFreeBytes);
         var shortfall = needed + settings.MinFreeBytes - status.FreeBytes;
         if (shortfall > 0)

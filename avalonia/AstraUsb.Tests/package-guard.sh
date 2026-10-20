@@ -16,9 +16,9 @@ while [ "$#" -gt 0 ]; do
     shift
 done
 if [ -z "$output" ]; then
-    echo '{"url":"https://example/bestcam-station_2.1_amd64.deb"}'
+    echo '{"tag_name":"v2.1","draft":false,"assets":[{"name":"bestcam-station_2.1_amd64.deb","browser_download_url":"https://example/bestcam-station_2.1_amd64.deb"},{"name":"bestcam-station_2.1_amd64.deb.sha256","browser_download_url":"https://example/bestcam-station_2.1_amd64.deb.sha256"}]}'
 elif [ "${last##*.}" = sha256 ]; then
-    exit 1
+    printf 'package\n' | sha256sum | awk '{ print $1 "  bestcam-station_2.1_amd64.deb" }' > "$output"
 else
     echo package > "$output"
 fi
@@ -31,7 +31,8 @@ cat > "$work/bin/systemctl" <<'MOCK'
 #!/bin/sh
 case "$1" in
     show) echo loaded ;;
-    is-active) [ "$(cat "$PACKAGE_TEST_DIR/${3}.state")" = active ] ;;
+    is-active) [ "$(cat "$PACKAGE_TEST_DIR/${3}.state" 2>/dev/null)" = active ] ;;
+    is-enabled) exit 1 ;;
     stop)
         echo "stop $2" >> "$PACKAGE_TEST_DIR/commands"
         [ "${PACKAGE_TEST_REFUSE_STOP:-}" = 1 ] || echo inactive > "$PACKAGE_TEST_DIR/${2}.state"

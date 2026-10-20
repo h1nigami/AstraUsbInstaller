@@ -27,44 +27,68 @@ case "$(uname -m)" in
         ;;
 esac
 
-for tool in curl dpkg apt-get; do
+for tool in curl dpkg apt-get python3 sha256sum; do
     command -v "$tool" >/dev/null 2>&1 || { echo "Нужен $tool"; exit 1; }
 done
 
 API="https://api.github.com/repos/$REPO/releases"
-if [ -n "$TAG" ]; then
-    ANSWER="$(curl -fsSL "$API/tags/$TAG")"
-else
-    ANSWER="$(curl -fsSL "$API/latest")"
-fi
-
-# Ссылка на пакет своей архитектуры прямо из ответа GitHub: разбирать его
-# целиком незачем, достаточно вытащить нужный адрес.
-URL="$(printf '%s' "$ANSWER" \
-    | grep -o "https://[^\"]*bestcam-station_[^\"]*_${ARCH}\.deb" | head -1)"
-
-if [ -z "$URL" ]; then
-    echo "В релизе нет пакета для $ARCH."
-    echo "Посмотрите список: https://github.com/$REPO/releases"
-    exit 1
-fi
-
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-NAME="$(basename "$URL")"
+if [ -n "$TAG" ]; then
+    case "$TAG" in v2.*) ;; *) echo "Нужен тег C# версии v2.*"; exit 1;; esac
+    curl -fsSL "$API/tags/$TAG" > "$WORK/releases.json"
+else
+    curl -fsSL "$API?per_page=100" > "$WORK/releases.json"
+fi
+
+# Python нужен только установщику для разбора JSON, сама станция работает без него.
+python3 - "$WORK/releases.json" "$ARCH" "$TAG" > "$WORK/selected" <<'PY'
+import json, re, sys
+with open(sys.argv[1]) as stream:
+    releases = json.load(stream)
+releases = releases if isinstance(releases, list) else [releases]
+for release in sorted(releases, key=lambda item: item.get('published_at') or '', reverse=True):
+    tag = release.get('tag_name', '')
+    if release.get('draft') or not re.fullmatch(r'v2\.[0-9A-Za-z.-]+', tag):
+        continue
+    if sys.argv[3] and tag != sys.argv[3]:
+        continue
+    name = f'bestcam-station_{tag[1:]}_{sys.argv[2]}.deb'
+    assets = {item['name']: item.get('browser_download_url', '') for item in release.get('assets', [])}
+    urls = [assets.get(name, ''), assets.get(name + '.sha256', '')]
+    if all(url.startswith('https://') and not any(c.isspace() for c in url) for url in urls):
+        print(name, *urls, sep='\n')
+        break
+else:
+    sys.exit('Нет готового C# релиза v2.* с пакетом этой архитектуры и SHA256.')
+PY
+mapfile -t SELECTED < "$WORK/selected"
+NAME="${SELECTED[0]}"
+URL="${SELECTED[1]}"
+SHA_URL="${SELECTED[2]}"
 
 echo "--- Скачиваем $NAME..."
 curl -fsSL -o "$WORK/$NAME" "$URL"
-curl -fsSL -o "$WORK/$NAME.sha256" "$URL.sha256" 2>/dev/null || true
+curl -fsSL -o "$WORK/$NAME.sha256" "$SHA_URL"
 
-if [ -s "$WORK/$NAME.sha256" ]; then
-    echo "--- Сверяем контрольную сумму..."
-    (cd "$WORK" && sha256sum -c "$NAME.sha256")
-else
-    echo "Контрольной суммы в релизе нет, ставим без сверки."
+echo "--- Сверяем контрольную сумму..."
+EXPECTED="$(awk 'NR == 1 { print $1 }' "$WORK/$NAME.sha256")"
+ACTUAL="$(sha256sum "$WORK/$NAME")"
+if [[ ! "$EXPECTED" =~ ^[0-9a-fA-F]{64}$ ]] || \
+    [ "${EXPECTED,,}" != "${ACTUAL%% *}" ]; then
+    echo "ОШИБКА: отсутствующая или неверная SHA256, установка отменена"
+    exit 1
 fi
 
 echo "--- Ставим пакет..."
+if [ -d /run/systemd/system ]; then
+    for unit in astra-usb-monitor.service astra-usb-update.timer astra-usb-update.service; do
+        if systemctl is-active --quiet "$unit" || systemctl is-enabled --quiet "$unit"; then
+            echo "Установка прервана: Python-версия активна или включена. Сначала выполните явную миграцию."
+            exit 1
+        fi
+    done
+fi
 # Проверяем занятость до apt: старый prerm мог ещё не знать о блокировке.
 STATION_DATA="/opt/astra-usb-avalonia/data"
 mkdir -p "$STATION_DATA"

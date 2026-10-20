@@ -116,11 +116,14 @@ public sealed class FtpQueueTests : IDisposable
     public void Files_that_left_the_archive_are_dropped_from_the_queue()
     {
         var queue = Queue();
-        var path = File_("VID_0001.MP4");
+        var device = Directory.CreateDirectory(Path.Combine(_dir, "Device1")).FullName;
+        var path = Path.Combine(device, "VID_0001.MP4");
+        File.WriteAllText(path, "запись");
+        ArchiveGuard.Mark(_dir);
         queue.Add(path);
         File.Delete(path);
 
-        Assert.Equal(1, queue.Prune());
+        Assert.Equal(1, queue.Prune(new Settings { BackupRoot = _dir }));
         Assert.Equal(0, queue.Count());
     }
 

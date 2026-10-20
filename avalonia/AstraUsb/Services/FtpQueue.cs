@@ -131,12 +131,29 @@ public sealed class FtpQueue
     }
 
     /// <summary>Убирает из очереди файлы, которых больше нет в архиве.</summary>
-    public int Prune()
+    public int Prune(Settings? settings = null)
     {
-        var gone = Next(int.MaxValue).Where(item => !File.Exists(item.Path)).ToArray();
-        foreach (var item in gone)
-            Done(item.Id);
-        return gone.Length;
+        var removed = 0;
+        try
+        {
+            settings ??= Settings.Load();
+            using var archive = ArchiveGuard.Open(settings.ResolveBackupRoot(), settings: settings);
+            var resolve = settings.ArchivePathResolver(archive.Root);
+            foreach (var item in Next(int.MaxValue))
+            {
+                var path = resolve(item.Path);
+                try { _ = File.GetAttributes(path); }
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    archive.Verify();
+                    archive.RequireMarker();
+                    Done(item.Id);
+                    removed++;
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { }
+        return removed;
     }
 
     private SqliteConnection Open()

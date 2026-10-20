@@ -34,6 +34,7 @@ public sealed partial class DeviceRow : ObservableObject
 public sealed partial class DevicesViewModel : ObservableObject
 {
     private readonly string _dbPath;
+    private int _reloadGeneration;
 
     public ObservableCollection<DeviceRow> Devices { get; } = new();
     public ObservableCollection<Employee> Employees { get; } = new();
@@ -71,29 +72,16 @@ public sealed partial class DevicesViewModel : ObservableObject
 
     private async Task Reload(string? confirmation)
     {
-        // Выбор снимается до очистки: иначе список, который на неё смотрит,
-        // ищет выбранный элемент по прежнему месту и падает.
+        var generation = ++_reloadGeneration;
         var kept = Selected?.Id;
-        Selected = null;
-        EmployeeInput = null;
-
-        Devices.Clear();
-        Employees.Clear();
-
         try
         {
-            // Списки читаются в стороне: при переходе в раздел интерфейс не
-            // должен ждать базу.
-            var staff = new StaffDirectory(_dbPath);
-            var employees = await Task.Run(() => staff.Employees(activeOnly: true));
-            foreach (var employee in employees)
-                Employees.Add(employee);
-
-            using var registry = new DeviceRegistry(_dbPath);
-            var devices = await Task.Run(() => registry.ListDevices());
-            foreach (var device in devices)
+            var (employees, devices) = await Task.Run(() =>
             {
-                Devices.Add(new DeviceRow
+                var staff = new StaffDirectory(_dbPath);
+                var people = staff.Employees(activeOnly: true);
+                using var registry = new DeviceRegistry(_dbPath);
+                var rows = registry.ListDevices().Select(device => new DeviceRow
                 {
                     Id = device.Id,
                     Name = device.Name,
@@ -104,15 +92,26 @@ public sealed partial class DevicesViewModel : ObservableObject
                     Department = staff.DepartmentPath(device.DepartmentId),
                     FirstSeen = Short(device.FirstSeen),
                     LastSeen = Short(device.LastSeen),
-                });
-            }
+                }).ToList();
+                return (people, rows);
+            });
+            if (generation != _reloadGeneration) return;
+
+            // Выбор снимается до замены списка, чтобы индекс не остался за границей.
+            Selected = null;
+            EmployeeInput = null;
+            Devices.Clear();
+            Employees.Clear();
+            foreach (var employee in employees) Employees.Add(employee);
+            foreach (var device in devices) Devices.Add(device);
 
             Selected = Devices.FirstOrDefault(d => d.Id == kept);
             Hint = confirmation ?? (Devices.Count == 0 ? "камеры ещё не подключались" : "");
         }
         catch (Exception e)
         {
-            Hint = UserError.Report("Не удалось прочитать список камер", e);
+            var message = UserError.Report("Не удалось прочитать список камер", e);
+            if (generation == _reloadGeneration) Hint = message;
         }
     }
 

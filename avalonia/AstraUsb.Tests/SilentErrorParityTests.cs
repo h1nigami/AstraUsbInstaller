@@ -21,11 +21,13 @@ public sealed class SilentErrorParityTests : IDisposable
     public void A_failed_source_deletion_reports_the_file_and_keeps_it()
     {
         if (!OperatingSystem.IsWindows()) return;
-        var video = Path.Combine(_root, "video.mp4");
+        var source = Directory.CreateDirectory(Path.Combine(_root, "card")).FullName;
+        var video = Path.Combine(source, "video.mp4");
         File.WriteAllText(video, "saved video");
+        var copied = FileCopier.Copy(source, Path.Combine(_root, "copies"), "stamp");
         using var held = new FileStream(video, FileMode.Open, FileAccess.Read, FileShare.None);
 
-        Assert.Equal(0, SourceCleaner.DeleteBackedUpVideos(_root, new HashSet<string> { video }));
+        Assert.Equal(0, SourceCleaner.DeleteBackedUpVideos(source, copied));
 
         Assert.True(File.Exists(video));
         AssertLogged(video);
@@ -36,7 +38,7 @@ public sealed class SilentErrorParityTests : IDisposable
     {
         var missing = Path.Combine(_root, "removed-card");
 
-        Assert.Equal(0, SourceCleaner.DeleteBackedUpVideos(missing, new HashSet<string>()));
+        Assert.Equal(0, SourceCleaner.DeleteBackedUpVideos(missing, new CopyResult(0, 0, new Dictionary<string, string>(), 0)));
 
         AssertLogged(missing);
     }

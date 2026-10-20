@@ -17,6 +17,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     private Settings _settings;
     public Func<int, bool>? CanChangeBayCount { get; set; }
     public event Action<int, int>? BaysChanged;
+    public event Action<int>? LockTimeoutChanged;
 
     public string[] StorageModes { get; } = ["предупреждать", "перезаписывать старые"];
 
@@ -630,9 +631,12 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         var stored = _settings.Save();
         if (stored)
+        {
+            LockTimeoutChanged?.Invoke(LockTimeoutMinutes);
             _actions.Write(ActionLog.Settings, LockTimeoutMinutes == 0
                 ? "разделы больше не закрываются по простою"
                 : $"разделы закрываются после {LockTimeoutMinutes} мин простоя");
+        }
 
         Hint = !stored
             ? "не удалось записать настройки, проверьте права на папку data"

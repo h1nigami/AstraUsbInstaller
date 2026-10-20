@@ -25,6 +25,7 @@ public sealed partial class LogViewModel : ObservableObject
     private const int Limit = 500;
 
     private readonly string _dbPath;
+    private int _reloadGeneration;
 
     public ObservableCollection<LogRow> Entries { get; } = new();
 
@@ -69,16 +70,18 @@ public sealed partial class LogViewModel : ObservableObject
     [RelayCommand]
     public async Task Reload()
     {
-        Entries.Clear();
+        var generation = ++_reloadGeneration;
 
         if (!TryDate(From, out var from) || !TryDate(To, out var to))
         {
+            Entries.Clear();
             Hint = "дата пишется как 02.09.2026";
             return;
         }
 
         if (from > to)
         {
+            Entries.Clear();
             Hint = "дата начала не должна быть позже даты окончания";
             return;
         }
@@ -91,7 +94,9 @@ public sealed partial class LogViewModel : ObservableObject
                 ? DateTime.MaxValue : to.Date.AddDays(1).AddTicks(-1);
             var found = await Task.Run(() => new ActionLog(_dbPath)
                 .Between(from.Date, end, Limit));
+            if (generation != _reloadGeneration) return;
 
+            Entries.Clear();
             foreach (var entry in found)
             {
                 Entries.Add(new LogRow
@@ -111,7 +116,8 @@ public sealed partial class LogViewModel : ObservableObject
         }
         catch (Exception e)
         {
-            Hint = UserError.Report("Не удалось прочитать журнал", e);
+            var message = UserError.Report("Не удалось прочитать журнал", e);
+            if (generation == _reloadGeneration) Hint = message;
         }
     }
 

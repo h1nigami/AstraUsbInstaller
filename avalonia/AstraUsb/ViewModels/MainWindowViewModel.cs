@@ -247,6 +247,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly HashSet<string> _offlineMedia = new(StringComparer.Ordinal);
 
     private bool _offlineChecking;
+    private int _offlineGeneration;
+    private readonly Func<string, string, (string? Tag, string? Error)> _stageOffline =
+        (archive, platform) => Updater.StageOffline(archive, platform);
+    private readonly Func<string> _startUpdateService = () => Updater.StartService(checkNetwork: false);
+    private readonly Action _clearOfflineSpool = () => Updater.ClearOfflineSpool();
 
     [RelayCommand]
     private void StartOfflineUpdate()
@@ -262,13 +267,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
+        Interlocked.Increment(ref _offlineGeneration);
         _offlineKnown = _recent.Values.Select(entry => entry.Device.Name).ToHashSet(StringComparer.Ordinal);
         OfflineStatus = "Вставьте флешку с файлом обновления…";
         OfflineWaiting = true;
     }
 
     [RelayCommand]
-    private void CancelOfflineUpdate() => StopOfflineWaiting(keep: null);
+    private void CancelOfflineUpdate()
+    {
+        Interlocked.Increment(ref _offlineGeneration);
+        StopOfflineWaiting(keep: null);
+    }
 
     private void StopOfflineWaiting(string? keep)
     {
@@ -304,7 +314,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private void WatchOfflineMedia(IReadOnlyList<UsbDevice> media)
     {
-        if (_offlineChecking)
+        if (_offlineChecking || !OfflineWaiting || _disposed)
             return;
 
         if (media.Count == 0)
@@ -325,49 +335,62 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
 
         _offlineChecking = true;
-        _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform()))
+        var generation = _offlineGeneration;
+        _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform(), generation))
             .ContinueWith(task =>
             {
                 var failure = task.Exception?.GetBaseException();
                 var reason = failure is null ? "Проверка флешки прервана"
                     : UserError.Report("Не удалось проверить флешку обновления", failure);
-                _ui.Post(() =>
+                _ui.Post(async () =>
                 {
-                    _offlineChecking = false;
-                    if (_disposed) return;
-                    var (done, status, tag, name, kick) = task.IsCompletedSuccessfully
+                    var (done, status, tag, name) = task.IsCompletedSuccessfully
                         ? task.Result
-                        : (false, reason, "", "", "");
-
-                    if (!done)
+                        : (false, reason, "", "");
+                    try
                     {
-                        if (OfflineWaiting)
+                        if (_disposed || generation != _offlineGeneration || !OfflineWaiting)
+                        {
+                            if (done) await Task.Run(_clearOfflineSpool);
+                            return;
+                        }
+                        if (!done)
+                        {
                             OfflineStatus = status;
-                        return;
-                    }
+                            return;
+                        }
 
-                    StopOfflineWaiting(keep: name);
-                    if (kick == Updater.UpdateStarted)
-                    {
-                        _actions.Write(ActionLog.Settings, $"обновление {tag} с флешки передано установщику");
-                        Settings.Hint = $"обновление {tag} передано установщику, программа скоро перезапустится";
+                        // Передача установщику начинается только для текущего ожидания.
+                        StopOfflineWaiting(keep: name);
+                        var kick = await Task.Run(() => generation == Volatile.Read(ref _offlineGeneration)
+                            ? _startUpdateService() : "");
+                        if (kick != Updater.UpdateStarted) await Task.Run(_clearOfflineSpool);
+                        if (_disposed || generation != _offlineGeneration) return;
+                        if (kick == Updater.UpdateStarted)
+                        {
+                            _actions.Write(ActionLog.Settings, $"обновление {tag} с флешки передано установщику");
+                            Settings.Hint = $"обновление {tag} передано установщику, программа скоро перезапустится";
+                        }
+                        else Settings.Hint = kick;
                     }
-                    else
+                    catch (Exception error)
                     {
-                        Updater.ClearOfflineSpool();
-                        Settings.Hint = kick;
+                        var message = UserError.Report("Не удалось передать обновление установщику", error);
+                        if (!_disposed && generation == _offlineGeneration) Settings.Hint = message;
                     }
+                    finally { _offlineChecking = false; }
                 });
             });
     }
 
     /// <summary>Ищет архив на флешках и готовит его для службы обновления. Идёт в стороне от интерфейса.</summary>
-    private static (bool Done, string Status, string Tag, string Name, string Kick) CheckOfflineMedia(
-        IReadOnlyList<(string Name, string Mount)> targets, string installed, string platform)
+    private (bool Done, string Status, string Tag, string Name) CheckOfflineMedia(
+        IReadOnlyList<(string Name, string Mount)> targets, string installed, string platform, int generation)
     {
         var status = "На подключённой флешке обновление не найдено";
         foreach (var (name, mount) in targets)
         {
+            if (generation != Volatile.Read(ref _offlineGeneration)) break;
             var found = Updater.FindOfflineArchives(mount, platform);
             if (found.Count == 0)
                 continue;
@@ -379,17 +402,22 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 continue;
             }
 
-            var (staged, error) = Updater.StageOffline(archive, platform);
+            if (generation != Volatile.Read(ref _offlineGeneration)) break;
+            var (staged, error) = _stageOffline(archive, platform);
+            if (generation != Volatile.Read(ref _offlineGeneration))
+            {
+                _clearOfflineSpool();
+                break;
+            }
             if (error is not null)
             {
                 status = $"Архив {tag}: {error}";
                 continue;
             }
 
-            // Сеть здесь не нужна: архив уже на станции.
-            return (true, "", staged!, name, Updater.StartService(checkNetwork: false));
+            return (true, "", staged!, name);
         }
-        return (false, status, "", "", "");
+        return (false, status, "", "");
     }
 
     /// <summary>
@@ -495,7 +523,21 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public event Action? AccessExpired;
 
     /// <summary>Открыт ли сейчас доступ к закрытым разделам.</summary>
-    public bool AccessAllowed => !Services.Settings.Load().Unreadable && _access.Check(DateTime.Now);
+    public bool AccessAllowed
+    {
+        get
+        {
+            var wasUnlocked = _access.Unlocked;
+            var allowed = !Services.Settings.Load().Unreadable && _access.Check(DateTime.Now);
+            if (!allowed && wasUnlocked)
+            {
+                _access.Lock();
+                Search.RefreshAccess();
+                AccessExpired?.Invoke();
+            }
+            return allowed;
+        }
+    }
 
     public MainWindowViewModel() : this(UsbWatcher.List)
     {
@@ -505,6 +547,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public MainWindowViewModel(Func<IReadOnlyList<UsbDevice>> listDevices)
     {
         _listDevices = listDevices;
+        Search.AccessAllowed = () => AccessAllowed;
         _resolvedArchiveRoot = _stationSettings.BackupRoot;
         AppPaths.EnsureCreated();
         _backups = new BackupService(AppPaths.Database);
@@ -519,6 +562,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             Ports.Add(new PortViewModel { Slot = i });
         Settings.CanChangeBayCount = count => !Ports.Skip(count).Any(p => p.IsBusy);
         Settings.BaysChanged += ResizePorts;
+        Settings.LockTimeoutChanged += minutes => _access.SetTimeout(minutes, DateTime.Now);
 
         // Журнал за годы работы разрастается вместе с базой, поэтому при
         // запуске он подрезается до последних событий.
@@ -756,6 +800,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         _access.Unlock(DateTime.Now);
         _actions.Write(ActionLog.Access,
             $"открыт раздел «{TabName(_wantedTab)}», {AccountInput}");
+        Search.RefreshAccess();
         AccessGranted?.Invoke(_wantedTab);
     }
 
@@ -920,9 +965,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // Раздел, забытый открытым, закрывается сам: станция стоит в общем
         // помещении.
-        var wasUnlocked = _access.Unlocked;
-        if (wasUnlocked && !_access.Check(now))
-            AccessExpired?.Invoke();
+        _ = AccessAllowed;
     }
 
     /// <summary>Опрашивает носители и раскладывает их по гнёздам.</summary>
@@ -1742,10 +1785,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             try
             {
                 var queue = new FtpQueue(AppPaths.Database);
-                queue.Prune();
+                queue.Prune(settings);
+                using var archive = ArchiveGuard.Open(settings.ResolveBackupRoot(), settings: settings);
 
                 foreach (var item in queue.Next(10))
                 {
+                    archive.Verify();
+                    archive.RequireMarker();
                     var result = FtpSender.Send(settings, item.Path);
                     if (result.Ok)
                     {
@@ -1754,6 +1800,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                     }
                     else
                     {
+                        archive.Verify();
+                        archive.RequireMarker();
                         queue.Failed(item.Id, result.Message);
                         failed++;
 
@@ -1993,6 +2041,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        Interlocked.Increment(ref _offlineGeneration);
         Search.CancelSearch();
         SafeRemovalActive = true;
         _mountStop.Cancel();
