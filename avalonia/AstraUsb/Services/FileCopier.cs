@@ -208,10 +208,12 @@ public static class FileCopier
         };
     }
 
-    internal static long PendingBytes(string sourceRoot, string destRoot, CancellationToken token)
+    internal static (long Bytes, IReadOnlySet<string> ReusedFiles) PendingBytes(
+        string sourceRoot, string destRoot, CancellationToken token)
     {
         using var destination = ArchiveGuard.Open(destRoot, create: true, requireMarker: false);
         var bytes = 0L;
+        var reused = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var directory in EnumerateDirectories(sourceRoot, () => throw new IOException("Носитель не читается")))
         {
             token.ThrowIfCancellationRequested();
@@ -220,11 +222,20 @@ public static class FileCopier
             foreach (var file in Directory.GetFiles(directory))
             {
                 token.ThrowIfCancellationRequested();
-                if (!Markers.IsService(Path.GetFileName(file)) && SavedCopy(target, file) is null)
+                var name = Path.GetFileName(file);
+                if (Markers.IsService(name)) continue;
+                var saved = SavedCopy(target, file);
+                if (saved is null)
                     bytes = checked(bytes + new FileInfo(file).Length);
+                else
+                {
+                    reused.Add(Path.Combine(target.Root, saved));
+                    // Поиск сохранённой версии также требует исходное имя в архиве.
+                    reused.Add(Path.Combine(target.Root, name));
+                }
             }
         }
-        return bytes;
+        return (bytes, reused);
     }
 
     private static string? SavedCopy(ArchiveDirectory directory, string source)

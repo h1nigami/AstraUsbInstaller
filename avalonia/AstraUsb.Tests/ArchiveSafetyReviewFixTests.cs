@@ -218,6 +218,134 @@ public sealed class ArchiveSafetyReviewFixTests : IDisposable
         Assert.StartsWith("0 файлов", progress.Updates.Last().Detail);
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    public async Task Overwrite_keeps_reused_copies_and_can_evict_unused_files_from_the_same_device(
+        bool timestamped, bool logged)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var source = Source();
+        Directory.CreateDirectory(Path.Combine(source, "LOG"));
+        File.WriteAllText(Path.Combine(source, "LOG", "log.txt"), "#ID:7\n");
+        var original = Path.Combine(source, "saved.mp4");
+        File.WriteAllBytes(original, new byte[1024]);
+        File.SetLastWriteTimeUtc(original, new DateTime(2019, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var settings = new Settings
+        {
+            BackupRoot = Path.Combine(_root, "archive"), StorageMode = StorageMode.Overwrite,
+            MinFreeGb = checked((int)(new DriveInfo(Path.GetPathRoot(_root)!).AvailableFreeSpace / (1L << 30)) + 1),
+        };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        Assert.True(settings.Save());
+        var destination = Path.Combine(settings.BackupRoot, "Device7");
+        FileCopier.Copy(source, destination, "20261020_120000");
+        var saved = Path.Combine(destination, "saved.mp4");
+        if (timestamped)
+        {
+            var previous = saved;
+            saved = Path.Combine(destination, "saved_20261019_120000.mp4");
+            File.Move(previous, saved);
+            File.WriteAllText(previous, "unused older version");
+            File.SetLastWriteTimeUtc(previous, new DateTime(2018, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        }
+        var unused = Path.Combine(destination, "unused.mp4");
+        Sparse(unused, 2L * 1024 * 1024 * 1024);
+        File.SetLastWriteTimeUtc(unused, new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        if (logged)
+            new CollectionLog(AppPaths.Database).Record([
+                new CollectedFile(7, saved, 1024, null, DateTime.Now.AddYears(-2)),
+                new CollectedFile(7, unused, 2L * 1024 * 1024 * 1024, null, DateTime.Now.AddYears(-1)),
+            ]);
+        File.WriteAllBytes(Path.Combine(source, "new.mp4"), new byte[128]);
+        var progress = new CapturedProgress();
+
+        await new BackupService(AppPaths.Database, settings).RunAsync(7, source, progress);
+
+        Assert.True(File.Exists(saved), "Расчёт недостающих байтов опирается на эту сохранённую копию");
+        Assert.False(File.Exists(unused), "Неиспользуемая запись того же устройства должна оставаться доступной для вытеснения");
+        Assert.Equal(BackupStage.Done, progress.Updates.Last().Stage);
+        Assert.Equal("1 файл, 128 Б", progress.Updates.Last().Detail);
+        Assert.Equal(128, new FileInfo(Path.Combine(destination, "new.mp4")).Length);
+    }
+
+    [Fact]
+    public async Task Concurrent_cleanup_rechecks_new_missing_bytes_and_stops_retrying_when_the_plan_is_stable()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var source = Source();
+        Directory.CreateDirectory(Path.Combine(source, "LOG"));
+        File.WriteAllText(Path.Combine(source, "LOG", "log.txt"), "#ID:7\n");
+        File.WriteAllBytes(Path.Combine(source, "saved.mp4"), new byte[1024]);
+        var settings = new Settings
+        {
+            BackupRoot = Path.Combine(_root, "archive"), StorageMode = StorageMode.Overwrite,
+            MinFreeGb = checked((int)(new DriveInfo(Path.GetPathRoot(_root)!).AvailableFreeSpace / (1L << 30)) + 1),
+        };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        Assert.True(settings.Save());
+        var destination = Path.Combine(settings.BackupRoot, "Device7");
+        FileCopier.Copy(source, destination, "20261020_120000");
+        var saved = Path.Combine(destination, "saved.mp4");
+        var firstEviction = Path.Combine(destination, "first-eviction.mp4");
+        Sparse(firstEviction, 2L << 30);
+        var log = new CollectionLog(AppPaths.Database);
+        log.Record([
+            new CollectedFile(7, saved, 1024, null, DateTime.Now.AddYears(-3)),
+            new CollectedFile(7, firstEviction, 2L << 30, null, DateTime.Now.AddYears(-2)),
+        ]);
+        File.WriteAllBytes(Path.Combine(source, "new.mp4"), new byte[128]);
+        var planned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var resume = new ManualResetEventSlim();
+        var progress = new CapturedProgress
+        {
+            OnReport = update =>
+            {
+                if (update.Detail != "проверяем место в архиве") return;
+                planned.TrySetResult();
+                if (!resume.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException("Вторая выгрузка не завершилась");
+            },
+        };
+        var first = Task.Run(() => new BackupService(AppPaths.Database, settings).RunAsync(7, source, progress));
+        string initial = "", additional = "", secondCopy = "";
+        try
+        {
+            await planned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var other = Directory.CreateDirectory(Path.Combine(_root, "other-source")).FullName;
+            Directory.CreateDirectory(Path.Combine(other, "LOG"));
+            File.WriteAllText(Path.Combine(other, "LOG", "log.txt"), "#ID:8\n");
+            File.WriteAllBytes(Path.Combine(other, "other.mp4"), new byte[64]);
+            var secondProgress = new CapturedProgress();
+
+            await new BackupService(AppPaths.Database, settings).RunAsync(8, other, secondProgress);
+
+            Assert.Equal(BackupStage.Done, secondProgress.Updates.Last().Stage);
+            Assert.False(File.Exists(saved), "Вторая выгрузка должна вытеснить копию, учтённую первым заданием");
+            secondCopy = Path.Combine(settings.BackupRoot, "Device8", "other.mp4");
+            initial = Path.Combine(destination, "initial-space.mp4");
+            additional = Path.Combine(destination, "additional-space.mp4");
+            Sparse(initial, 2L << 30);
+            Sparse(additional, 2L << 30);
+            log.Record([
+                new CollectedFile(7, initial, 2L << 30, null, DateTime.Now.AddYears(-2)),
+                new CollectedFile(7, additional, 2L << 30, null, DateTime.Now.AddYears(-1)),
+            ]);
+        }
+        finally
+        {
+            resume.Set();
+            await first.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+
+        Assert.False(File.Exists(initial));
+        Assert.False(File.Exists(additional), "После вытеснения сохранённой копии надо пересчитать нужное место");
+        Assert.True(File.Exists(secondCopy), "Стабильный расчёт не должен повторно пополнять недостижимый резерв");
+        Assert.True(File.Exists(saved));
+        Assert.Equal(BackupStage.Done, progress.Updates.Last().Stage);
+    }
+
     private string Source() => Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
 
     private (string Source, CopyResult Copied) TwoVideos()
@@ -263,7 +391,12 @@ public sealed class ArchiveSafetyReviewFixTests : IDisposable
     private sealed class CapturedProgress : IProgress<BackupProgress>
     {
         public List<BackupProgress> Updates { get; } = [];
-        public void Report(BackupProgress value) => Updates.Add(value);
+        public Action<BackupProgress>? OnReport { get; init; }
+        public void Report(BackupProgress value)
+        {
+            Updates.Add(value);
+            OnReport?.Invoke(value);
+        }
     }
 
     public void Dispose()
