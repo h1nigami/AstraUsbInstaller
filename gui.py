@@ -1631,7 +1631,7 @@ class App:
                     base, ext = os.path.splitext(r["filename"])
                     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                     dst = os.path.join(dest, f"{base}_{ts}{ext}")
-                _copy_archive_file(r["path"], dst)
+                _copy_archive_file(r["path"], dst, preserve_mode=False)
                 ok += 1
             except (OSError, KeyError, ValueError) as e:
                 errors.append(f"{r['filename']}: {e}")

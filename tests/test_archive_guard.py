@@ -99,6 +99,21 @@ class SystemDiskGuardTest(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "Проверка устройств и дескрипторов Linux")
 class LinuxArchiveGuardTest(unittest.TestCase):
+    def test_backup_preserves_permissions_by_default(self):
+        with tempfile.TemporaryDirectory() as root, \
+             mock.patch.object(um, "_require_archive_device"):
+            source, destination = os.path.join(root, "source"), os.path.join(root, "dest")
+            os.mkdir(source)
+            os.mkdir(destination)
+            video = os.path.join(source, "video.mp4")
+            with open(video, "wb") as out:
+                out.write(b"original")
+            os.chmod(video, 0o640)
+            result = um._copy_files(source, destination, "stamp", "1", 1, 8,
+                                    None, None, time.time())
+            self.assertEqual(result, (1, 8, {video}, 0))
+            self.assertEqual(os.stat(os.path.join(destination, "video.mp4")).st_mode & 0o777, 0o640)
+
     def test_missing_environment_subdirectory_is_created_only_on_allowed_disk(self):
         with tempfile.TemporaryDirectory() as root, \
              mock.patch.object(um, "_load_config", return_value={}):

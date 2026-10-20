@@ -928,7 +928,7 @@ def _dest_identity_matches(path, cfg):
         return False
 
 
-def _copy_archive_file(source, destination):
+def _copy_archive_file(source, destination, *, preserve_mode=True):
     """Создать новую копию без перезаписи ссылок и с проверкой открытого файла."""
     with _archive_directory(os.path.dirname(destination)) as directory:
         target = os.path.join(directory, os.path.basename(destination))
@@ -939,7 +939,7 @@ def _copy_archive_file(source, destination):
                 dst.flush()
                 os.fsync(dst.fileno())
                 info = os.fstat(src.fileno())
-                if os.name != "nt":
+                if preserve_mode and os.name != "nt":
                     os.fchmod(dst.fileno(), stat.S_IMODE(info.st_mode))
                 os.utime(dst.fileno() if os.utime in os.supports_fd else target,
                          ns=(info.st_atime_ns, info.st_mtime_ns))
