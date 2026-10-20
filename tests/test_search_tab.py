@@ -6,6 +6,7 @@ import sys
 import tempfile
 import types
 import unittest
+from contextlib import nullcontext
 from datetime import datetime
 from unittest import mock
 
@@ -92,6 +93,38 @@ class ExportSelectionTest(unittest.TestCase):
             search_tree=types.SimpleNamespace(selection=lambda: ()),
         )
         self.assertEqual(gui_mod.App._export_targets(fake), results)
+
+
+@unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
+class ExportWorkerTest(unittest.TestCase):
+    def test_export_preserves_timestamps_when_permission_changes_are_denied(self):
+        with tempfile.TemporaryDirectory() as root:
+            source = os.path.join(root, "source.mp4")
+            dest = os.path.join(root, "flash")
+            os.mkdir(dest)
+            with open(source, "wb") as out:
+                out.write(b"video data")
+            timestamps = (2_000_000_000_000_000_000, 1_700_000_000_000_000_000)
+            os.utime(source, ns=timestamps)
+            completed = []
+            fake = types.SimpleNamespace(
+                root=types.SimpleNamespace(after=lambda _ms, _fn, ok, errors:
+                                           completed.append((ok, errors))),
+                _export_done=None,
+            )
+            with mock.patch.object(um, "_archive_directory", return_value=nullcontext(dest)), \
+                 mock.patch.object(um, "_require_archive_device"), \
+                 mock.patch.object(um.os, "name", "posix"), \
+                 mock.patch.object(um.os, "fchmod", create=True,
+                                   side_effect=PermissionError("Operation not permitted")):
+                gui_mod.App._export_worker(fake, [{"path": source, "filename": "video.mp4"}], dest)
+            self.assertEqual(completed, [(1, [])])
+            target = os.path.join(dest, "video.mp4")
+            info = os.stat(target)
+            self.assertEqual(info.st_mtime_ns, timestamps[1])
+            self.assertEqual(info.st_atime_ns, os.stat(source).st_atime_ns)
+            with open(target, "rb") as copied:
+                self.assertEqual(copied.read(), b"video data")
 
 
 @unittest.skipUnless(_HAS_TK, "tkinter is not installed in this environment")
