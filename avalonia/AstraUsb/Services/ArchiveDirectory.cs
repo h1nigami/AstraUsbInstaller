@@ -129,7 +129,7 @@ public sealed class ArchiveDirectory : IDisposable
         if (OperatingSystem.IsLinux() && !Regular(sourceHandle))
             throw new IOException("Источник не является обычным файлом");
         using var input = new FileStream(sourceHandle, FileAccess.Read);
-        return CopyStream(input, relative, token);
+        return CopyStream(input, relative, token, preserveMode: true);
     }
 
     public FileStream OpenRead(string relative)
@@ -150,16 +150,95 @@ public sealed class ArchiveDirectory : IDisposable
         catch { handle.Dispose(); throw; }
     }
 
+    internal FileStream OpenRootRead(string name)
+    {
+        if (Parts(name).Length != 1)
+            throw new IOException("Неверное имя файла");
+        Verify();
+        var handle = OperatingSystem.IsLinux()
+            ? OpenAt(Fd, name, 0x800 | 0x20000 | 0x80000)
+            : OpenSource(System.IO.Path.Combine(Path, name));
+        try
+        {
+            VerifyRootFile(handle, name);
+            return new FileStream(handle, FileAccess.Read);
+        }
+        catch { handle.Dispose(); throw; }
+    }
+
+    internal void AppendText(string name, string text, int? trimAtBytes = null)
+    {
+        if (Parts(name).Length != 1)
+            throw new IOException("Неверное имя файла");
+        Verify();
+        using var handle = OperatingSystem.IsLinux()
+            ? OpenAt(Fd, name, 2 | 0x40 | 0x400 | 0x800 | 0x20000 | 0x80000, 0x1B6)
+            : OpenWindowsHandle(System.IO.Path.Combine(Path, name), directory: false, append: true);
+        VerifyRootFile(handle, name);
+        LockAppend(handle);
+        using var output = new FileStream(handle, FileAccess.ReadWrite);
+        VerifyRootFile(handle, name);
+        AppendContents(output, text, trimAtBytes);
+        VerifyRootFile(handle, name);
+        if (OperatingSystem.IsLinux() && fsync(Fd) != 0)
+            throw Error("Не удалось сохранить каталог журнала");
+    }
+
+    internal static void AppendLocalText(string text, int? trimAtBytes = null)
+    {
+        var path = System.IO.Path.Combine(AppPaths.DataDir, "app.log");
+        using var handle = OpenAt(-100, path, 2 | 0x40 | 0x400 | 0x800 | 0x20000 | 0x80000, 0x1B6);
+        if (!Regular(handle))
+            throw new IOException("Локальный журнал не является обычным файлом");
+        LockAppend(handle);
+        using var output = new FileStream(handle, FileAccess.ReadWrite);
+        AppendContents(output, text, trimAtBytes);
+    }
+
+    private static void LockAppend(SafeFileHandle handle)
+    {
+        if (OperatingSystem.IsLinux())
+            while (flock(handle.DangerousGetHandle().ToInt32(), 2) != 0)
+                if (Marshal.GetLastPInvokeError() != 4)
+                    throw Error("Не удалось заблокировать журнал");
+    }
+
+    private static void AppendContents(FileStream output, string text, int? trimAtBytes)
+    {
+        if (trimAtBytes is { } limit && output.Length > limit)
+        {
+            var tail = new byte[limit / 2];
+            output.Seek(-tail.Length, SeekOrigin.End);
+            output.ReadExactly(tail);
+            output.SetLength(0);
+            output.Position = 0;
+            output.Write(tail);
+        }
+        output.Seek(0, SeekOrigin.End);
+        output.Write(Encoding.UTF8.GetBytes(text));
+        output.Flush(flushToDisk: true);
+    }
+
+    private void VerifyRootFile(SafeFileHandle handle, string name)
+    {
+        var identity = Identity(handle);
+        if (identity.Device != _identity.Device || (OperatingSystem.IsLinux() && !Regular(handle)))
+            throw new IOException("Файл журнала не является обычным файлом на диске архива");
+        Verify();
+        if (OperatingSystem.IsLinux() && EntryIdentity(name) != identity)
+            throw new IOException("Файл журнала подменён");
+    }
+
     public long CopyFile(ArchiveDirectory source, string sourceRelative, string relative,
         CancellationToken token = default)
     {
         using var input = source.OpenRead(sourceRelative);
-        var length = CopyStream(input, relative, token);
+        var length = CopyStream(input, relative, token, preserveMode: false);
         source.Verify();
         return length;
     }
 
-    private long CopyStream(FileStream input, string relative, CancellationToken token)
+    private long CopyStream(FileStream input, string relative, CancellationToken token, bool preserveMode)
     {
         token.ThrowIfCancellationRequested();
         var length = input.Length;
@@ -176,10 +255,22 @@ public sealed class ArchiveDirectory : IDisposable
             token.ThrowIfCancellationRequested();
             if (input.Length != length || output.Length != length)
                 throw new IOException("Размер источника изменился во время копирования");
-            if (OperatingSystem.IsLinux())
+            if (preserveMode && OperatingSystem.IsLinux())
                 File.SetUnixFileMode(output.SafeFileHandle, File.GetUnixFileMode(input.SafeFileHandle));
-        }, mtime);
+            File.SetLastAccessTimeUtc(output.SafeFileHandle, File.GetLastAccessTimeUtc(input.SafeFileHandle));
+        }, mtime, creationMode: preserveMode ? 0x180u : 0x1B6u);
         return length;
+    }
+
+    internal bool IsRegularFile(string name)
+    {
+        if (Parts(name).Length != 1)
+            throw new IOException("Неверное имя файла");
+        Verify();
+        return OperatingSystem.IsLinux()
+            ? (BitConverter.ToUInt16(Stat(Fd, name, 0x100), 28) & 0xF000) == 0x8000
+            : (File.GetAttributes(System.IO.Path.Combine(Path, name))
+                & (FileAttributes.Directory | FileAttributes.ReparsePoint | FileAttributes.Device)) == 0;
     }
 
     public bool SameFile(string source, string name)
@@ -234,7 +325,8 @@ public sealed class ArchiveDirectory : IDisposable
         { throw new DeviceLostException(error); }
     }
 
-    private void WriteFile(string relative, Action<FileStream> write, DateTime? mtime, bool producer = false)
+    private void WriteFile(string relative, Action<FileStream> write, DateTime? mtime, bool producer = false,
+        uint creationMode = 0x180)
     {
         var parts = Parts(relative);
         if (parts.Length == 0)
@@ -243,7 +335,7 @@ public sealed class ArchiveDirectory : IDisposable
         var name = parts[^1];
         var target = System.IO.Path.Combine(parent.Path, name);
         using var handle = OperatingSystem.IsLinux()
-            ? OpenAt(parent.Fd, name, 1 | 0x40 | 0x80 | 0x20000 | 0x80000, 0x180)
+            ? OpenAt(parent.Fd, name, 1 | 0x40 | 0x80 | 0x20000 | 0x80000, creationMode)
             : File.OpenHandle(target, FileMode.CreateNew, FileAccess.Write,
                 producer ? FileShare.ReadWrite : FileShare.None);
         var identity = Identity(handle);
@@ -450,9 +542,10 @@ public sealed class ArchiveDirectory : IDisposable
 
     private static SafeFileHandle OpenWindowsDirectory(string path) => OpenWindowsHandle(path, directory: true);
 
-    private static SafeFileHandle OpenWindowsHandle(string path, bool directory, bool deleting = false)
+    private static SafeFileHandle OpenWindowsHandle(string path, bool directory, bool deleting = false, bool append = false)
     {
-        var handle = CreateFileW(path, 0x80000000, directory ? 3u : deleting ? 5u : 1u, IntPtr.Zero, 3,
+        var handle = CreateFileW(path, append ? 0xC0000000u : 0x80000000u,
+            directory ? 3u : deleting ? 5u : 1u, IntPtr.Zero, append ? 4u : 3u,
             (directory ? 0x02000000u : 0) | 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid)
         {
@@ -510,6 +603,7 @@ public sealed class ArchiveDirectory : IDisposable
     [DllImport("libc", SetLastError = true)] private static extern int mkdirat(int fd, string path, uint mode);
     [DllImport("libc", SetLastError = true)] private static extern int unlinkat(int fd, string path, int flags);
     [DllImport("libc", SetLastError = true)] private static extern int fsync(int fd);
+    [DllImport("libc", SetLastError = true)] private static extern int flock(int fd, int operation);
     [DllImport("libc", SetLastError = true)] private static extern int statx(int fd, string path, int flags, uint mask, [Out] byte[] stat);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFileW(string path, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);

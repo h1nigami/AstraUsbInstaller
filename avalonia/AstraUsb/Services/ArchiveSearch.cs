@@ -15,10 +15,8 @@ public sealed record DeleteResult(int Deleted, int Skipped, int Failed, long Byt
 /// <summary>
 /// Поиск по архиву и удаление найденного.
 ///
-/// Записи лежат в журнале сбора, а имена сотрудников и отделы в справочнике,
-/// поэтому отбор идёт в два шага: журнал отдаёт записи за период, а остальные
-/// условия проверяются по справочнику. Так проще, чем джойн через две базы
-/// сущностей, и достаточно быстро: потолок выборки всё равно 500 записей.
+/// Период сверяется с mtime файла на диске. Журнал связывает файл с устройством,
+/// а справочник даёт имя сотрудника и отдел.
 /// </summary>
 public sealed class ArchiveSearch
 {
@@ -78,9 +76,9 @@ public sealed class ArchiveSearch
         foreach (var file in found)
         {
             token.ThrowIfCancellationRequested();
-            if (file.CollectedAt < from || file.CollectedAt > to
-                || filter.DeviceId is { } deviceId && file.DeviceId != deviceId
-                || Resolve(resolve, file.DestPath) is not { } path || shown.Contains(path))
+            if (filter.DeviceId is { } deviceId && file.DeviceId != deviceId
+                || Resolve(resolve, file.DestPath) is not { } path || shown.Contains(path)
+                || ModifiedAt(path) is not { } modified || modified < from || modified > to)
                 continue;
             var entries = aliases[path];
             var camera = cameras.GetValueOrDefault(file.DeviceId);
@@ -144,7 +142,24 @@ public sealed class ArchiveSearch
             return resolve(path);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
-        { return null; }
+        {
+            CrashLog.Write($"Не удалось прочитать путь архива {path}", error);
+            return null;
+        }
+    }
+
+    private static DateTime? ModifiedAt(string path)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            return info.Exists ? info.LastWriteTime : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            CrashLog.Write($"Не удалось прочитать дату файла {path}", error);
+            return null;
+        }
     }
 
     /// <summary>
@@ -204,9 +219,10 @@ public sealed class ArchiveSearch
                 deletedPaths.AddRange(aliases.Append(row.File.DestPath).Distinct());
                 bytes += size;
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException
+                                          or ArgumentException or SqliteException)
             {
-                // Файл занят или недоступен: запись остаётся на месте.
+                CrashLog.Write($"Не удалось удалить файл архива {row.File.DestPath}", error);
                 failed++;
             }
         }
@@ -260,8 +276,10 @@ public sealed class ArchiveSearch
             using var registry = new DeviceRegistry(_dbPath, initialize: false);
             return registry.ListDevices(token).ToDictionary(d => d.Id);
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (SqliteException error) when (error.SqliteErrorCode == 1
+                                           && error.Message.Contains("no such table: devices", StringComparison.Ordinal))
         {
+            StationLog.Once($"search-cameras:{_dbPath}", $"Справочник камер недоступен: {error.Message}");
             return new Dictionary<long, DeviceRecord>();
         }
     }
@@ -272,8 +290,10 @@ public sealed class ArchiveSearch
         {
             return staff.Employees(token: token).ToDictionary(e => e.Id);
         }
-        catch (Exception error) when (error is not OperationCanceledException)
+        catch (SqliteException error) when (error.SqliteErrorCode == 1
+                                           && error.Message.Contains("no such table: employees", StringComparison.Ordinal))
         {
+            StationLog.Once("search-employees", $"Справочник сотрудников недоступен: {error.Message}");
             return new Dictionary<long, Employee>();
         }
     }

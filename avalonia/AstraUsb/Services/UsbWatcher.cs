@@ -47,62 +47,74 @@ public static class UsbWatcher
         string uuidRoot = "/dev/disk/by-uuid", string mountsPath = "/proc/mounts",
         Func<string?>? readLsblk = null)
     {
-        var json = (readLsblk ?? RunLsblk)();
-        if (json is null)
-            return ListSysfs(sysRoot, uuidRoot, mountsPath);
-
         var found = new List<UsbDevice>();
+        Exception? lsblkError = null;
         try
         {
+            var json = (readLsblk ?? RunLsblk)()
+                ?? throw new IOException("нет результата команды");
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("blockdevices", out var disks))
-                return ListSysfs(sysRoot, uuidRoot, mountsPath);
+                throw new JsonException("В ответе lsblk нет blockdevices");
 
             foreach (var disk in disks.EnumerateArray())
                 CollectFromDisk(disk, found);
+            StationLog.Once("usb-lsblk:" + AppPaths.Root, null);
+            if (found.Count > 0)
+                return found;
         }
-        catch (Exception error) when (error is JsonException or InvalidOperationException)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+            or JsonException or InvalidOperationException)
         {
-            return ListSysfs(sysRoot, uuidRoot, mountsPath);
+            lsblkError = error;
+            StationLog.Once("usb-lsblk:" + AppPaths.Root, $"lsblk не ответил: {error.Message}");
         }
-        return found;
+        try
+        {
+            var fallback = ListSysfs(sysRoot, uuidRoot, mountsPath);
+            StationLog.Once("usb-sysfs:" + AppPaths.Root, null);
+            return fallback;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            StationLog.Once("usb-sysfs:" + AppPaths.Root, $"Не удалось прочитать sysfs {sysRoot}: {error.Message}");
+            if (lsblkError is not null)
+                throw new IOException($"Не удалось опросить USB-устройства: lsblk: {lsblkError.Message}; sysfs: {error.Message}",
+                    new AggregateException(lsblkError, error));
+            return Array.Empty<UsbDevice>();
+        }
     }
 
     private static IReadOnlyList<UsbDevice> ListSysfs(string sysRoot, string uuidRoot, string mountsPath)
     {
         var found = new List<UsbDevice>();
-        try
-        {
-            var paths = Directory.GetDirectories(sysRoot);
-            var mounts = MountTable.Parse(File.ReadAllLines(mountsPath));
-            var uuids = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (Directory.Exists(uuidRoot))
-                foreach (var link in Directory.EnumerateFiles(uuidRoot))
-                {
-                    var target = new FileInfo(link).LinkTarget;
-                    if (target is not null)
-                        uuids[Path.GetFileName(target)] = Path.GetFileName(link);
-                }
-
-            foreach (var path in paths)
+        var paths = Directory.GetDirectories(sysRoot);
+        if (paths.Length == 0)
+            return found;
+        var mounts = MountTable.Parse(File.ReadAllLines(mountsPath));
+        var uuids = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (Directory.Exists(uuidRoot))
+            foreach (var link in Directory.EnumerateFiles(uuidRoot))
             {
-                var real = new DirectoryInfo(path).ResolveLinkTarget(true)?.FullName ?? path;
-                if (!real.Split(Path.DirectorySeparatorChar).Any(p => p.StartsWith("usb", StringComparison.Ordinal)))
-                    continue;
-                var name = Path.GetFileName(path);
-                var partition = File.Exists(Path.Combine(path, "partition"));
-                if (!partition && paths.Any(p => p != path && File.Exists(Path.Combine(p, "partition"))
-                    && (new DirectoryInfo(p).ResolveLinkTarget(true)?.FullName ?? p).StartsWith(real + "/", StringComparison.Ordinal)))
-                    continue;
-                var serialFile = Path.Combine(partition ? Path.GetDirectoryName(real)! : real, "device", "serial");
-                var serial = File.Exists(serialFile) ? File.ReadAllText(serialFile).Trim() : null;
-                found.Add(new UsbDevice(name, mounts.FirstOrDefault(m => m.Device == "/dev/" + name)?.MountPoint,
-                    uuids.GetValueOrDefault(name), serial));
+                var target = new FileInfo(link).LinkTarget;
+                if (target is not null)
+                    uuids[Path.GetFileName(target)] = Path.GetFileName(link);
             }
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+
+        foreach (var path in paths)
         {
-            // Устройство могло исчезнуть во время обхода sysfs.
+            var real = new DirectoryInfo(path).ResolveLinkTarget(true)?.FullName ?? path;
+            if (!real.Split(Path.DirectorySeparatorChar).Any(p => p.StartsWith("usb", StringComparison.Ordinal)))
+                continue;
+            var name = Path.GetFileName(path);
+            var partition = File.Exists(Path.Combine(path, "partition"));
+            if (!partition && paths.Any(p => p != path && File.Exists(Path.Combine(p, "partition"))
+                && (new DirectoryInfo(p).ResolveLinkTarget(true)?.FullName ?? p).StartsWith(real + "/", StringComparison.Ordinal)))
+                continue;
+            var serialFile = Path.Combine(partition ? Path.GetDirectoryName(real)! : real, "device", "serial");
+            var serial = File.Exists(serialFile) ? File.ReadAllText(serialFile).Trim() : null;
+            found.Add(new UsbDevice(name, mounts.FirstOrDefault(m => m.Device == "/dev/" + name)?.MountPoint,
+                uuids.GetValueOrDefault(name), serial));
         }
         return found;
     }
@@ -142,7 +154,7 @@ public static class UsbWatcher
 
     private static string? RunLsblk()
     {
-        return RunProcess(new ProcessStartInfo
+        return RunProcessChecked(new ProcessStartInfo
         {
             FileName = "lsblk",
             Arguments = "-J -o NAME,TRAN,TYPE,MOUNTPOINT,UUID,SERIAL",
@@ -150,6 +162,13 @@ public static class UsbWatcher
     }
 
     internal static string? RunProcess(ProcessStartInfo info, int timeoutMilliseconds,
+        CancellationToken token = default)
+    {
+        try { return RunProcessChecked(info, timeoutMilliseconds, token); }
+        catch (Exception error) when (error is IOException or OperationCanceledException) { return null; }
+    }
+
+    internal static string RunProcessChecked(ProcessStartInfo info, int timeoutMilliseconds,
         CancellationToken token = default)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -163,18 +182,27 @@ public static class UsbWatcher
             info.CreateNoWindow = true;
             token.ThrowIfCancellationRequested();
             if (!proc.Start())
-                return null;
+                throw new IOException($"Не удалось запустить {info.FileName}");
             var output = proc.StandardOutput.ReadToEndAsync(timeout.Token);
             var errors = proc.StandardError.ReadToEndAsync(timeout.Token);
             proc.WaitForExitAsync(timeout.Token).GetAwaiter().GetResult();
             Task.WhenAll(output, errors).WaitAsync(timeout.Token).GetAwaiter().GetResult();
-            return proc.ExitCode == 0 ? output.Result : null;
+            if (proc.ExitCode != 0)
+                throw new IOException($"{info.FileName}: код {proc.ExitCode}: {errors.Result.Trim()}");
+            return output.Result;
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or System.ComponentModel.Win32Exception
+            or InvalidOperationException or OperationCanceledException)
         {
             try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
-            catch (Exception) { }
-            return null;
+            catch (Exception killError) when (killError is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+            if (error is OperationCanceledException && token.IsCancellationRequested)
+                throw;
+            if (error is IOException)
+                throw;
+            throw new IOException(error is OperationCanceledException
+                ? $"{info.FileName}: превышено время ожидания ({timeoutMilliseconds} мс)"
+                : $"Не удалось выполнить {info.FileName}: {error.Message}", error);
         }
     }
 

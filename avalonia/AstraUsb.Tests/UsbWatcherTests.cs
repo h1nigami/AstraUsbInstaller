@@ -5,8 +5,130 @@ using Xunit;
 
 namespace AstraUsb.Tests;
 
+[Collection("Каталог данных")]
 public sealed class UsbWatcherTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Poll_failures_are_logged_once_until_the_source_recovers(bool lsblkFailure)
+    {
+        var root = Directory.CreateTempSubdirectory("astra-poll-log-").FullName;
+        var previous = AppPaths.Root;
+        try
+        {
+            AppPaths.Root = root;
+            AppPaths.EnsureCreated();
+            Assert.True(new Settings { BackupRoot = Path.Combine(root, "missing-archive") }.Save());
+            var sys = Directory.CreateDirectory(Path.Combine(root, "sys")).FullName;
+            var mounts = Path.Combine(sys, "mounts");
+            File.WriteAllText(mounts, "");
+            Func<string?> read = lsblkFailure ? () => throw new IOException("lsblk timeout") : () => "{\"blockdevices\":[]}";
+            if (!lsblkFailure) Directory.Delete(sys, recursive: true);
+
+            Assert.Empty(ListLinux(sys, read));
+            Assert.Empty(ListLinux(sys, read));
+
+            var log = Path.Combine(AppPaths.DataDir, "app.log");
+            Assert.True(File.Exists(log));
+            var marker = lsblkFailure ? "lsblk не ответил" : "Не удалось прочитать sysfs";
+            Assert.Equal(1, File.ReadAllLines(log).Count(line => line.Contains(marker)));
+            Directory.CreateDirectory(sys);
+            File.WriteAllText(mounts, "");
+            Assert.Empty(ListLinux(sys, () => "{\"blockdevices\":[]}"));
+            if (!lsblkFailure) Directory.Delete(sys, recursive: true);
+            Assert.Empty(ListLinux(sys, read));
+            Assert.Equal(2, File.ReadAllLines(log).Count(line => line.Contains(marker)));
+        }
+        finally
+        {
+            AppPaths.Root = previous;
+            Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void A_successful_empty_sysfs_poll_does_not_require_mount_metadata()
+    {
+        var sys = Directory.CreateTempSubdirectory("astra-empty-sys-").FullName;
+        try
+        {
+            Assert.Empty(ListLinux(sys, () => null));
+        }
+        finally { Directory.Delete(sys, true); }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("not json")]
+    [InlineData("[]")]
+    public void Failed_lsblk_and_sysfs_are_an_error_instead_of_a_device_disconnect(string? json)
+    {
+        var missing = Path.Combine(Path.GetTempPath(), "astra-missing-" + Guid.NewGuid());
+
+        var error = Assert.Throws<IOException>(() => ListLinux(missing, () => json));
+
+        Assert.Contains("USB", error.Message);
+        Assert.Contains(missing, error.ToString());
+    }
+
+    [Fact]
+    public void An_lsblk_execution_error_still_uses_a_successful_sysfs_poll()
+    {
+        var root = Directory.CreateTempSubdirectory("astra-usb-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(root, "mounts"), "");
+
+            var found = ListLinux(root, () => throw new IOException("lsblk unavailable"));
+
+            Assert.Empty(found);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void A_successful_empty_lsblk_poll_is_valid_when_sysfs_is_unavailable()
+    {
+        var missing = Path.Combine(Path.GetTempPath(), "astra-missing-" + Guid.NewGuid());
+
+        Assert.Empty(ListLinux(missing, () => "{\"blockdevices\":[]}"));
+    }
+
+    [Fact]
+    public void An_empty_lsblk_poll_still_finds_usb_devices_in_sysfs()
+    {
+        var root = Directory.CreateTempSubdirectory("astra-usb-").FullName;
+        try
+        {
+            var sys = Directory.CreateDirectory(Path.Combine(root, "usb1", "block")).FullName;
+            var part = Directory.CreateDirectory(Path.Combine(sys, "sdb1")).FullName;
+            File.WriteAllText(Path.Combine(part, "partition"), "1");
+            File.WriteAllText(Path.Combine(sys, "mounts"), "/dev/sdb1 /media/CAM vfat rw 0 0");
+
+            var card = Assert.Single(ListLinux(sys, () => "{\"blockdevices\":[]}"));
+
+            Assert.Equal("sdb1", card.Name);
+            Assert.Equal("/media/CAM", card.MountPoint);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private static IReadOnlyList<UsbDevice> ListLinux(string sysRoot, Func<string?> readLsblk)
+    {
+        try
+        {
+            return (IReadOnlyList<UsbDevice>)typeof(UsbWatcher)
+                .GetMethod("ListLinux", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [sysRoot, Path.Combine(sysRoot, "uuid"), Path.Combine(sysRoot, "mounts"), readLsblk])!;
+        }
+        catch (TargetInvocationException error) when (error.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+            throw;
+        }
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]

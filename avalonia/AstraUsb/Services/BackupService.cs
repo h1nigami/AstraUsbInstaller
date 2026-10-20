@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+
 namespace AstraUsb.Services;
 
 /// <summary>Ход выгрузки одной камеры.</summary>
@@ -63,6 +65,12 @@ public sealed class BackupService
             token.ThrowIfCancellationRequested();
             var settings = _configured ?? Settings.Load();
             var root = settings.ResolveBackupRoot();
+            if (ArchiveGuard.IsArchiveMedia(mountPoint, root))
+            {
+                progress.Report(new BackupProgress(BackupStage.Failed, 0, "носитель является диском архива"));
+                StationLog.Write($"Выгрузка камеры {deviceId} пропущена: {mountPoint} содержит архив {root}");
+                return;
+            }
             if (ReadDeviceId(mountPoint) != deviceId)
                 throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
 
@@ -93,12 +101,15 @@ public sealed class BackupService
             using (ArchiveGuard.Open(root, settings: settings))
             {
                 progress.Report(new BackupProgress(BackupStage.Scanning, 0, "считаем объём"));
+                StationLog.Write($"камера {deviceId}: сканирование {mountPoint}");
                 total = await Task.Run(() => Measure(mountPoint, token), token);
             }
             if (ReadDeviceId(mountPoint) != deviceId)
                 throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
+            StationLog.Write($"камера {deviceId}: найдено {Numerals.Plural(total.Files, "файл", "файла", "файлов")}, {Size(total.Bytes)}");
             if (total.Files == 0)
             {
+                StationLog.Write($"камера {deviceId}: нечего копировать");
                 progress.Report(new BackupProgress(BackupStage.Done, 1, "нечего копировать"));
                 return;
             }
@@ -114,12 +125,37 @@ public sealed class BackupService
             if (ReadDeviceId(mountPoint) != deviceId)
                 throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
 
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var lastPercent = -1d;
+            var lastLog = TimeSpan.Zero;
+            var loggedDone = false;
+            void LogProgress(int files, long bytes, string name, bool copied)
+            {
+                if (!copied && bytes < total.Bytes) return;
+                var percent = total.Bytes > 0 ? 100d * bytes / total.Bytes : 0;
+                var elapsed = watch.Elapsed;
+                if (percent < lastPercent + 5 && elapsed.TotalSeconds < 30
+                    && (elapsed - lastLog).TotalSeconds < 10
+                    && (percent > 0 && percent < 100 || percent == 100 && loggedDone)) return;
+                lastPercent = percent;
+                lastLog = elapsed;
+                loggedDone = percent >= 100;
+                var eta = percent > 0.5
+                    ? TimeSpan.FromSeconds(Math.Max(0, elapsed.TotalSeconds * (100 / percent - 1)))
+                    : TimeSpan.Zero;
+                var remaining = percent <= 0.5 ? "--:--"
+                    : eta.TotalHours >= 1 ? $"{(int)eta.TotalHours}:{eta.Minutes:00}:{eta.Seconds:00}"
+                    : $"{(int)eta.TotalMinutes}:{eta.Seconds:00}";
+                StationLog.Write($"камера {deviceId}: {percent:0.0}% | {files}/{total.Files} файлов "
+                    + $"| {Size(bytes)}/{Size(total.Bytes)} | осталось {remaining} | {name[..Math.Min(name.Length, 45)]}");
+            }
+
             var result = await Task.Run(() => FileCopier.Copy(
                 mountPoint, destination, stamp,
                 (files, bytes) => progress.Report(new BackupProgress(
                     BackupStage.Copying,
                     total.Bytes > 0 ? (double)bytes / total.Bytes : 0,
-                    $"{files} из {total.Files}")), token), token);
+                    $"{files} из {total.Files}")), token, LogProgress), token);
 
             token.ThrowIfCancellationRequested();
             archive.Verify();
@@ -161,6 +197,7 @@ public sealed class BackupService
         }
         catch (OperationCanceledException)
         {
+            StationLog.Write($"камера {deviceId}: выгрузка прервана");
             progress.Report(new BackupProgress(BackupStage.Failed, 0, "выгрузка прервана"));
         }
         catch (StationBusyException) { throw; }
@@ -186,37 +223,55 @@ public sealed class BackupService
             var queue = new FtpQueue(_dbPath);
             queue.AddRange(result.Destinations.Values);
         }
-        catch (Exception)
+        catch (Exception error) when (error is SqliteException or IOException or UnauthorizedAccessException)
         {
-            // Очередь не главнее данных: копии уже в архиве.
+            CrashLog.Write($"Не удалось поставить копии в очередь отправки, база {_dbPath}", error);
         }
     }
 
     /// <summary>Считает, сколько предстоит скопировать. Маркеры не учитываются.</summary>
-    private static (int Files, long Bytes) Measure(string mountPoint, CancellationToken token)
+    private static (int Files, long Bytes) Measure(string mountPoint, CancellationToken token,
+        Func<string, long>? length = null)
     {
         var files = 0;
         var bytes = 0L;
-        try
+        foreach (var directory in FileCopier.EnumerateDirectories(mountPoint, () =>
+                 {
+                     if (!Directory.Exists(mountPoint)) throw new DeviceLostException();
+                 }))
         {
-            foreach (var path in Directory.EnumerateFiles(mountPoint, "*", new EnumerationOptions
-                     { RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false }))
+            token.ThrowIfCancellationRequested();
+            string[] paths;
+            try
+            {
+                paths = Directory.GetFiles(directory, "*", new EnumerationOptions
+                    { AttributesToSkip = FileAttributes.ReparsePoint, IgnoreInaccessible = false });
+            }
+            catch (IOException error) when (DeviceLostException.IsRemoval(error) || !Directory.Exists(mountPoint))
+            {
+                throw new DeviceLostException(error);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                CrashLog.Write($"Не удалось подсчитать файлы в каталоге {directory}", error);
+                continue;
+            }
+            foreach (var path in paths)
             {
                 token.ThrowIfCancellationRequested();
                 if (Markers.IsService(Path.GetFileName(path)))
                     continue;
                 files++;
-                bytes += new FileInfo(path).Length;
+                try { bytes += length is null ? new FileInfo(path).Length : length(path); }
+                catch (IOException error) when (DeviceLostException.IsRemoval(error) || !Directory.Exists(mountPoint))
+                {
+                    throw new DeviceLostException(error);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    CrashLog.Write($"Не удалось подсчитать размер файла {path}", error);
+                }
             }
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (IOException error) when (DeviceLostException.IsRemoval(error) || !Directory.Exists(mountPoint))
-        {
-            throw new DeviceLostException(error);
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            throw new IOException("Не удалось прочитать карту", error);
         }
         return (files, bytes);
     }
@@ -252,9 +307,9 @@ public sealed class BackupService
                     $"по сроку хранения удалено {Numerals.Plural(files, "запись", "записи", "записей")}"
                     + $", освобождено {Size(bytes)}");
         }
-        catch (Exception)
+        catch (Exception error) when (error is SqliteException or IOException or UnauthorizedAccessException)
         {
-            // Уборка не главнее выгрузки: не вышло, значит в другой раз.
+            CrashLog.Write($"Не удалось выполнить уборку по сроку хранения в {root}, база {_dbPath}", error);
         }
     }
 
@@ -266,8 +321,9 @@ public sealed class BackupService
             return ReadDeviceId(mountPoint) == deviceId;
         }
         catch (DeviceLostException) { throw; }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            CrashLog.Write($"Не удалось повторно проверить ID камеры {deviceId} в {mountPoint}", error);
             return false;
         }
     }
@@ -310,22 +366,24 @@ public sealed class BackupService
                     shot ??= info.LastWriteTime;
                     size = info.Exists ? info.Length : 0;
                 }
-                catch (Exception)
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 {
-                    // Файл уже удалён автоочисткой, размер и дата не критичны.
+                    CrashLog.Write($"Не удалось прочитать сведения о сохранённом файле {source}", error);
                 }
                 return new CollectedFile(deviceId, loggedPath, size, shot, collectedAt);
             }));
             return true;
         }
-        catch (Exception)
+        catch (Exception error) when (error is SqliteException or IOException or UnauthorizedAccessException)
         {
+            CrashLog.Write($"Копии камеры {deviceId} не записаны в журнал, база {_dbPath}", error);
             return false;
         }
     }
 
     private static string Size(long bytes)
     {
+        if (bytes < 1024) return $"{bytes} Б";
         var gb = bytes / 1024d / 1024 / 1024;
         if (gb >= 1)
             return $"{gb:0.0} ГБ";

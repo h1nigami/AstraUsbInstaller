@@ -154,8 +154,8 @@ public sealed class DeviceRegistryTests : IDisposable
     [Fact]
     public void Friendly_label_remains_for_search_and_devices_tab()
     {
-        Assert.Equal("Astra ID 3 · Проходная", DeviceRegistry.FriendlyLabel(3, "Проходная"));
-        Assert.Equal("Astra ID 3", DeviceRegistry.FriendlyLabel(3, ""));
+        Assert.Equal("ID 3 · Проходная", DeviceRegistry.FriendlyLabel(3, "Проходная"));
+        Assert.Equal("ID 3", DeviceRegistry.FriendlyLabel(3, ""));
     }
 
     public void Dispose()

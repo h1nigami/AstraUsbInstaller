@@ -11,6 +11,268 @@ public sealed class BackupServiceTests : IDisposable
 
     public BackupServiceTests() => AppPaths.Root = _root;
 
+    [Fact]
+    public async Task The_current_archive_volume_is_rejected_even_if_a_stale_poll_submits_it_as_a_camera()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        Directory.CreateDirectory(Path.Combine(source, "LOG"));
+        File.WriteAllText(Path.Combine(source, "LOG", "log.txt"), "#ID:7\n");
+        var original = Path.Combine(source, "clip.mp4");
+        File.WriteAllText(original, "original");
+        var settings = new Settings { BackupRoot = Path.Combine(source, "archive"), MinFreeGb = 0 };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        Assert.True(settings.Save());
+        using var cancel = new CancellationTokenSource();
+        var progress = new CapturedProgress
+        {
+            OnReport = update => { if (update.Stage == BackupStage.Copying) cancel.Cancel(); },
+        };
+
+        await new BackupService(AppPaths.Database, settings).RunAsync(7, source, progress, cancel.Token);
+
+        Assert.False(Directory.Exists(Path.Combine(settings.BackupRoot, "Device7")));
+        Assert.DoesNotContain(progress.Updates, update => update.Stage == BackupStage.Copying);
+        Assert.Equal(BackupStage.Failed, progress.Updates.Last().Stage);
+        Assert.Equal("original", File.ReadAllText(original));
+        Assert.Contains("архив", File.ReadAllText(StationLog.FilePath));
+    }
+
+    [Theory]
+    [InlineData("PurgeExpired")]
+    [InlineData("QueueForServer")]
+    [InlineData("RecordCollected")]
+    public void A_database_failure_in_a_secondary_step_preserves_its_cause(string step)
+    {
+        var db = Path.Combine(_root, "broken.db");
+        File.WriteAllText(db, "не база данных");
+        var settings = new Settings
+        {
+            BackupRoot = Path.Combine(_root, "archive"), KeepDays = 1, FtpEnabled = true,
+        };
+        var source = Path.Combine(_root, "clip.mp4");
+        File.WriteAllText(source, "original");
+        var copied = new CopyResult(1, 8,
+            new Dictionary<string, string> { [source] = Path.Combine(settings.BackupRoot, "Device7", "clip.mp4") }, 0);
+        var service = new BackupService(db, settings);
+        object?[] args = step switch
+        {
+            "PurgeExpired" => [settings, settings.BackupRoot],
+            "QueueForServer" => [settings, copied],
+            _ => [7L, copied, DateTime.Now, settings, settings.BackupRoot],
+        };
+
+        var result = InvokeStep(service, step, args);
+
+        if (step == "RecordCollected") Assert.Equal(false, result);
+        Assert.True(File.Exists(source));
+        Assert.True(File.Exists(CrashLog.FilePath));
+        var log = File.ReadAllText(CrashLog.FilePath);
+        Assert.Contains("SqliteException", log);
+        Assert.Contains(db, log);
+    }
+
+    [Theory]
+    [InlineData("QueueForServer")]
+    [InlineData("RecordCollected")]
+    public void A_programming_error_in_a_secondary_step_reaches_the_outer_error_boundary(string step)
+    {
+        var settings = new Settings { BackupRoot = Path.Combine(_root, "archive"), FtpEnabled = true };
+        var service = new BackupService(AppPaths.Database, settings);
+        object?[] args = step == "QueueForServer"
+            ? [settings, null]
+            : [7L, null, DateTime.Now, settings, settings.BackupRoot];
+
+        Assert.Throws<NullReferenceException>(() => InvokeStep(service, step, args));
+    }
+
+    [Fact]
+    public async Task A_session_logs_new_file_progress_and_only_the_final_progress_for_skips()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "source")).FullName;
+        Directory.CreateDirectory(Path.Combine(source, "LOG"));
+        File.WriteAllText(Path.Combine(source, "LOG", "log.txt"), "#ID:7\n");
+        File.WriteAllBytes(Path.Combine(source, "clip.mp4"), new byte[4096]);
+        var settings = new Settings { BackupRoot = Path.Combine(_root, "archive"), MinFreeGb = 0 };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        Assert.True(settings.Save());
+        var service = new BackupService(AppPaths.Database, settings);
+
+        await service.RunAsync(7, source, new CapturedProgress());
+        var first = File.ReadAllLines(StationLog.FilePath);
+        Assert.Contains(first, line => line.Contains("clip.mp4") && line.Contains("1/2")
+            && line.Contains("осталось") && line.Contains("% |"));
+        await service.RunAsync(7, source, new CapturedProgress());
+
+        var log = File.ReadAllLines(StationLog.FilePath);
+        Assert.Equal(2, log.Count(line => line.Contains("камера 7: сканирование")));
+        Assert.Equal(2, log.Count(line => line.Contains("камера 7: найдено 2") && line.Contains("КБ")));
+        Assert.Contains(log, line => line.Contains("камера 7: загружено 0 файлов"));
+        var repeated = log.Skip(first.Length).ToArray();
+        var final = Assert.Single(repeated, line => line.Contains("% |"));
+        Assert.Matches(@"100[.,]0%", final);
+        Assert.Contains("2/2", final);
+        Assert.DoesNotContain(repeated, line => line.Contains("clip.mp4"));
+    }
+
+    [Fact]
+    public async Task An_empty_session_writes_its_result_to_the_station_log()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "empty")).FullName;
+        var journal = Directory.CreateDirectory(Path.Combine(_root, "journal")).FullName;
+        File.WriteAllText(Path.Combine(journal, "log.txt"), "#ID:7\n");
+        var link = Path.Combine(source, "LOG");
+        if (OperatingSystem.IsWindows())
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                "cmd.exe", $"/c mklink /J \"{link}\" \"{journal}\"")
+                { RedirectStandardOutput = true, RedirectStandardError = true })!;
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+            Assert.True(process.ExitCode == 0, error);
+        }
+        else Directory.CreateSymbolicLink(link, journal);
+        var settings = new Settings { BackupRoot = Path.Combine(_root, "archive"), MinFreeGb = 0 };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        Assert.True(settings.Save());
+        try
+        {
+            var progress = new CapturedProgress();
+            await new BackupService(AppPaths.Database, settings).RunAsync(7, source, progress);
+
+            Assert.Equal(BackupStage.Done, progress.Updates.Last().Stage);
+            Assert.Equal("нечего копировать", progress.Updates.Last().Detail);
+            Assert.Contains("нечего копировать", File.ReadAllText(StationLog.FilePath));
+        }
+        finally { Directory.Delete(link); }
+    }
+
+    [Fact]
+    public void An_unreadable_file_is_counted_with_zero_bytes_and_does_not_stop_the_scan()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "scan")).FullName;
+        var unreadable = Path.Combine(source, "unreadable.mp4");
+        File.WriteAllBytes(unreadable, new byte[20]);
+        var nested = Directory.CreateDirectory(Path.Combine(source, "other")).FullName;
+        File.WriteAllBytes(Path.Combine(nested, "good.mp4"), new byte[12]);
+        var length = new Func<string, long>(path => path == unreadable
+            ? throw new UnauthorizedAccessException("file access denied: " + path)
+            : new FileInfo(path).Length);
+
+        var total = Measure(source, length);
+
+        Assert.Equal((2, 12L), total);
+        var log = File.ReadAllText(CrashLog.FilePath);
+        Assert.Contains(unreadable, log);
+        Assert.Contains("file access denied", log);
+        Assert.True(File.Exists(unreadable));
+    }
+
+    [Fact]
+    public void A_disappeared_subdirectory_is_reported_and_other_directories_are_still_scanned()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "scan-directories")).FullName;
+        foreach (var name in new[] { "one", "two", "three" })
+        {
+            var directory = Directory.CreateDirectory(Path.Combine(source, name)).FullName;
+            File.WriteAllBytes(Path.Combine(directory, "clip.mp4"), new byte[4]);
+        }
+        string? removed = null;
+        var length = new Func<string, long>(path =>
+        {
+            if (removed is null)
+            {
+                removed = Directory.GetDirectories(source).First(directory => directory != Path.GetDirectoryName(path));
+                Directory.Delete(removed, recursive: true);
+            }
+            return new FileInfo(path).Length;
+        });
+
+        Assert.Equal((2, 8L), Measure(source, length));
+
+        Assert.NotNull(removed);
+        Assert.Contains(removed, File.ReadAllText(CrashLog.FilePath));
+        Assert.Equal(2, Directory.GetDirectories(source).Length);
+    }
+
+    [Theory]
+    [InlineData(0L, "0 Б")]
+    [InlineData(18L, "18 Б")]
+    public void Small_files_keep_their_actual_byte_count_in_the_session_summary(long bytes, string expected)
+    {
+        var formatted = typeof(BackupService).GetMethod("Size",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!.Invoke(null, [bytes]);
+
+        Assert.Equal(expected, formatted);
+    }
+
+    [Fact]
+    public void A_disappeared_scan_root_still_requests_device_recovery()
+    {
+        Assert.Throws<DeviceLostException>(() => Measure(Path.Combine(_root, "removed")));
+    }
+
+    [Fact]
+    public async Task A_failed_identity_recheck_keeps_originals_and_records_the_actual_cause()
+    {
+        var source = Directory.CreateDirectory(Path.Combine(_root, "identity-recheck")).FullName;
+        var recording = Path.Combine(source, "clip.mp4");
+        File.WriteAllText(recording, "video");
+        Directory.CreateDirectory(Path.Combine(source, "LOG"));
+        var idLog = Path.Combine(source, "LOG", "log.txt");
+        File.WriteAllText(idLog, "#ID:7\n");
+        var settings = new Settings
+        {
+            BackupRoot = Path.Combine(_root, "archive"), MinFreeGb = 0, DeleteVideoAfterCopy = true,
+        };
+        Assert.True(ArchiveGuard.Mark(settings.BackupRoot));
+        var progress = new CapturedProgress
+        {
+            OnReport = state =>
+            {
+                if (state.Stage == BackupStage.Copying) File.WriteAllBytes(idLog, [0xff]);
+            },
+        };
+
+        await new BackupService(AppPaths.Database, settings).RunAsync(7, source, progress);
+
+        Assert.Equal(BackupStage.Failed, progress.Updates.Last().Stage);
+        Assert.True(File.Exists(recording));
+        Assert.True(File.Exists(CrashLog.FilePath));
+        var log = File.ReadAllText(CrashLog.FilePath);
+        Assert.Contains("DecoderFallbackException", log);
+        Assert.Contains("7", log);
+        Assert.Contains(source, log);
+    }
+
+    private static (int Files, long Bytes) Measure(string root, Func<string, long>? length = null)
+    {
+        try
+        {
+            return ((int, long))typeof(BackupService).GetMethod("Measure",
+                System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
+                .Invoke(null, [root, CancellationToken.None, length])!;
+        }
+        catch (System.Reflection.TargetInvocationException error) when (error.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+            throw;
+        }
+    }
+
+    private static object? InvokeStep(BackupService service, string method, params object?[] arguments)
+    {
+        try
+        {
+            return typeof(BackupService).GetMethod(method,
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(service, arguments);
+        }
+        catch (System.Reflection.TargetInvocationException error) when (error.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw();
+            throw;
+        }
+    }
+
     private sealed class CapturedProgress : IProgress<BackupProgress>
     {
         public List<BackupProgress> Updates { get; } = [];

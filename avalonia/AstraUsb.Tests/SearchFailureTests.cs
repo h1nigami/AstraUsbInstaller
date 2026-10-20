@@ -70,6 +70,47 @@ public sealed class SearchFailureTests : IDisposable
     }
 
     [Fact]
+    public void A_rejected_search_path_keeps_the_file_and_logs_the_reason()
+    {
+        var database = Path.Combine(_root, "devices.db");
+        var outside = Path.Combine(_root, "outside.mp4");
+        File.WriteAllText(outside, "чужой файл");
+        var archive = Path.Combine(_root, "archive");
+        Directory.CreateDirectory(archive);
+        ArchiveGuard.Mark(archive);
+        new CollectionLog(database).Record([new CollectedFile(1, outside, 10, null, DateTime.Now)]);
+
+        Assert.Empty(new ArchiveSearch(database, archive).Find(new ArchiveFilter()));
+
+        Assert.True(File.Exists(outside));
+        Assert.True(File.Exists(CrashLog.FilePath));
+        var log = File.ReadAllText(CrashLog.FilePath);
+        Assert.Contains(outside, log);
+        Assert.Contains("Файл не принадлежит текущему архиву", log);
+    }
+
+    [Fact]
+    public void A_rejected_delete_logs_the_file_and_preserves_its_database_record()
+    {
+        var database = Path.Combine(_root, "devices.db");
+        var outside = Path.Combine(_root, "outside.mp4");
+        File.WriteAllText(outside, "чужой файл");
+        var archive = Path.Combine(_root, "archive");
+        Directory.CreateDirectory(archive);
+        ArchiveGuard.Mark(archive);
+        var file = new CollectedFile(1, outside, 10, null, DateTime.Now);
+        new CollectionLog(database).Record([file]);
+
+        var result = new ArchiveSearch(database, archive).Delete([new ArchiveRow(file, "1", "", "", "")]);
+
+        Assert.Equal(1, result.Failed);
+        Assert.Equal(1, new CollectionLog(database).Count());
+        Assert.True(File.Exists(outside));
+        Assert.True(File.Exists(CrashLog.FilePath));
+        Assert.Contains(outside, File.ReadAllText(CrashLog.FilePath));
+    }
+
+    [Fact]
     public async Task Changing_selection_closes_the_old_viewer()
     {
         var model = new SearchViewModel(Path.Combine(_root, "devices.db")) { Current = LogFile() };

@@ -322,11 +322,13 @@ public sealed class ArchiveSearchTests : IDisposable
     }
 
     [Fact]
-    public void Collected_period_bounds_the_result()
+    public void The_main_period_uses_file_mtime_independently_of_collection_time()
     {
         var camera = Camera("КАМ-1", "Смирнов С.С.", "222222", null);
-        Collected(camera, "VID_0001.MP4", collectedAt: Now.AddDays(-10));
-        Collected(camera, "VID_0002.MP4", collectedAt: Now);
+        var old = Collected(camera, "VID_0001.MP4", collectedAt: Now);
+        var wanted = Collected(camera, "VID_0002.MP4", collectedAt: Now.AddDays(-10));
+        File.SetLastWriteTime(old, Now.AddDays(-10));
+        File.SetLastWriteTime(wanted, Now);
 
         var found = Search().Find(new ArchiveFilter
         {
@@ -335,6 +337,38 @@ public sealed class ArchiveSearchTests : IDisposable
         });
 
         Assert.Equal("VID_0002.MP4", Path.GetFileName(Assert.Single(found).File.DestPath));
+    }
+
+    [Theory]
+    [InlineData(-1, false)]
+    [InlineData(0, true)]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public void The_main_period_includes_both_mtime_bounds(int days, bool included)
+    {
+        var camera = Camera("КАМ-1", "Смирнов С.С.", "222222", null);
+        var path = Collected(camera, "VID_0001.MP4", collectedAt: Now.AddDays(-20));
+        File.SetLastWriteTime(path, Now.AddDays(days));
+
+        var found = Search().Find(new ArchiveFilter { CollectedFrom = Now, CollectedTo = Now.AddDays(1) });
+
+        Assert.Equal(included ? 1 : 0, found.Count);
+    }
+
+    [Theory]
+    [InlineData("devices", "name")]
+    [InlineData("employees", "phone")]
+    public void Damaged_metadata_is_reported_instead_of_showing_incomplete_results(string table, string column)
+    {
+        var camera = Camera("КАМ-1", "Смирнов С.С.", "222222", null);
+        Collected(camera, "VID_0001.MP4");
+        using var db = new SqliteConnection($"Data Source={_db}");
+        db.Open();
+        using var command = db.CreateCommand();
+        command.CommandText = $"ALTER TABLE {table} DROP COLUMN {column}";
+        command.ExecuteNonQuery();
+
+        Assert.Throws<SqliteException>(() => Search().Find(new ArchiveFilter()));
     }
 
     [Fact]

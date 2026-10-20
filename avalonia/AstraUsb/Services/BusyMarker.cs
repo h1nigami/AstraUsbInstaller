@@ -33,11 +33,11 @@ public static class BusyMarker
                 File.SetLastWriteTimeUtc(FilePath, DateTime.UtcNow);
             else
                 File.WriteAllText(FilePath, "");
+            StationLog.Once("copying:" + FilePath, null);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Отметку не поставить: обновление сочтёт станцию свободной.
-            // Это лучше, чем упасть на ровном месте.
+            StationLog.Once("copying:" + FilePath, $"Не удалось обновить метку копирования {FilePath}: {error.Message}");
         }
     }
 

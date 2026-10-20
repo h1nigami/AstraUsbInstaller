@@ -43,8 +43,39 @@ public static class MountManager
 
     /// <summary>Смонтировали эту точку мы: она лежит в нашем каталоге.</summary>
     public static bool IsOurs(string? mountPoint) =>
-        !string.IsNullOrEmpty(mountPoint)
-        && (mountPoint == MountBase || mountPoint.StartsWith(MountBase + "/", StringComparison.Ordinal));
+        IsWithinMountBase(mountPoint, MountBase);
+
+    private static bool IsWithinMountBase(string? mountPoint, string mountBase)
+    {
+        if (string.IsNullOrEmpty(mountPoint))
+            return false;
+        try
+        {
+            var target = ResolveDirectoryPath(mountPoint);
+            var root = ResolveDirectoryPath(mountBase);
+            return target == root || target.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            CrashLog.Write($"Не удалось проверить папку монтирования {mountPoint}", error);
+            return false;
+        }
+    }
+
+    private static string ResolveDirectoryPath(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var resolved = Path.GetPathRoot(full)!;
+        foreach (var part in full[resolved.Length..].Split(Path.DirectorySeparatorChar,
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            resolved = Path.Combine(resolved, part);
+            var directory = new DirectoryInfo(resolved);
+            if (directory.LinkTarget is not null)
+                resolved = directory.ResolveLinkTarget(true)!.FullName;
+        }
+        return Path.TrimEndingDirectorySeparator(resolved);
+    }
 
     /// <summary>
     /// Возвращает точку монтирования устройства, монтируя его при необходимости.
@@ -91,34 +122,104 @@ public static class MountManager
         if (!mount.Ours || OperatingSystem.IsWindows())
             return false;
 
-        try
-        {
-            if (!MountTable.Parse(File.ReadAllLines(MountsFile)).Any(entry => entry.MountPoint == mount.Path))
-                return true;
-        }
-        catch (IOException) { return false; }
-        catch (UnauthorizedAccessException) { return false; }
+        return ReleaseLinux(mount, MountsFile, Run, DeviceExists, MountBase);
+    }
 
-        if (!Run("umount", [mount.Path]))
+    internal static bool ReleaseLinux(Mounted mount, string mountsFile,
+        Func<string, string[], CancellationToken, bool> run, Func<string, bool> deviceExists, string mountBase)
+    {
+        if (!mount.Ours || !IsWithinMountBase(mount.Path, mountBase))
             return false;
         try
         {
-            if (MountTable.Parse(File.ReadAllLines(MountsFile)).Any(entry => entry.MountPoint == mount.Path))
+            MountEntry? MountedAtTarget() => MountTable.Parse(File.ReadAllLines(mountsFile))
+                .FirstOrDefault(entry => entry.MountPoint == mount.Path);
+            Exception? commandError = null;
+            bool Unmount(string[] arguments)
+            {
+                try
+                {
+                    if (run("umount", arguments, CancellationToken.None))
+                        return true;
+                    commandError = new IOException("Команда umount завершилась с ошибкой");
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    commandError = error;
+                }
                 return false;
+            }
+
+            var entry = MountedAtTarget();
+            if (entry is not null && !Unmount([mount.Path]))
+            {
+                var current = MountedAtTarget();
+                if (current is null || current.Device != entry.Device
+                    || !current.Device.StartsWith("/dev/", StringComparison.Ordinal) || deviceExists(current.Device))
+                {
+                    CrashLog.Write($"Не удалось размонтировать {mount.Path}", commandError);
+                    return false;
+                }
+                if (!Unmount(["-l", mount.Path]))
+                {
+                    CrashLog.Write($"Не удалось снять монтирование пропавшего {current.Device} в {mount.Path}", commandError);
+                    return false;
+                }
+            }
+            if (MountedAtTarget() is not null)
+            {
+                CrashLog.Write($"Монтирование {mount.Path} осталось после umount", null);
+                return false;
+            }
         }
-        catch (IOException) { return false; }
-        catch (UnauthorizedAccessException) { return false; }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            CrashLog.Write($"Не удалось размонтировать {mount.Path}", error);
+            return false;
+        }
 
         try
         {
             if (Directory.Exists(mount.Path) && !Directory.EnumerateFileSystemEntries(mount.Path).Any())
                 Directory.Delete(mount.Path);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Пустой каталог в /mnt никому не мешает.
+            CrashLog.Write($"Не удалось удалить папку монтирования {mount.Path}", error);
         }
         return true;
+    }
+
+    /// <summary>Снимает свои монтирования, оставшиеся после отключения носителя.</summary>
+    public static void CleanupDeadMounts()
+    {
+        if (!OperatingSystem.IsWindows())
+            CleanupDeadMountsLinux(MountsFile, Run, DeviceExists, MountBase);
+    }
+
+    internal static void CleanupDeadMountsLinux(string mountsFile,
+        Func<string, string[], CancellationToken, bool> run, Func<string, bool> deviceExists, string mountBase)
+    {
+        try
+        {
+            var entries = MountTable.Parse(File.ReadAllLines(mountsFile));
+            foreach (var entry in entries)
+                if (entry.Device.StartsWith("/dev/", StringComparison.Ordinal)
+                    && entry.MountPoint != mountBase && IsWithinMountBase(entry.MountPoint, mountBase)
+                    && !deviceExists(entry.Device))
+                    ReleaseLinux(new Mounted(entry.MountPoint, Ours: true), mountsFile, run, deviceExists, mountBase);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            CrashLog.Write("Не удалось убрать монтирования отключённых носителей", error);
+        }
+    }
+
+    private static bool DeviceExists(string device)
+    {
+        try { File.GetAttributes(device); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
     }
 
     internal static Mounted? MountOurselves(string deviceName, CancellationToken token,
@@ -133,19 +234,34 @@ public static class MountManager
         {
             Directory.CreateDirectory(target);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Нет прав на /mnt: монтировать всё равно не выйдет.
-            return null;
+            throw new IOException($"Не удалось создать папку монтирования {target}: {error.Message}", error);
+        }
+
+        var errors = new List<Exception>();
+        bool TryMount(string[] arguments)
+        {
+            try
+            {
+                if (run("mount", arguments, token))
+                    return true;
+                errors.Add(new IOException("Команда mount завершилась с ошибкой"));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                errors.Add(error);
+            }
+            return false;
         }
 
         // utf8 нужен для русских имён на FAT, иначе они приезжают знаками
         // вопроса и файл потом не найти.
-        if (run("mount", ["-o", "rw,noatime,utf8", $"/dev/{deviceName}", target], token))
+        if (TryMount(["-o", "rw,noatime,utf8", $"/dev/{deviceName}", target]))
             return new Mounted(target, Ours: true);
         if (findExisting(deviceName) is { } existing)
             return new Mounted(existing, existing == target || IsOurs(existing));
-        if (!token.IsCancellationRequested && run("mount", [$"/dev/{deviceName}", target], token))
+        if (!token.IsCancellationRequested && TryMount([$"/dev/{deviceName}", target]))
             return new Mounted(target, Ours: true);
         if (findExisting(deviceName) is { } late)
             return new Mounted(late, late == target || IsOurs(late));
@@ -154,23 +270,25 @@ public static class MountManager
         {
             Directory.Delete(target);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Каталог остался, но это не мешает работе.
+            CrashLog.Write($"Не удалось удалить папку монтирования {target}", error);
         }
-        return null;
+        if (token.IsCancellationRequested)
+            return null;
+        throw new IOException($"Не удалось смонтировать /dev/{deviceName}: {string.Join("; ", errors.Select(e => e.Message))}",
+            new AggregateException(errors));
     }
 
-    private static IReadOnlyList<MountEntry> Current()
+    private static IReadOnlyList<MountEntry> Current(string mountsFile = MountsFile)
     {
         try
         {
-            return MountTable.Parse(File.ReadAllLines(MountsFile));
+            return MountTable.Parse(File.ReadAllLines(mountsFile));
         }
-        catch (Exception)
+        catch (UnauthorizedAccessException error)
         {
-            // На Windows файла нет, на Linux он может быть недоступен.
-            return Array.Empty<MountEntry>();
+            throw new IOException($"Не удалось прочитать таблицу монтирования {mountsFile}: {error.Message}", error);
         }
     }
 
@@ -188,9 +306,10 @@ public static class MountManager
             foreach (var argument in arguments)
                 info.ArgumentList.Add(argument);
 
-            return UsbWatcher.RunProcess(info, 15_000, token) is not null;
+            UsbWatcher.RunProcessChecked(info, 15_000, token);
+            return true;
         }
-        catch (Exception)
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
             return false;
         }

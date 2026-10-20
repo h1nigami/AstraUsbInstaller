@@ -72,9 +72,9 @@ public static class Updater
         {
             File.WriteAllText(FailedFile, tag, Encoding.UTF8);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            // Не записалось: в худшем случае попробуем этот релиз ещё раз.
+            Say($"не удалось запомнить сбойный релиз {tag}: {error.Message}");
         }
     }
 
@@ -86,7 +86,7 @@ public static class Updater
             return File.Exists(FailedFile)
                    && File.ReadAllText(FailedFile).Trim() == tag;
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             return false;
         }
@@ -344,7 +344,7 @@ public static class Updater
         {
             expected = File.ReadAllText(sums);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or DecoderFallbackException)
         {
             return "рядом нет файла контрольной суммы (.sha256)";
         }
@@ -356,7 +356,7 @@ public static class Updater
         {
             return ChecksumMatches(archive, expected) ? null : "контрольная сумма не сошлась — архив битый";
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return $"архив не читается: {e.Message}";
         }
@@ -384,7 +384,7 @@ public static class Updater
             // Тег пишется последним: служба берёт спул только целиком.
             File.WriteAllText(Path.Combine(spool, "tag"), tag, Encoding.UTF8);
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Wipe(spool);
             return (null, $"не удалось подготовить обновление: {e.Message}");
@@ -404,17 +404,27 @@ public static class Updater
     public static (string Tag, string Archive)? TakeOfflineSpool(string? spoolDir = null)
     {
         var spool = spoolDir ?? OfflineSpoolDir;
+        if (!Directory.Exists(spool)) return null;
         try
         {
             var tagFile = Path.Combine(spool, "tag");
             var archive = Path.Combine(spool, "release.tar.gz");
-            if (!File.Exists(tagFile) || !File.Exists(archive))
-                return null;
             var tag = File.ReadAllText(tagFile).Trim();
-            return Release.IsStationTag(tag) ? (tag, archive) : null;
+            if (!Release.IsStationTag(tag))
+            {
+                Say($"офлайн-пакет в {spool} с неверным тегом {tag}, пропуск");
+                return null;
+            }
+            if (!File.Exists(archive))
+            {
+                Say($"офлайн-пакет {tag} в {spool} без архива, пропуск");
+                return null;
+            }
+            return (tag, archive);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            Say($"офлайн-пакет в {spool} без читаемого тега: {error.Message}, пропуск");
             return null;
         }
     }
@@ -494,10 +504,12 @@ public static class Updater
         {
             var uri = new Uri(Source());
             using var client = new System.Net.Sockets.TcpClient();
-            return client.ConnectAsync(uri.Host, uri.Port).Wait(timeout ?? TimeSpan.FromSeconds(5))
-                   && client.Connected;
+            client.ConnectAsync(uri.Host, uri.Port).WaitAsync(timeout ?? TimeSpan.FromSeconds(5))
+                .GetAwaiter().GetResult();
+            return client.Connected;
         }
-        catch (Exception)
+        catch (Exception error) when (error is System.Net.Sockets.SocketException or IOException
+                                     or TimeoutException or OperationCanceledException or UriFormatException)
         {
             return false;
         }
@@ -539,7 +551,7 @@ public static class Updater
             using var client = Client();
             return client.GetStringAsync(url).WaitAsync(Wait).GetAwaiter().GetResult();
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or IOException or OperationCanceledException or TimeoutException)
         {
             // Сети нет или сервер не ответил: холостой заход, ничего страшного.
             Say($"GitHub не ответил: {e.Message}");
@@ -559,7 +571,8 @@ public static class Updater
             source.CopyToAsync(file, deadline.Token).GetAwaiter().GetResult();
             return true;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is HttpRequestException or IOException or UnauthorizedAccessException
+                                 or OperationCanceledException or TimeoutException)
         {
             Say($"не скачалось: {e.Message}");
             return false;
@@ -738,7 +751,8 @@ public static class Updater
 
             return result.Code == 0;
         }
-        catch (Exception e)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException
+                                 or System.ComponentModel.Win32Exception or OperationCanceledException or TimeoutException)
         {
             Say($"{command} не запустился: {e.Message}");
             return false;
@@ -754,10 +768,14 @@ public static class Updater
                 info.ArgumentList.Add(argument);
 
             var result = Execute(info, TimeSpan.FromSeconds(30));
+            if (result.Code != 0)
+                Say($"{command} вернул {result.Code}: {Last(result.Error + result.Output)}");
             return result.Code == 0 ? result.Output : "";
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+                                    or System.ComponentModel.Win32Exception or InvalidOperationException)
         {
+            Say($"не удалось проверить службу: {command}: {error.Message}");
             return "";
         }
     }
@@ -802,6 +820,7 @@ public static class Updater
     {
         var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} обновление: {message}";
         Console.WriteLine(line);
+        StationLog.Write($"Обновление: {message}");
 
         try
         {

@@ -257,10 +257,13 @@ public static class ArchiveGuard
             }
             directory.WriteText(Markers.Archive,
                 "Метка тома архива BestCam. Не удаляйте: без неё станция не пишет записи.\n");
+            StationLog.LocalOnce("archive-marker:" + root, null);
             return true;
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException
+                                    or System.ComponentModel.Win32Exception or NotSupportedException)
         {
+            StationLog.LocalOnce("archive-marker:" + root, $"Не удалось создать метку архива {root}: {error.Message}");
             return false;
         }
     }
@@ -274,10 +277,13 @@ public static class ArchiveGuard
         try
         {
             using var directory = Open(root);
+            StationLog.LocalOnce("archive:" + root, null);
             return true;
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException
+                                    or System.ComponentModel.Win32Exception or NotSupportedException)
         {
+            StationLog.LocalOnce("archive:" + root, $"Архив недоступен {root}: {error.Message}");
             return false;
         }
     }

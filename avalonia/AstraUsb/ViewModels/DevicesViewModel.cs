@@ -133,11 +133,12 @@ public sealed partial class DevicesViewModel : ObservableObject
             Hint = string.IsNullOrWhiteSpace(NameInput)
                 ? $"имя снято, камера снова показывается номером {row.Id}"
                 : $"камера {row.Id} теперь «{NameInput.Trim()}»";
+            new ActionLog(_dbPath).Write(ActionLog.Settings, Hint);
             await Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = UserError.Report("Не удалось переименовать камеру", e);
+            Hint = UserError.Report($"Не удалось переименовать камеру {row.Id}", e);
         }
     }
 
@@ -158,11 +159,12 @@ public sealed partial class DevicesViewModel : ObservableObject
             Hint = EmployeeInput is null
                 ? $"камера {row.Id} больше ни за кем не закреплена"
                 : $"камера {row.Id} закреплена за {EmployeeInput.FullName}";
+            new ActionLog(_dbPath).Write(ActionLog.Settings, Hint);
             await Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = UserError.Report("Не удалось закрепить камеру за сотрудником", e);
+            Hint = UserError.Report($"Не удалось закрепить камеру {row.Id} за сотрудником", e);
         }
     }
 

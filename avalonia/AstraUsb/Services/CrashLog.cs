@@ -28,6 +28,7 @@ public static class CrashLog
     /// <summary>Записывает происшествие. Сама запись упасть не должна.</summary>
     public static void Write(string what, Exception? error)
     {
+        StationLog.Write(what, error);
         try
         {
             Directory.CreateDirectory(AppPaths.DataDir);

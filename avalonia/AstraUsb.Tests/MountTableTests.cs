@@ -90,4 +90,12 @@ public sealed class MountTableTests
         // станция размонтировала бы то, что ей не принадлежит.
         Assert.False(MountManager.IsOurs("/mnt/usb_backup_old/sdb1"));
     }
+
+    [Theory]
+    [InlineData("/mnt/usb_backup/../foreign/sdb1")]
+    [InlineData("/mnt/usb_backup/sdb1/../../foreign")]
+    public void A_path_that_leaves_our_mount_directory_is_not_owned(string mountPoint)
+    {
+        Assert.False(MountManager.IsOurs(mountPoint));
+    }
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Из корня репозитория, сценарии: busy, mismatch, restarts, success.
+# Сценарии: busy, offline-busy, offline-lock, mismatch, restarts, success, handoff.
 # docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 -v "${PWD}:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh /src/avalonia/AstraUsb.Tests/updater-integration.sh busy
 set -eu
 [ "${UPDATER_TEST_CONTAINER:-}" = 1 ] && [ -f /.dockerenv ] || exit 2
@@ -15,6 +15,7 @@ cat > /tmp/integration/Integration.csproj <<'PROJECT'
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="/src/avalonia/AstraUsb.Tests/UpdaterIntegration.cs" />
+    <Compile Include="/src/avalonia/AstraUsb.Tests/UpdaterIntegrationLog.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/Updater.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/OperationGuard.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/Release.cs" />

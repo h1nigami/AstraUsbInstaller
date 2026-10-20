@@ -35,11 +35,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly DispatcherTimer _clock = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Func<IReadOnlyList<UsbDevice>> _listDevices;
     private Settings _stationSettings = Services.Settings.Load();
+    private string _resolvedArchiveRoot = "";
     private readonly BackupService _backups;
     private readonly Dictionary<string, PortViewModel> _extraPorts = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Task> _workers = new(StringComparer.Ordinal);
     private readonly HashSet<Task> _mediaTasks = new();
     private readonly Func<Mounted?, bool> _releaseMount = MountManager.Release;
+    private readonly Func<string, TimeSpan, CancellationToken, Mounted?> _mountDevice = MountManager.Ensure;
+    private readonly Func<Settings, string> _resolveArchiveRoot = settings => settings.ResolveBackupRoot();
     private CancellationTokenSource _mountStop = new();
     private bool _stopping;
     private bool _disposed;
@@ -72,7 +75,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             catch (Exception error) { CrashLog.Write("остановка сбора", error); }
             // Ответы монтирования уже поставлены в очередь диспетчера.
             await _ui.InvokeAsync(() => { });
+            var archiveRoot = await Task.Run(() => _resolveArchiveRoot(Services.Settings.Load()));
+            _resolvedArchiveRoot = archiveRoot;
             using var operation = OperationGuard.Acquire(exclusive: true);
+            RetainArchiveMounts(archiveRoot);
             var mounts = _mounted.ToArray();
             var results = await Task.Run(() => mounts.Select(entry =>
                 (entry.Key, entry.Value, Ok: _releaseMount(entry.Value))).ToArray());
@@ -127,9 +133,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// правилом udev, иначе один FAT писался бы с двух сторон.
     /// </summary>
     private readonly Dictionary<string, Mounted> _mounted = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Mounted> _archiveMounts = new(StringComparer.Ordinal);
 
     /// <summary>Носители, которые монтируются прямо сейчас.</summary>
     private readonly HashSet<string> _mounting = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string> _mountErrors = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _mountFaulted = new(StringComparer.Ordinal);
 
     /// <summary>Чем прервать идущую выгрузку, если оператор попросил.</summary>
     private readonly Dictionary<string, CancellationTokenSource> _cancels =
@@ -282,7 +291,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (OfflineWaiting && _offlineKnown is not null)
             foreach (var device in devices)
                 if (!_offlineKnown.Contains(device.Name))
-                    _offlineMedia.Add(device.Name);
+                    if (_offlineMedia.Add(device.Name))
+                        StationLog.Write($"Новое USB-устройство отложено ради офлайн-обновления: {device.Name}");
 
         if (OfflineWaiting)
             WatchOfflineMedia(devices.Where(d => _offlineMedia.Contains(d.Name)).ToList());
@@ -316,32 +326,39 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         _offlineChecking = true;
         _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform()))
-            .ContinueWith(task => _ui.Post(() =>
+            .ContinueWith(task =>
             {
-                _offlineChecking = false;
-                var (done, status, tag, name, kick) = task.IsCompletedSuccessfully
-                    ? task.Result
-                    : (false, "Флешка не читается", "", "", "");
+                var failure = task.Exception?.GetBaseException();
+                var reason = failure is null ? "Проверка флешки прервана"
+                    : UserError.Report("Не удалось проверить флешку обновления", failure);
+                _ui.Post(() =>
+                {
+                    _offlineChecking = false;
+                    if (_disposed) return;
+                    var (done, status, tag, name, kick) = task.IsCompletedSuccessfully
+                        ? task.Result
+                        : (false, reason, "", "", "");
 
-                if (!done)
-                {
-                    if (OfflineWaiting)
-                        OfflineStatus = status;
-                    return;
-                }
+                    if (!done)
+                    {
+                        if (OfflineWaiting)
+                            OfflineStatus = status;
+                        return;
+                    }
 
-                StopOfflineWaiting(keep: name);
-                if (kick == Updater.UpdateStarted)
-                {
-                    _actions.Write(ActionLog.Settings, $"обновление {tag} с флешки передано установщику");
-                    Settings.Hint = $"обновление {tag} передано установщику, программа скоро перезапустится";
-                }
-                else
-                {
-                    Updater.ClearOfflineSpool();
-                    Settings.Hint = kick;
-                }
-            }));
+                    StopOfflineWaiting(keep: name);
+                    if (kick == Updater.UpdateStarted)
+                    {
+                        _actions.Write(ActionLog.Settings, $"обновление {tag} с флешки передано установщику");
+                        Settings.Hint = $"обновление {tag} передано установщику, программа скоро перезапустится";
+                    }
+                    else
+                    {
+                        Updater.ClearOfflineSpool();
+                        Settings.Hint = kick;
+                    }
+                });
+            });
     }
 
     /// <summary>Ищет архив на флешках и готовит его для службы обновления. Идёт в стороне от интерфейса.</summary>
@@ -488,9 +505,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public MainWindowViewModel(Func<IReadOnlyList<UsbDevice>> listDevices)
     {
         _listDevices = listDevices;
+        _resolvedArchiveRoot = _stationSettings.BackupRoot;
         AppPaths.EnsureCreated();
         _backups = new BackupService(AppPaths.Database);
         Version = VersionInfo.Label();
+        if (OperatingSystem.IsLinux()) TrackMediaTask(Task.Run(MountManager.CleanupDeadMounts));
 
         // Число окон задаётся в настройках: у станций от шести до тридцати
         // отсеков, и окна должны совпадать с железом.
@@ -931,34 +950,35 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         _ = Task.Run(() =>
         {
-            var archiveRoot = settings.ResolveBackupRoot();
-            IReadOnlyList<UsbDevice> found;
             try
             {
-                // Диск, на котором лежит архив, источником не считается: иначе
-                // станция принялась бы копировать архив сам в себя.
-                found = _listDevices()
-                    .Where(d => !ArchiveGuard.IsArchiveMedia(d.MountPoint, archiveRoot))
-                    .ToList();
+                var archiveRoot = _resolveArchiveRoot(settings);
+                var found = _listDevices().ToList();
+                var storage = StorageState.Read(archiveRoot);
+                var names = DeviceRegistry.ReadNames(AppPaths.Database);
+                StationLog.Once("poll:" + AppPaths.Root, null);
+                _ui.Post(() =>
+                {
+                    _stationSettings = settings;
+                    _resolvedArchiveRoot = archiveRoot;
+                    _deviceNames = names;
+                    if (!_disposed && !_demonstrating && generation == _stopGeneration)
+                        Apply(found, storage);
+                });
             }
             catch (Exception e)
             {
-                CrashLog.Write("опрос носителей", e);
-                found = [];
+                StationLog.Once("poll:" + AppPaths.Root, $"Не удалось опросить носители: {e}");
+                _ui.Post(() =>
+                {
+                    if (!_disposed && generation == _stopGeneration)
+                        Status = $"Не удалось опросить носители: {e.Message}";
+                });
             }
-
-            var storage = StorageState.Read(archiveRoot);
-            var names = DeviceRegistry.ReadNames(AppPaths.Database);
-
-            _ui.Post(() =>
+            finally
             {
-                _polling = false;
-                _stationSettings = settings;
-                _deviceNames = names;
-
-                if (!_disposed && !_demonstrating && generation == _stopGeneration)
-                    Apply(found, storage);
-            });
+                _ui.Post(() => _polling = false);
+            }
         });
     }
 
@@ -968,13 +988,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// </summary>
     private void Apply(IReadOnlyList<UsbDevice> found, StorageState storage)
     {
+        var archiveRoot = _resolvedArchiveRoot;
+        RetainArchiveMounts(archiveRoot, found);
         if (SafeRemovalActive && !_stopping)
             foreach (var entry in _mounted.ToArray())
                 if (found.FirstOrDefault(d => d.Name == entry.Key) is { MountPoint: null }
                     || !entry.Value.Ours && found.All(d => d.Name != entry.Key))
                     _mounted.Remove(entry.Key);
-        var all = HoldBriefly(found);
-        var devices = SplitOfflineMedia(all);
+        var all = HoldBriefly(found, archiveRoot);
+        var devices = SplitOfflineMedia(all.Where(device => !IsArchiveDevice(device, archiveRoot)).ToArray());
         var present = devices.Where(d => !_missing.Contains(DeviceKey(d))).Select(MountPointFor).Where(m => !string.IsNullOrEmpty(m))
             .ToHashSet(StringComparer.Ordinal);
         foreach (var id in _astraOwners.Keys.Where(id => !present.Contains(_astraOwners[id])
@@ -1005,7 +1027,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 }
                 else if (free is not null) port = free;
                 else _extraPorts[key] = port = new PortViewModel { Slot = -1 };
-                if (port.DeviceKey is null) port.Clear();
+                if (port.DeviceKey is null)
+                {
+                    port.Clear();
+                    StationLog.Write($"Новое USB-устройство: {device.Name}");
+                }
                 port.DeviceKey = key;
             }
             if (_missing.Contains(key))
@@ -1019,6 +1045,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
             var mount = MountPointFor(device);
             port.MountPoint = mount;
+            if (mount is null && _mountErrors.TryGetValue(key, out var mountError))
+            {
+                port.State = PortState.Failed;
+                port.Detail = mountError;
+                continue;
+            }
             var cameraId = "";
             var detail = mount is null ? "Подготовка носителя" : "Определение ID";
             var personnel = "";
@@ -1067,6 +1099,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                     if (_astraOwners.GetValueOrDefault(card.DeviceId) == recovery.MountPoint)
                         _astraOwners[card.DeviceId] = mount;
                     _recoveries.Remove(key);
+                    StationLog.Write($"Камера {card.DeviceId}: карта вернулась как {device.Name}");
                 }
                 // Имя, если оператор его задал, иначе номер, как в Python-версии.
                 cameraId = _deviceNames.TryGetValue(card.DeviceId, out var named) ? named : card.CameraId;
@@ -1191,13 +1224,14 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     /// опроса. Регистратор считается извлечённым только после этой выдержки:
     /// иначе один неудачный опрос сбрасывал бы ход выгрузки.
     /// </summary>
-    private IReadOnlyList<UsbDevice> HoldBriefly(IReadOnlyList<UsbDevice> devices)
+    private IReadOnlyList<UsbDevice> HoldBriefly(IReadOnlyList<UsbDevice> devices, string archiveRoot)
     {
         var now = _now();
         var hold = _poll.Interval * 1.5;
         var present = devices.Select(DeviceKey).ToHashSet(StringComparer.Ordinal);
         _missing.Clear();
-        if (_recent.Count > 1 && !_recent.Keys.Any(present.Contains))
+        var sources = _recent.Where(entry => !IsArchiveDevice(entry.Value.Device, archiveRoot)).Select(entry => entry.Key).ToArray();
+        if (sources.Length > 1 && !sources.Any(present.Contains))
             _busGlitchSince ??= now;
         else
             _busGlitchSince = null;
@@ -1243,16 +1277,26 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_recoveries.ContainsKey(key)) return;
         var mount = device.MountPoint ?? _mounted.GetValueOrDefault(device.Name)?.Path;
         if (mount is null) return;
+        if (ArchiveGuard.IsArchiveMedia(mount, _resolvedArchiveRoot)) return;
         Cancel(mount);
         if (string.IsNullOrEmpty(device.FileSystemUuid)
             || !_identified.TryGetValue(mount, out var info) || info.DeviceId <= 0) return;
         _recoveries[key] = new CardRecovery(info.DeviceId, mount, until);
         _returnAttempts[key] = _returnAttempts.GetValueOrDefault(key) + 1;
         _identified.Remove(mount);
+        StationLog.Write($"Камера {info.DeviceId}: карта {device.Name} перестала отвечать, ждём возвращения");
     }
 
     private void ForgetCard(string key, UsbDevice device)
     {
+        _actions.Write(ActionLog.Backup, $"Носитель {device.Name} отключён");
+        _mountErrors.Remove(key);
+        _mountFaulted.Remove(key);
+        StationLog.Once("mount:" + AppPaths.Root + ":" + key, null);
+        StationLog.Once("station-busy:" + AppPaths.Root + ":" + key, null);
+        StationLog.Once("archive-connected:" + AppPaths.Root + ":" + device.Name, null);
+        _archiveMounts.Remove(device.Name);
+        if (OperatingSystem.IsLinux()) TrackMediaTask(Task.Run(MountManager.CleanupDeadMounts));
         var mount = device.MountPoint ?? _mounted.GetValueOrDefault(device.Name)?.Path;
         if (mount is not null)
         {
@@ -1276,6 +1320,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     {
         if (SafeRemovalActive || _disposed)
             return device.MountPoint;
+        if (_archiveMounts.ContainsKey(device.Name))
+            return null;
         if (!string.IsNullOrEmpty(device.MountPoint))
         {
             _mounted[device.Name] = new Mounted(device.MountPoint, MountManager.IsOurs(device.MountPoint));
@@ -1285,32 +1331,120 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_mounted.TryGetValue(device.Name, out var ours))
             return ours.Path;
 
+        if (_mountFaulted.Contains(DeviceKey(device)))
+            return null;
+
         if (_mounting.Add(device.Name))
         {
             var name = device.Name;
+            var key = DeviceKey(device);
             var grace = TimeSpan.FromSeconds(_stationSettings.MountGraceSeconds);
 
             var token = _mountStop.Token;
             var task = Task.Run(() =>
             {
-                var mounted = MountManager.Ensure(name, grace, token);
-                _ui.Post(() =>
+                Mounted? mounted = null;
+                Exception? failure = null;
+                var isArchive = false;
+                try
                 {
-                    if (_disposed)
-                    {
-                        if (mounted is not null) _ = Task.Run(() => _releaseMount(mounted));
-                        _mounting.Remove(name);
-                        return;
-                    }
+                    mounted = _mountDevice(name, grace, token);
                     if (mounted is not null)
-                        _mounted[name] = mounted;
-                    _mounting.Remove(name);
-                });
+                        isArchive = ArchiveGuard.IsArchiveMedia(mounted.Path,
+                            _resolveArchiveRoot(Services.Settings.Load()));
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+                catch (Exception error)
+                {
+                    failure = error;
+                    if (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+                        StationLog.Once("mount:" + AppPaths.Root + ":" + key,
+                            $"Не удалось смонтировать {name}, повторим: {error}");
+                    else
+                        CrashLog.Write($"Сбой монтирования {name}", error);
+                }
+                finally
+                {
+                    _ui.Post(() =>
+                    {
+                        _mounting.Remove(name);
+                        if (mounted is not null && failure is not null)
+                        {
+                            _archiveMounts[name] = mounted;
+                            mounted = null;
+                        }
+                        if (mounted is not null && isArchive)
+                        {
+                            RememberArchiveMount(name, mounted);
+                            _mountErrors.Remove(key);
+                            _mountFaulted.Remove(key);
+                            StationLog.Once("mount:" + AppPaths.Root + ":" + key, null);
+                            Ports.Concat(_extraPorts.Values).FirstOrDefault(port => port.DeviceKey == key)?.Clear();
+                            return;
+                        }
+                        if (_disposed || token.IsCancellationRequested
+                            || !_recent.TryGetValue(key, out var current) || current.Device != device)
+                        {
+                            if (mounted is not null) TrackMediaTask(Task.Run(() => _releaseMount(mounted)));
+                            return;
+                        }
+                        if (mounted is not null)
+                        {
+                            _mounted[name] = mounted;
+                            _mountErrors.Remove(key);
+                            StationLog.Once("mount:" + AppPaths.Root + ":" + key, null);
+                        }
+                        else if (failure is not null)
+                        {
+                            var retry = failure is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception;
+                            if (!retry) _mountFaulted.Add(key);
+                            var detail = $"Не удалось смонтировать носитель: {failure.Message}. "
+                                + (retry ? "Повторим" : "Переподключите носитель");
+                            _mountErrors[key] = detail;
+                            var port = Ports.Concat(_extraPorts.Values).FirstOrDefault(p => p.DeviceKey == key);
+                            if (port is not null) { port.State = PortState.Failed; port.Detail = detail; }
+                        }
+                    });
+                }
             });
             TrackMediaTask(task);
         }
 
         return null;
+    }
+
+    private bool IsArchiveDevice(UsbDevice device, string archiveRoot) => ArchiveGuard.IsArchiveMedia(
+        device.MountPoint ?? _archiveMounts.GetValueOrDefault(device.Name)?.Path
+            ?? _mounted.GetValueOrDefault(device.Name)?.Path, archiveRoot);
+
+    private void RetainArchiveMounts(string archiveRoot, IReadOnlyList<UsbDevice>? inventory = null)
+    {
+        foreach (var (name, mount) in _archiveMounts.ToArray())
+            if (!ArchiveGuard.IsArchiveMedia(mount.Path, archiveRoot))
+            {
+                _archiveMounts.Remove(name);
+                _mounted[name] = mount;
+            }
+        foreach (var (name, mount) in _mounted.ToArray())
+            if (ArchiveGuard.IsArchiveMedia(mount.Path, archiveRoot))
+                RememberArchiveMount(name, mount);
+        if (inventory is null) return;
+        foreach (var device in inventory)
+            if (device.MountPoint is { } path && ArchiveGuard.IsArchiveMedia(path, archiveRoot))
+            {
+                var mount = _mounted.GetValueOrDefault(device.Name) ?? _archiveMounts.GetValueOrDefault(device.Name);
+                RememberArchiveMount(device.Name, mount?.Path == path ? mount : new Mounted(path, MountManager.IsOurs(path)));
+            }
+    }
+
+    private void RememberArchiveMount(string name, Mounted mount)
+    {
+        _mounted.Remove(name);
+        _archiveMounts[name] = mount;
+        _identified.Remove(mount.Path);
+        _finished.Remove(mount.Path);
+        StationLog.Once("archive-connected:" + AppPaths.Root + ":" + name,
+            $"Подключён диск архива, остаётся смонтированным: {mount.Path}");
     }
 
     /// <summary>
@@ -1359,18 +1493,38 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
             var task = Task.Run(() =>
             {
-                var info = ReadCard(name, mount);
-                var connected = _listDevices().Any(current => current.Name == name
-                    && DeviceKey(current) == DeviceKey(device));
-
-                _ui.Post(() =>
+                CardInfo? info = null;
+                var connected = false;
+                Exception? failure = null;
+                try
                 {
-                    if (!_disposed && !SafeRemovalActive && info is not null && connected
-                        && _recent.TryGetValue(DeviceKey(device), out var latest) && latest.Device == device)
-                        _identified[mount] = info;
-
-                    _identifying.Remove(mount);
-                });
+                    info = ReadCard(name, mount);
+                    connected = _listDevices().Any(current => current.Name == name
+                        && DeviceKey(current) == DeviceKey(device));
+                }
+                catch (Exception error)
+                {
+                    failure = error;
+                    CrashLog.Write($"Не удалось определить регистратор {name}", error);
+                }
+                finally
+                {
+                    _ui.Post(() =>
+                    {
+                        _identifying.Remove(mount);
+                        if (_disposed || SafeRemovalActive
+                            || !_recent.TryGetValue(DeviceKey(device), out var latest) || latest.Device != device) return;
+                        if (failure is not null)
+                        {
+                            var detail = $"Не удалось определить регистратор: {failure.Message}";
+                            if (failure is not IOException)
+                                _identified[mount] = new CardInfo(0, "", detail, "", "", "");
+                            var port = Ports.Concat(_extraPorts.Values).FirstOrDefault(p => p.DeviceKey == DeviceKey(device));
+                            if (port is not null) { port.State = PortState.Failed; port.Detail = detail; }
+                        }
+                        else if (info is not null && connected) _identified[mount] = info;
+                    });
+                }
             });
             TrackMediaTask(task);
         }
@@ -1410,12 +1564,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
         catch (Exception error) when (error is InvalidDataException or IOException or UnauthorizedAccessException)
         {
+            StationLog.Once("identify:" + mount, $"Не удалось прочитать ID регистратора {deviceName}: {error}");
             return new CardInfo(0, "", error.Message, "", "", "");
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            // База занята другим действием, повторим на следующем опросе.
-            return null;
+            return new CardInfo(0, "", UserError.Report($"Не удалось определить регистратор {deviceName}", error), "", "", "");
         }
     }
 
@@ -1449,12 +1603,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         var cts = new CancellationTokenSource();
         var key = port.DeviceKey;
+        var busyKey = "station-busy:" + AppPaths.Root + ":" + key;
         _cancels[mountPoint] = cts;
         _running[mountPoint] = deviceId;
         port.State = PortState.Scanning;
 
         var progress = new Progress<BackupProgress>(report =>
         {
+            if (report.Stage == BackupStage.Scanning)
+                StationLog.Once(busyKey, null);
             if (_disposed || SafeRemovalActive || cts.IsCancellationRequested || _chargeOnly.Contains(mountPoint))
                 return;
 
@@ -1492,6 +1649,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
             catch (StationBusyException)
             {
+                StationLog.Once(busyKey, "Станция занята другой операцией, выгрузка подождёт");
                 _ui.Post(() =>
                 {
                     var current = Ports.Concat(_extraPorts.Values).FirstOrDefault(p =>
@@ -1538,7 +1696,15 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private void TrackMediaTask(Task task)
     {
         _mediaTasks.Add(task);
-        _ = task.ContinueWith(_ => _ui.Post(() => _mediaTasks.Remove(task)));
+        _ = task.ContinueWith(completed =>
+        {
+            if (completed.Exception is { } error) CrashLog.Write("Сбой фоновой операции с носителем", error);
+            _ui.Post(() =>
+            {
+                _mediaTasks.Remove(task);
+                if (!_disposed && completed.IsFaulted) Status = "Сбой операции с носителем, подробности в журнале";
+            });
+        });
     }
 
     /// <summary>
@@ -1806,20 +1972,17 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         else
             _lastTrouble = "";
 
-        StorageLabel = $"хранилище {Size(used)} из {Size(storage.Total)}";
+        StorageLabel = $"Архив: свободно {Size(storage.Free)} из {Size(storage.Total)} · занято {ratio * 100:0}%";
         StorageWidth = Math.Clamp(ratio, 0, 1) * 150;
-        // Тревожного красного в палитре станции нет: заполнение растёт от
-        // бирюзового к тёмно-синему, и это видно, не мешая остальному.
-        StorageBrush = new SolidColorBrush(Color.Parse(ratio switch
-        {
-            >= 0.9 => "#143A61",
-            >= 0.75 => "#2F77AD",
-            _ => "#3F9BA6",
-        }));
+        StorageBrush = new SolidColorBrush(Color.Parse(storage.Free / (double)storage.Total < 0.10
+            ? "#E8AD4C" : "#3F9BA6"));
     }
 
     private static string Size(long bytes)
     {
+        if (bytes < 1024) return $"{bytes} Б";
+        if (bytes < 1024 * 1024) return $"{(bytes / 1024d).ToString("0.0", Ru)} КБ";
+        if (bytes < 1024 * 1024 * 1024) return $"{(bytes / 1024d / 1024).ToString("0.0", Ru)} МБ";
         var tb = bytes / 1024d / 1024 / 1024 / 1024;
         if (tb >= 1)
             return $"{tb.ToString("0.0", Ru)} ТБ";
@@ -1841,10 +2004,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         // Свои монтирования отпускаем при выходе: иначе карта останется
         // смонтированной, и рабочий стол не сможет с ней работать.
+        RetainArchiveMounts(_resolvedArchiveRoot);
         var mounts = _mounted.Values.ToArray();
         _ = Task.WhenAll(_workers.Values.Concat(_mediaTasks)).ContinueWith(_ =>
         {
-            foreach (var mount in mounts) _releaseMount(mount);
+            try
+            {
+                var archiveRoot = _resolveArchiveRoot(Services.Settings.Load());
+                foreach (var mount in mounts)
+                    if (!ArchiveGuard.IsArchiveMedia(mount.Path, archiveRoot))
+                        _releaseMount(mount);
+            }
+            catch (Exception error) { CrashLog.Write("Не удалось освободить носители при выходе", error); }
         });
     }
 }

@@ -53,15 +53,16 @@ public sealed class ActionLog
     /// </summary>
     public void Write(string kind, string message)
     {
+        StationLog.Write($"{kind}: {message}");
         try
         {
             using var db = Open();
             Run(db, "INSERT INTO action_log (at, kind, message) VALUES ($at, $kind, $message)",
                 ("$at", Stamp(DateTime.Now)), ("$kind", kind), ("$message", message));
         }
-        catch (SqliteException)
+        catch (SqliteException error)
         {
-            // База занята другим действием: событие потеряно, работа идёт дальше.
+            CrashLog.Write("Не удалось записать событие в базу журнала", error);
         }
     }
 

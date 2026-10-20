@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace AstraUsb.Services;
 
 public sealed class DeviceLostException : IOException
@@ -46,17 +48,21 @@ public static class FileCopier
         string destRoot,
         string timestamp,
         Action<int, long>? onProgress = null,
-        CancellationToken token = default)
+        CancellationToken token = default,
+        Action<int, long, string, bool>? onFile = null)
     {
         token.ThrowIfCancellationRequested();
         var copiedFiles = 0;
         var copiedBytes = 0L;
+        var processedFiles = 0;
+        var processedBytes = 0L;
         var failed = 0;
         var backedUp = new Dictionary<string, string>(StringComparer.Ordinal);
         ArchiveDirectory destination;
         try { destination = ArchiveGuard.Open(destRoot, create: true, requireMarker: false); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            CrashLog.Write($"Не удалось открыть папку назначения {destRoot}", error);
             var errors = 0;
             var count = EnumerateDirectories(sourceRoot, () => errors++)
                 .Sum(dir => Directory.GetFiles(dir).Count(f => !Markers.IsService(Path.GetFileName(f))));
@@ -88,8 +94,9 @@ public static class FileCopier
             {
                 throw new DeviceLostException(error);
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
+                CrashLog.Write($"Не удалось прочитать каталог {dir}", error);
                 if (!Directory.Exists(sourceRoot))
                     throw new DeviceLostException();
                 walkErrors++;
@@ -105,8 +112,9 @@ public static class FileCopier
             {
                 targetDirectory = destination.CreateDirectory(relative == "." ? "" : relative);
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
+                CrashLog.Write($"Не удалось создать папку назначения {destDir}", error);
                 // Диск назначения исчез посреди копирования. Всё содержимое
                 // каталога считается неперенесённым: удалять с источника нельзя.
                 failed += payload.Length;
@@ -124,9 +132,16 @@ public static class FileCopier
 
                     if (Path.Exists(Path.Combine(targetDirectory.Path, name)))
                     {
-                        if (targetDirectory.SameFile(sourceFile, name))
+                        var savedName = targetDirectory.SameFile(sourceFile, name)
+                            ? name : SameTimestampedCopy(targetDirectory, sourceFile);
+                        if (savedName is not null)
                         {
-                            backedUp.Add(sourceFile, target);
+                            var savedSize = new FileInfo(sourceFile).Length;
+                            backedUp.Add(sourceFile, Path.Combine(destDir, savedName));
+                            processedFiles++;
+                            processedBytes += savedSize;
+                            onProgress?.Invoke(processedFiles, processedBytes);
+                            onFile?.Invoke(processedFiles, processedBytes, name, false);
                             continue;
                         }
 
@@ -142,13 +157,17 @@ public static class FileCopier
 
                     copiedFiles++;
                     copiedBytes += size;
+                    processedFiles++;
+                    processedBytes += size;
                     backedUp.Add(sourceFile, target);
-                    onProgress?.Invoke(copiedFiles, copiedBytes);
+                    onProgress?.Invoke(processedFiles, processedBytes);
+                    onFile?.Invoke(processedFiles, processedBytes, Path.GetFileName(sourceFile), true);
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (DeviceLostException) { throw; }
-                catch (Exception)
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
                 {
+                    CrashLog.Write($"Не скопирован файл {sourceFile} в {destDir}", error);
                     if (!Directory.Exists(sourceRoot))
                         throw new DeviceLostException();
                     // Намеренно не добавляем в backedUp: файл останется на носителе.
@@ -161,8 +180,22 @@ public static class FileCopier
         return new CopyResult(copiedFiles, copiedBytes, backedUp, failed + walkErrors);
     }
 
+    private static string? SameTimestampedCopy(ArchiveDirectory directory, string source)
+    {
+        var stem = Regex.Escape(Path.GetFileNameWithoutExtension(source));
+        var extension = Regex.Escape(Path.GetExtension(source));
+        var pattern = new Regex($@"\A{stem}_\d{{8}}_\d{{6}}{extension}\z");
+        foreach (var candidate in Directory.GetFiles(directory.Path))
+        {
+            var name = Path.GetFileName(candidate);
+            if (pattern.IsMatch(name) && directory.IsRegularFile(name) && directory.SameFile(source, name))
+                return name;
+        }
+        return null;
+    }
+
     /// <summary>Обход в глубину, где каждый нечитаемый каталог отмечается через onError.</summary>
-    private static IEnumerable<string> EnumerateDirectories(string root, Action onError)
+    internal static IEnumerable<string> EnumerateDirectories(string root, Action onError)
     {
         var pending = new Stack<string>();
         pending.Push(root);
@@ -180,8 +213,9 @@ public static class FileCopier
             {
                 throw new DeviceLostException(error);
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
+                CrashLog.Write($"Не удалось обойти каталог {dir}", error);
                 onError();
                 continue;
             }

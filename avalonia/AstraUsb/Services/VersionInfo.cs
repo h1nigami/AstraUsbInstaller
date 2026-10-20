@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Text;
 
 namespace AstraUsb.Services;
 
@@ -39,13 +40,13 @@ public static class VersionInfo
     {
         try
         {
-            var parts = File.ReadAllText(AppPaths.VersionFile)
+            var parts = File.ReadAllText(AppPaths.VersionFile, new UTF8Encoding(false, true))
                 .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
             if (parts.Length == 2 && DateTime.TryParse(parts[1], out var date))
                 return (parts[0], date);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or DecoderFallbackException)
         {
             // Файла нет или он испорчен: версию возьмём из сборки.
         }
