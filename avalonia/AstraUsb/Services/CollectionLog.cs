@@ -60,6 +60,7 @@ public sealed class CollectionLog
         if (!string.IsNullOrEmpty(dir))
             Directory.CreateDirectory(dir);
         using var db = Open();
+        using var migration = db.BeginTransaction(deferred: false);
         Run(db, """
             CREATE TABLE IF NOT EXISTS collected_files (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,8 +76,9 @@ public sealed class CollectionLog
 
         // Защита от уборки и заметка добавились позже: базы на станциях уже
         // накоплены, поэтому колонки досоздаются на месте.
-        TryRun(db, "ALTER TABLE collected_files ADD COLUMN important INTEGER NOT NULL DEFAULT 0");
-        TryRun(db, "ALTER TABLE collected_files ADD COLUMN note TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(db, "important", "ALTER TABLE collected_files ADD COLUMN important INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(db, "note", "ALTER TABLE collected_files ADD COLUMN note TEXT NOT NULL DEFAULT ''");
+        migration.Commit();
     }
 
     /// <summary>
@@ -265,16 +267,12 @@ public sealed class CollectionLog
         finally { command.CommandTimeout = timeout; }
     }
 
-    private static void TryRun(SqliteConnection db, string sql)
+    private static void EnsureColumn(SqliteConnection db, string column, string sql)
     {
-        try
-        {
-            Run(db, sql);
-        }
-        catch (SqliteException)
-        {
-            // Колонка уже есть: обычное дело при миграции.
-        }
+        using var command = db.CreateCommand();
+        command.CommandText = "SELECT 1 FROM pragma_table_info('collected_files') WHERE name = $name";
+        command.Parameters.AddWithValue("$name", column);
+        if (command.ExecuteScalar() is null) Run(db, sql);
     }
 
     private static void Run(SqliteConnection db, string sql, params (string Name, object Value)[] args)

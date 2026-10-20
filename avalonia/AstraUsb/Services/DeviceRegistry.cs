@@ -25,12 +25,16 @@ public sealed class DeviceRegistry : IDisposable
             Mode = initialize ? SqliteOpenMode.ReadWriteCreate : SqliteOpenMode.ReadOnly,
         }.ToString());
         _db.Open();
-        if (initialize)
-            InitSchema();
+        try
+        {
+            if (initialize) InitSchema();
+        }
+        catch { _db.Dispose(); throw; }
     }
 
     private void InitSchema()
     {
+        using var migration = _db.BeginTransaction(deferred: false);
         Execute("""
             CREATE TABLE IF NOT EXISTS devices (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,21 +60,24 @@ public sealed class DeviceRegistry : IDisposable
             """);
 
         // Миграции старых баз: колонки добавлялись со временем.
-        TryExecute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''");
-        TryExecute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''");
+        if (Scalar("SELECT 1 FROM pragma_table_info('devices') WHERE name = 'person'") is null)
+            Execute("ALTER TABLE devices ADD COLUMN person TEXT DEFAULT ''");
+        if (Scalar("SELECT 1 FROM pragma_table_info('devices') WHERE name = 'name'") is null)
+            Execute("ALTER TABLE devices ADD COLUMN name TEXT DEFAULT ''");
         if (Scalar("SELECT 1 FROM pragma_table_info('devices') WHERE name = 'id_source'") is null)
             Execute("ALTER TABLE devices ADD COLUMN id_source TEXT DEFAULT ''");
 
         // Колонка остаётся для чтения старых записей и карточек сотрудников.
-        TryExecute("ALTER TABLE devices ADD COLUMN firmware_id TEXT");
-        TryExecute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_firmware"
+        if (Scalar("SELECT 1 FROM pragma_table_info('devices') WHERE name = 'firmware_id'") is null)
+            Execute("ALTER TABLE devices ADD COLUMN firmware_id TEXT");
+        Execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_firmware"
                    + " ON devices (firmware_id) WHERE firmware_id IS NOT NULL");
 
         // Устройства, потерянные прежней ошибкой регистрации: бэкапы на них
         // есть, а строки нет. Без неё устройство не видно в списке, ему нельзя
         // задать имя, и поиск не находит его файлы: он связывает файлы с
         // устройствами джойном.
-        TryExecute("""
+        Execute("""
             INSERT INTO devices (id, serial, label, first_seen, last_seen)
             SELECT b.device_id, 'RECOVERED_' || b.device_id, '',
                    MIN(b.started_at), MAX(b.finished_at)
@@ -79,6 +86,7 @@ public sealed class DeviceRegistry : IDisposable
             WHERE d.id IS NULL
             GROUP BY b.device_id
             """);
+        migration.Commit();
     }
 
     /// <summary>Регистрирует номер, заданный оператором в регистраторе.</summary>
@@ -175,7 +183,7 @@ public sealed class DeviceRegistry : IDisposable
     /// </summary>
     public static string FriendlyLabel(long deviceId, string? name)
     {
-        var astraId = $"Astra ID {deviceId}";
+        var astraId = $"ID {deviceId}";
         return string.IsNullOrEmpty(name) ? astraId : $"{astraId} · {name}";
     }
 
@@ -189,18 +197,6 @@ public sealed class DeviceRegistry : IDisposable
         foreach (var (name, value) in args)
             cmd.Parameters.AddWithValue(name, value);
         cmd.ExecuteNonQuery();
-    }
-
-    private void TryExecute(string sql)
-    {
-        try
-        {
-            Execute(sql);
-        }
-        catch (SqliteException)
-        {
-            // Колонка уже есть или вставлять нечего, обычное дело при миграции.
-        }
     }
 
     private object? Scalar(string sql, params (string Name, object Value)[] args)

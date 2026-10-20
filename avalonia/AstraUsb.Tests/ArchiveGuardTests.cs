@@ -197,7 +197,7 @@ public sealed class ArchiveGuardTests : IDisposable
         using var archive = ArchiveGuard.Open(_dir, requireMarker: false);
         var write = typeof(ArchiveDirectory).GetMethod("WriteFile", BindingFlags.Instance | BindingFlags.NonPublic)!;
         Action<FileStream> failure = output => { output.Write(new byte[100]); throw new IOException("source failed"); };
-        var error = Assert.Throws<TargetInvocationException>(() => write.Invoke(archive, ["partial.mp4", failure, null, false]));
+        var error = Assert.Throws<TargetInvocationException>(() => write.Invoke(archive, ["partial.mp4", failure, null, false, 0x180u]));
         Assert.IsType<IOException>(error.InnerException);
         Assert.False(File.Exists(Path.Combine(_dir, "partial.mp4")));
     }

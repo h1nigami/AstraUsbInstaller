@@ -86,6 +86,62 @@ public sealed class FileExporterTests : IDisposable
     }
 
     [Fact]
+    public void A_missing_file_records_the_source_path_and_reason()
+    {
+        var absent = Path.Combine(_store, "Device1", "missing.mp4");
+
+        var result = FileExporter.Export([absent], _target, Stamp);
+
+        Assert.Equal(1, result.Missing);
+        Assert.True(File.Exists(CrashLog.FilePath));
+        var log = File.ReadAllText(CrashLog.FilePath);
+        Assert.Contains(absent, log);
+        Assert.Contains("Exception", log);
+    }
+
+    [Fact]
+    public void An_export_failure_records_the_rejected_source_and_reason()
+    {
+        var outside = Path.Combine(_dir, "private.mp4");
+        File.WriteAllText(outside, "private");
+
+        var result = FileExporter.Export([outside], _target, Stamp);
+
+        Assert.Equal(1, result.Failed);
+        Assert.True(File.Exists(CrashLog.FilePath));
+        var log = File.ReadAllText(CrashLog.FilePath);
+        Assert.Contains(outside, log);
+        Assert.Contains("IOException", log);
+    }
+
+    [Fact]
+    public void Export_preserves_the_file_mtime()
+    {
+        var source = File_("clip.mp4");
+        var when = new DateTime(2020, 2, 3, 4, 5, 6, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(source, when);
+
+        var result = FileExporter.Export([source], _target, Stamp);
+
+        Assert.Equal(1, result.Copied);
+        Assert.Equal(when, File.GetLastWriteTimeUtc(Path.Combine(ExportFolder, "clip.mp4")));
+    }
+
+    [Fact]
+    public void Export_preserves_the_source_access_time_after_reading()
+    {
+        var source = File_("clip.mp4");
+        File.SetLastWriteTimeUtc(source, new DateTime(2020, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+        File.SetLastAccessTimeUtc(source, new DateTime(2050, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+
+        var result = FileExporter.Export([source], _target, Stamp);
+
+        Assert.Equal(1, result.Copied);
+        Assert.Equal(File.GetLastAccessTimeUtc(source),
+            File.GetLastAccessTimeUtc(Path.Combine(ExportFolder, "clip.mp4")));
+    }
+
+    [Fact]
     public void The_result_counts_the_bytes_actually_written()
     {
         var one = File_("Device1/запись.mp4", "12345");

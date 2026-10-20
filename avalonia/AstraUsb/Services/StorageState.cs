@@ -11,25 +11,27 @@ public sealed record StorageState(long Total, long Free, string Label, bool Avai
 {
     public static StorageState Unknown(string root) => new(0, 0, root, false);
 
-    /// <summary>Опрашивает том архива. Ошибка это не беда: полоса просто не меняется.</summary>
+    /// <summary>Читает место на доступном томе архива.</summary>
     public static StorageState Read(string backupRoot)
     {
         try
         {
-            var root = Path.GetPathRoot(Path.GetFullPath(backupRoot));
-            if (string.IsNullOrEmpty(root))
-                return Unknown(backupRoot);
-
-            var drive = new DriveInfo(root);
+            using var archive = ArchiveGuard.Open(backupRoot);
+            // На Linux DriveInfo читает statvfs переданного пути, включая точку монтирования внутри /mnt.
+            var drive = new DriveInfo(archive.Path);
             if (!drive.IsReady || drive.TotalSize <= 0)
                 return Unknown(backupRoot);
 
-            var label = string.IsNullOrEmpty(drive.VolumeLabel) ? root : drive.VolumeLabel;
+            var total = drive.TotalSize;
+            var free = drive.AvailableFreeSpace;
+            var label = OperatingSystem.IsLinux() || string.IsNullOrEmpty(drive.VolumeLabel)
+                ? archive.Root : drive.VolumeLabel;
+            archive.Verify();
 
-            return new StorageState(drive.TotalSize, drive.AvailableFreeSpace, label,
-                ArchiveGuard.Available(backupRoot));
+            return new StorageState(total, free, label, true);
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException
+                                      or ArgumentException or System.Security.SecurityException)
         {
             return Unknown(backupRoot);
         }

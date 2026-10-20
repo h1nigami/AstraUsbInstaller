@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Nodes;
+using System.Text;
 
 namespace AstraUsb.Services;
 
@@ -143,6 +144,31 @@ public sealed class Settings
         WriteIndented = true,
     };
 
+    private static readonly UTF8Encoding Utf8 = new(false, true);
+
+    private void Validate()
+    {
+        if (LockTimeoutMinutes < 0)
+            throw new JsonException($"Поле {nameof(LockTimeoutMinutes)}: ожидалось целое число не меньше 0");
+        if (KeepDays < 0)
+            throw new JsonException($"Поле {nameof(KeepDays)}: ожидалось целое число не меньше 0");
+        foreach (var property in typeof(Settings).GetProperties().Where(p => p.PropertyType == typeof(string)
+                     && p.SetMethod?.IsPublic == true && p.Name != nameof(BackupRelativePath)))
+            if (property.GetValue(this) is null)
+                throw new JsonException($"Поле {property.Name}: ожидалась строка");
+    }
+
+    private static Settings ReadValidated(string text)
+    {
+        var loaded = JsonSerializer.Deserialize<Settings>(text, Json)
+            ?? throw new JsonException("Ожидался объект JSON");
+        loaded.Validate();
+        return loaded;
+    }
+
+    private static void ReportReadError(Exception error) =>
+        StationLog.LocalOnce("settings:" + FilePath, $"Не удалось прочитать настройки {FilePath}: {error.Message}");
+
     public static string FilePath => Path.Combine(AppPaths.DataDir, "settings.json");
 
     /// <summary>
@@ -163,26 +189,25 @@ public sealed class Settings
         {
             try
             {
-                var text = File.ReadAllText(FilePath);
-                var loaded = JsonSerializer.Deserialize<Settings>(text);
-                if (loaded is not null)
-                {
-                    if (string.IsNullOrEmpty(loaded.BackupRoot))
-                        loaded.BackupRoot = AppPaths.BackupsRoot;
-                    loaded._loaded = JsonSerializer.SerializeToNode(loaded, Json)!.AsObject();
-                    return loaded;
-                }
+                var loaded = ReadValidated(File.ReadAllText(FilePath, Utf8));
+                if (string.IsNullOrEmpty(loaded.BackupRoot))
+                    loaded.BackupRoot = AppPaths.BackupsRoot;
+                loaded._loaded = JsonSerializer.SerializeToNode(loaded, Json)!.AsObject();
+                StationLog.LocalOnce("settings:" + FilePath, null);
+                return loaded;
             }
             catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
             {
                 // Файла ещё нет: станция не настраивалась, берём значения по умолчанию.
                 var defaults = new Settings { BackupRoot = AppPaths.BackupsRoot };
                 defaults._loaded = JsonSerializer.SerializeToNode(defaults, Json)!.AsObject();
+                StationLog.LocalOnce("settings:" + FilePath, null);
                 return defaults;
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+                or NotSupportedException or DecoderFallbackException)
             {
-                // Испорчен или не читается: см. Unreadable.
+                ReportReadError(error);
             }
 
             // Из-за настроек станция запускаться не перестаёт, но и писать
@@ -208,24 +233,30 @@ public sealed class Settings
             var temp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
+                Validate();
                 JsonObject latest = [];
-                if (File.Exists(FilePath))
+                var hasLatest = false;
+                try
                 {
-                    try
-                    {
-                        var text = File.ReadAllText(FilePath);
-                        if (JsonSerializer.Deserialize<Settings>(text, Json) is null)
-                            throw new JsonException("Файл настроек пуст");
-                        latest = JsonNode.Parse(text)!.AsObject();
-                    }
-                    catch (Exception) when (replaceUnreadable)
-                    {
-                        File.Copy(FilePath, FilePath + ".corrupt." + Guid.NewGuid().ToString("N"));
-                    }
+                    var text = File.ReadAllText(FilePath, Utf8);
+                    ReadValidated(text);
+                    latest = JsonNode.Parse(text)!.AsObject();
+                    hasLatest = true;
+                }
+                catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+                {
+                    StationLog.LocalOnce("settings:" + FilePath, null);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+                    or NotSupportedException or DecoderFallbackException)
+                {
+                    ReportReadError(error);
+                    if (!replaceUnreadable) return false;
+                    File.Copy(FilePath, FilePath + ".corrupt." + Guid.NewGuid().ToString("N"));
                 }
                 var current = JsonSerializer.SerializeToNode(this, Json)!.AsObject();
                 foreach (var field in current)
-                    if (_loaded is null || !JsonNode.DeepEquals(field.Value, _loaded[field.Key]))
+                    if (!hasLatest || _loaded is null || !JsonNode.DeepEquals(field.Value, _loaded[field.Key]))
                         latest[field.Key] = field.Value?.DeepClone();
                 Directory.CreateDirectory(AppPaths.DataDir);
                 using (var stream = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
@@ -239,10 +270,14 @@ public sealed class Settings
                     property.SetValue(this, property.GetValue(merged));
                 _loaded = JsonSerializer.SerializeToNode(this, Json)!.AsObject();
                 Unreadable = false;
+                StationLog.LocalOnce("settings:" + FilePath, null);
+                StationLog.LocalOnce("settings-save:" + FilePath, null);
                 return true;
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException
+                or NotSupportedException or ArgumentException)
             {
+                StationLog.LocalOnce("settings-save:" + FilePath, $"Не удалось сохранить настройки {FilePath}: {error.Message}");
                 try
                 {
                     File.Delete(temp);

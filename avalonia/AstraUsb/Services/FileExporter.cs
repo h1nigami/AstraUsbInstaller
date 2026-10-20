@@ -52,10 +52,12 @@ public static class FileExporter
             catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException
                                          || error.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 2 or 3 })
             {
+                CrashLog.Write($"Не найден файл для выгрузки {source}", error);
                 missing++;
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
             {
+                CrashLog.Write($"Не удалось выгрузить файл {source}", error);
                 // Место кончилось, носитель вынули, права не те: остальные
                 // файлы всё равно стоит попробовать.
                 failed++;

@@ -7,6 +7,7 @@ namespace AstraUsb.Tests;
 /// Копирование это самое опасное место: по списку сохранённых файлов потом
 /// удаляются видео с носителя. Проверяем именно это свойство.
 /// </summary>
+[Collection("Каталог данных")]
 public sealed class FileCopierTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("astra-copy-").FullName;
@@ -42,6 +43,19 @@ public sealed class FileCopierTests : IDisposable
         Assert.Equal(0, result.Failed);
         Assert.Contains(photo, result.BackedUp);
         Assert.True(File.Exists(Path.Combine(_dst, "photo.jpg")));
+    }
+
+    [Fact]
+    public void Backup_preserves_the_source_access_time_after_reading()
+    {
+        var source = Write("clip.mp4", "video");
+        File.SetLastWriteTimeUtc(source, new DateTime(2020, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+        File.SetLastAccessTimeUtc(source, new DateTime(2050, 2, 3, 4, 5, 6, DateTimeKind.Utc));
+
+        var result = FileCopier.Copy(_src, _dst, "stamp");
+
+        Assert.Equal(1, result.CopiedFiles);
+        Assert.Equal(File.GetLastAccessTimeUtc(source), File.GetLastAccessTimeUtc(Path.Combine(_dst, "clip.mp4")));
     }
 
     [Fact]
@@ -87,6 +101,81 @@ public sealed class FileCopierTests : IDisposable
     }
 
     [Fact]
+    public void An_existing_changed_version_is_reused_with_its_real_archive_path()
+    {
+        var when = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var source = Write(Path.Combine("DCIM", "clip.mp4"), "old", when);
+        FileCopier.Copy(_src, _dst, "20260902_120000");
+        Write(Path.Combine("DCIM", "clip.mp4"), "new version", when.AddDays(1));
+        FileCopier.Copy(_src, _dst, "20260902_130000");
+
+        var result = FileCopier.Copy(_src, _dst, "20260902_140000");
+
+        Assert.Equal(0, result.CopiedFiles);
+        Assert.Equal(0, result.CopiedBytes);
+        Assert.Equal(0, result.Failed);
+        Assert.Contains(source, result.BackedUp);
+        Assert.Equal(Path.Combine(_dst, "DCIM", "clip_20260902_130000.mp4"), result.Destinations[source]);
+        Assert.Equal(2, Directory.GetFiles(Path.Combine(_dst, "DCIM")).Length);
+    }
+
+    [Theory]
+    [InlineData(-900)]
+    [InlineData(900)]
+    public void A_timestamped_version_with_less_than_one_second_mtime_difference_is_reused(int milliseconds)
+    {
+        var when = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var source = Write("clip.mp4", "new", when);
+        File.WriteAllText(Path.Combine(_dst, "clip.mp4"), "old version");
+        var saved = Path.Combine(_dst, "clip_20260902_120000.mp4");
+        File.WriteAllText(saved, "new");
+        File.SetLastWriteTimeUtc(saved, when.AddMilliseconds(milliseconds));
+
+        var result = FileCopier.Copy(_src, _dst, "20260902_140000");
+
+        Assert.Equal(0, result.CopiedFiles);
+        Assert.Equal(saved, result.Destinations[source]);
+    }
+
+    [Theory]
+    [InlineData("clip_old.mp4", "new", 0)]
+    [InlineData("other_clip_20260902_120000.mp4", "new", 0)]
+    [InlineData("clip_20260902_120000.mp4.bak", "new", 0)]
+    [InlineData("clip_20260902_120000.mp4", "different size", 0)]
+    [InlineData("clip_20260902_120000.mp4", "new", 1000)]
+    public void Similar_names_or_different_metadata_do_not_replace_a_new_backup(string name, string content, int milliseconds)
+    {
+        var when = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        var source = Write("clip.mp4", "new", when);
+        File.WriteAllText(Path.Combine(_dst, "clip.mp4"), "old version");
+        var candidate = Path.Combine(_dst, name);
+        File.WriteAllText(candidate, content);
+        File.SetLastWriteTimeUtc(candidate, when.AddMilliseconds(milliseconds));
+
+        var result = FileCopier.Copy(_src, _dst, "20260902_140000");
+
+        Assert.Equal(1, result.CopiedFiles);
+        Assert.Equal(Path.Combine(_dst, "clip_20260902_140000.mp4"), result.Destinations[source]);
+        Assert.Equal(content, File.ReadAllText(candidate));
+    }
+
+    [Fact]
+    public void A_different_timestamp_collision_keeps_the_original_off_the_backed_up_list()
+    {
+        var source = Write("clip.mp4", "new");
+        File.WriteAllText(Path.Combine(_dst, "clip.mp4"), "old version");
+        var collision = Path.Combine(_dst, "clip_20260902_140000.mp4");
+        File.WriteAllText(collision, "unrelated existing version");
+
+        var result = FileCopier.Copy(_src, _dst, "20260902_140000");
+
+        Assert.Equal(1, result.Failed);
+        Assert.DoesNotContain(source, result.BackedUp);
+        Assert.Equal("new", File.ReadAllText(source));
+        Assert.Equal("unrelated existing version", File.ReadAllText(collision));
+    }
+
+    [Fact]
     public void Marker_file_is_never_copied()
     {
         Write(Markers.LegacyId, "42");
@@ -126,6 +215,85 @@ public sealed class FileCopierTests : IDisposable
         FileCopier.Copy(_src, _dst, "20260902_120000", (files, _) => seen = files);
 
         Assert.Equal(2, seen);
+    }
+
+    [Fact]
+    public void Progress_counts_skipped_files_and_bytes_without_inflating_copy_statistics()
+    {
+        var when = new DateTime(2026, 8, 1, 10, 0, 0, DateTimeKind.Utc);
+        Write("old.mp4", "123", when);
+        FileCopier.Copy(_src, _dst, "20260902_120000");
+        Write("new.mp4", "12345", when);
+        var seen = new List<(int Files, long Bytes)>();
+
+        var result = FileCopier.Copy(_src, _dst, "20260902_130000", (files, bytes) => seen.Add((files, bytes)));
+
+        Assert.Equal((2, 8L), seen.Last());
+        Assert.Equal(2, seen.Count);
+        Assert.Equal(1, result.CopiedFiles);
+        Assert.Equal(5, result.CopiedBytes);
+        Assert.Equal(2, result.BackedUp.Count);
+    }
+
+    [Fact]
+    public void Progress_reaches_the_end_when_every_file_was_already_saved()
+    {
+        Write("one.mp4", "123");
+        Write("two.mp4", "12345");
+        FileCopier.Copy(_src, _dst, "20260902_120000");
+        var seen = new List<(int Files, long Bytes)>();
+
+        var result = FileCopier.Copy(_src, _dst, "20260902_130000", (files, bytes) => seen.Add((files, bytes)));
+
+        Assert.NotEmpty(seen);
+        Assert.Equal((2, 8L), seen.Last());
+        Assert.Equal(0, result.CopiedFiles);
+        Assert.Equal(0, result.CopiedBytes);
+    }
+
+    [Fact]
+    public void A_copy_failure_records_the_source_and_the_underlying_reason()
+    {
+        var previousRoot = AppPaths.Root;
+        AppPaths.Root = _root;
+        try
+        {
+            var source = Write("clip.mp4", "new");
+            File.WriteAllText(Path.Combine(_dst, "clip.mp4"), "old version");
+            File.WriteAllText(Path.Combine(_dst, "clip_stamp.mp4"), "collision");
+
+            var result = FileCopier.Copy(_src, _dst, "stamp");
+
+            Assert.Equal(1, result.Failed);
+            Assert.True(File.Exists(CrashLog.FilePath));
+            var log = File.ReadAllText(CrashLog.FilePath);
+            Assert.Contains(source, log);
+            Assert.Contains("IOException", log);
+            Assert.Contains("clip_stamp.mp4", log);
+        }
+        finally { AppPaths.Root = previousRoot; }
+    }
+
+    [Fact]
+    public void An_unreachable_destination_records_its_path_and_reason()
+    {
+        var previousRoot = AppPaths.Root;
+        AppPaths.Root = _root;
+        try
+        {
+            Write("clip.mp4", "new");
+            var blocked = Path.Combine(_root, "blocked");
+            File.WriteAllText(blocked, "not a directory");
+
+            var result = FileCopier.Copy(_src, blocked, "stamp");
+
+            Assert.Equal(1, result.Failed);
+            Assert.True(File.Exists(CrashLog.FilePath));
+            var log = File.ReadAllText(CrashLog.FilePath);
+            Assert.Contains(blocked, log);
+            Assert.Contains("Exception", log);
+        }
+        finally { AppPaths.Root = previousRoot; }
     }
 
     [Fact]

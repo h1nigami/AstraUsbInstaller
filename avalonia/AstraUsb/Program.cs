@@ -26,6 +26,7 @@ internal static class Program
         // Киоск занимает весь экран, консоли у него нет, и упавшая программа
         // не оставляет следа, кроме исчезнувшего окна. Поэтому падения
         // пишутся в файл рядом с базой станции.
+        Services.StationLog.Write($"Запуск станции: {Services.VersionInfo.Label()}");
         Services.CrashLog.Install();
 
         try

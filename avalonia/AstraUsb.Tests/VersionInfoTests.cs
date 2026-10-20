@@ -50,6 +50,23 @@ public sealed class VersionInfoTests : IDisposable
         Assert.Equal(VersionInfo.Build(), VersionInfo.Tag());
     }
 
+    [Fact]
+    public void Invalid_utf8_in_the_release_file_uses_the_build_version()
+    {
+        File.WriteAllBytes(AppPaths.VersionFile,
+            [.. System.Text.Encoding.ASCII.GetBytes("v2."), 0xff, .. System.Text.Encoding.ASCII.GetBytes(" 2026-09-02")]);
+
+        Assert.Equal(VersionInfo.Build(), VersionInfo.Tag());
+    }
+
+    [Fact]
+    public void An_invalid_application_path_is_not_hidden_as_a_missing_release_file()
+    {
+        AppPaths.Root = "invalid\0path";
+
+        Assert.ThrowsAny<ArgumentException>(() => VersionInfo.Tag());
+    }
+
     public void Dispose()
     {
         AppPaths.Root = _root;

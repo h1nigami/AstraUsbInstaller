@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
 using System.Globalization;
 using AstraUsb.Services;
 using Avalonia.Media.Imaging;
@@ -41,10 +43,8 @@ public sealed partial class FoundFile : ObservableObject
 /// <summary>
 /// Вкладка «Запрос данных».
 ///
-/// Опора отбора это время загрузки в станцию: его ставит станция, поэтому оно
-/// достоверно. Время съёмки ставит регистратор, и на сбитых часах оно уводит
-/// поиск в сторону, поэтому идёт отдельным условием и помечается, когда ему
-/// нельзя верить.
+/// Основной период проверяет дату изменения файла. Время съёмки
+/// остаётся отдельным условием с пометкой о сбитых часах регистратора.
 /// </summary>
 public sealed partial class SearchViewModel : ObservableObject
 {
@@ -60,6 +60,7 @@ public sealed partial class SearchViewModel : ObservableObject
     private readonly string _dbPath;
     private readonly string? _archiveRoot;
     private CancellationTokenSource? _searchCancellation;
+    private readonly HashSet<FoundFile> _observedRows = [];
 
     /// <summary>Поколение запроса: ответ прежнего не должен перебить новый.</summary>
     private int _generation;
@@ -94,7 +95,9 @@ public sealed partial class SearchViewModel : ObservableObject
 
     partial void OnFiltersExpandedChanged(bool value) => OnPropertyChanged(nameof(FiltersLabel));
     [ObservableProperty] private bool _searching;
-    [ObservableProperty] private bool _exporting;
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ExportCommand))]
+    private bool _exporting;
 
     [ObservableProperty] private string _exportTarget = "";
     [ObservableProperty] private string _noteInput = "";
@@ -226,7 +229,7 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>Сколько строк отобрано: число выносится в подписи действий.</summary>
     public int SelectedCount => Results.Count(r => r.Selected);
 
-    public string ExportLabel => SelectedCount > 0 ? $"Выгрузить ({SelectedCount})" : "Выгрузить";
+    public string ExportLabel => $"Выгрузить ({(SelectedCount > 0 ? SelectedCount : Results.Count)})";
     public string DeleteLabel => SelectedCount > 0 ? $"Удалить ({SelectedCount})" : "Удалить";
 
     public SearchViewModel() : this(AppPaths.Database)
@@ -237,7 +240,33 @@ public sealed partial class SearchViewModel : ObservableObject
     {
         _dbPath = dbPath;
         _archiveRoot = archiveRoot;
+        Results.CollectionChanged += ResultsChanged;
         _ = ReloadDepartments();
+    }
+
+    private void ResultsChanged(object? sender, NotifyCollectionChangedEventArgs change)
+    {
+        if (change.Action == NotifyCollectionChangedAction.Reset)
+        {
+            foreach (var row in _observedRows)
+                row.PropertyChanged -= ResultChanged;
+            _observedRows.Clear();
+        }
+        if (change.OldItems is not null)
+            foreach (FoundFile row in change.OldItems)
+                if (_observedRows.Remove(row))
+                    row.PropertyChanged -= ResultChanged;
+        if (change.NewItems is not null)
+            foreach (FoundFile row in change.NewItems)
+                if (_observedRows.Add(row))
+                    row.PropertyChanged += ResultChanged;
+        Refresh();
+    }
+
+    private void ResultChanged(object? sender, PropertyChangedEventArgs change)
+    {
+        if (change.PropertyName == nameof(FoundFile.Selected))
+            Refresh();
     }
 
     /// <summary>Список отделов для отбора. Пополняется, пока станция работает.</summary>
@@ -264,9 +293,9 @@ public sealed partial class SearchViewModel : ObservableObject
             foreach (var department in loaded)
                 Departments.Add(department);
         }
-        catch (Exception)
+        catch (Exception error)
         {
-            // Справочник ещё не заведён: отбор по отделу просто недоступен.
+            CrashLog.Write("Не удалось обновить список отделов поиска", error);
         }
 
         Department = Departments.FirstOrDefault(d => d.Id == kept) ?? Departments[0];
@@ -558,21 +587,6 @@ public sealed partial class SearchViewModel : ObservableObject
         DateTime? shotFrom = TryDate(ShotFrom, out var sf) ? sf.Date : null;
         DateTime? shotTo = TryDate(ShotTo, out var st) ? EndOfDay(st) : null;
 
-        var filter = new ArchiveFilter
-        {
-            CollectedFrom = from.Date,
-            CollectedTo = EndOfDay(to),
-            ShotFrom = shotFrom,
-            ShotTo = shotTo,
-            DepartmentId = Department is { Id: > 0 } dep ? dep.Id : null,
-            DeviceId = CameraId(),
-            PersonnelNo = PersonnelNo?.Trim() ?? "",
-            EmployeeName = EmployeeName?.Trim() ?? "",
-            FileName = FileName?.Trim() ?? "",
-            Kind = (MediaKind)Math.Clamp(KindIndex, 0, 4),
-            ProtectedOnly = ProtectedOnly,
-        };
-
         using var cancellation = new CancellationTokenSource();
         _searchCancellation = cancellation;
         Searching = true;
@@ -580,6 +594,21 @@ public sealed partial class SearchViewModel : ObservableObject
 
         try
         {
+            var filter = new ArchiveFilter
+            {
+                CollectedFrom = from.Date,
+                CollectedTo = EndOfDay(to),
+                ShotFrom = shotFrom,
+                ShotTo = shotTo,
+                DepartmentId = Department is { Id: > 0 } dep ? dep.Id : null,
+                DeviceId = CameraId(),
+                PersonnelNo = PersonnelNo?.Trim() ?? "",
+                EmployeeName = EmployeeName?.Trim() ?? "",
+                FileName = FileName?.Trim() ?? "",
+                Kind = (MediaKind)Math.Clamp(KindIndex, 0, 4),
+                ProtectedOnly = ProtectedOnly,
+            };
+
             var found = await Task.Run(() => new ArchiveSearch(_dbPath, _archiveRoot)
                 .Find(filter, token: cancellation.Token), cancellation.Token);
 
@@ -787,13 +816,13 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>Выгружает отобранное наружу: на флешку или в сетевую папку.</summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanExport))]
     private async Task Export()
     {
         if (Exporting)
             return;
 
-        var rows = Chosen();
+        var rows = ExportTargets();
         if (rows.Count == 0)
         {
             Hint = "отберите записи галочками";
@@ -843,7 +872,16 @@ public sealed partial class SearchViewModel : ObservableObject
         finally
         {
             Exporting = false;
+            Refresh();
         }
+    }
+
+    private bool CanExport() => Results.Count > 0 && !Exporting;
+
+    private List<FoundFile> ExportTargets()
+    {
+        var selected = Results.Where(row => row.Selected).ToList();
+        return selected.Count > 0 ? selected : Results.ToList();
     }
 
     /// <summary>Обновляет счётчики отбора в подписях действий.</summary>
@@ -852,6 +890,7 @@ public sealed partial class SearchViewModel : ObservableObject
         OnPropertyChanged(nameof(SelectedCount));
         OnPropertyChanged(nameof(ExportLabel));
         OnPropertyChanged(nameof(DeleteLabel));
+        ExportCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Отобранные строки, а если галочек нет, то выделенная в списке.</summary>
@@ -890,21 +929,14 @@ public sealed partial class SearchViewModel : ObservableObject
         if (wanted.Length == 0)
             return null;
 
-        try
-        {
-            using var registry = new DeviceRegistry(_dbPath);
-            var match = registry.ListDevices().FirstOrDefault(d =>
-                d.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase)
-                || d.FirmwareId.Contains(wanted, StringComparison.OrdinalIgnoreCase)
-                || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)
-                || d.Id.ToString() == wanted);
+        using var registry = new DeviceRegistry(_dbPath);
+        var match = registry.ListDevices().FirstOrDefault(d =>
+            d.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+            || d.FirmwareId.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+            || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+            || d.Id.ToString() == wanted);
 
-            return match?.Id ?? -1;
-        }
-        catch (Exception)
-        {
-            return -1;
-        }
+        return match?.Id ?? -1;
     }
 
     private static bool TryDate(string text, out DateTime value) =>
@@ -916,6 +948,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
     private static string Size(long bytes)
     {
+        if (bytes < 1024) return $"{bytes} Б";
         var mb = bytes / 1024d / 1024;
         return mb >= 1024 ? $"{mb / 1024:0.0} ГБ"
             : mb >= 1 ? $"{mb:0.0} МБ"

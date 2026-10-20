@@ -131,7 +131,7 @@
     <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
 
       <TabItem Header="СБОР ДАННЫХ">
-        <Grid RowDefinitions="Auto,Auto,*" Margin="10,8">
+        <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="10,8">
 
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="4,0,4,6">
             <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
@@ -168,8 +168,22 @@
                        VerticalAlignment="Center" Text="{Binding SafeRemovalStatus}" />
           </Grid>
 
+          <Border Grid.Row="2" Margin="4,0,4,8" Padding="12,8" CornerRadius="12"
+                  Background="{StaticResource BgPanelBrush}"
+                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1">
+            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,14">
+              <TextBlock Text="ДИСК АРХИВА" Classes="label" VerticalAlignment="Center" Margin="0,0,16,0" />
+              <TextBlock Grid.Column="1" Text="{Binding StorageLabel}" FontSize="13"
+                         HorizontalAlignment="Right" TextTrimming="CharacterEllipsis"
+                         Foreground="{Binding StorageBrush}" />
+              <ProgressBar Grid.Row="1" Grid.ColumnSpan="2" Minimum="0" Maximum="150"
+                           Value="{Binding StorageWidth}" Foreground="{Binding StorageBrush}"
+                           Background="{StaticResource BgSurfaceBrush}" Height="8" Margin="0,6,0,0" />
+            </Grid>
+          </Border>
+
           <!-- Сетка: до двенадцати окон, компоновка по умолчанию -->
-          <ScrollViewer Classes="fade" Grid.Row="2" IsVisible="{Binding IsGridLayout}">
+          <ScrollViewer Classes="fade" Grid.Row="3" IsVisible="{Binding IsGridLayout}">
           <ItemsControl ItemsSource="{Binding Ports}">
             <ItemsControl.ItemsPanel>
               <ItemsPanelTemplate>
@@ -220,7 +234,7 @@
           </ScrollViewer>
 
           <!-- Список: строки, когда окон больше двенадцати -->
-          <ScrollViewer Classes="fade" Grid.Row="2" IsVisible="{Binding IsListLayout}">
+          <ScrollViewer Classes="fade" Grid.Row="3" IsVisible="{Binding IsListLayout}">
             <ItemsControl ItemsSource="{Binding Ports}">
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:PortViewModel">
@@ -272,7 +286,7 @@
           </ScrollViewer>
 
           <!-- Схема стойки: карта отсеков для сверки номеров с железом -->
-          <Border Grid.Row="2" Classes="panel fade" Padding="10" IsVisible="{Binding IsRackLayout}">
+          <Border Grid.Row="3" Classes="panel fade" Padding="10" IsVisible="{Binding IsRackLayout}">
             <Grid RowDefinitions="Auto,*">
               <TextBlock Grid.Row="0" Margin="4,2,0,8" Classes="hint"
                            Text="Окна заполняются в порядке обнаружения регистраторов" />
@@ -381,7 +395,7 @@
 
               <UniformGrid Columns="3">
                 <StackPanel Margin="0,0,10,0">
-                  <TextBlock Text="ЗАГРУЖЕНО В СТАНЦИЮ" Classes="field" />
+                  <TextBlock Text="ДАТА ИЗМЕНЕНИЯ ФАЙЛА" Classes="field" />
                   <Grid ColumnDefinitions="*,10,*">
                     <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.From}" />
                     <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.To}" />
@@ -505,7 +519,7 @@
               <TextBox Text="{Binding Search.ExportTarget}" Width="230" Height="46"
                        Watermark="папка или флешка" />
               <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="46"
-                      FontSize="12" IsEnabled="{Binding !Search.Exporting}"
+                      FontSize="12"
                       Command="{Binding Search.ExportCommand}" />
               <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="46"
                       FontSize="12" Command="{Binding Search.DeleteCommand}" />

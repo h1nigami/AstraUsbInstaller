@@ -40,13 +40,13 @@ public static class SourceCleaner
                 File.Delete(file);
                 deleted++;
             }
-            catch (Exception)
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
             {
-                // Файл занят или носитель только для чтения, пропускаем,
-                // потерять данные тут страшнее, чем оставить лишнее.
+                CrashLog.Write($"Не удалось удалить исходный файл {file}", error);
             }
         }
 
+        if (deleted > 0) StationLog.Write($"С носителя удалено видео: {deleted}");
         return deleted;
     }
 
@@ -54,10 +54,16 @@ public static class SourceCleaner
     {
         try
         {
-            return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories);
+            return Directory.EnumerateFiles(root, "*", new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                IgnoreInaccessible = false,
+            }).ToArray();
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            CrashLog.Write($"Не удалось прочитать носитель для удаления видео {root}", error);
             return Array.Empty<string>();
         }
     }

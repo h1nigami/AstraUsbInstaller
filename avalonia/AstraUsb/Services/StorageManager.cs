@@ -33,6 +33,7 @@ public static class StorageManager
     {
         RecurseSubdirectories = true,
         AttributesToSkip = FileAttributes.ReparsePoint,
+        IgnoreInaccessible = false,
     };
 
     public static StorageStatus Check(string root, long minFreeBytes)
@@ -181,9 +182,10 @@ public static class StorageManager
         {
             size = archive.DeleteFile(Path.GetRelativePath(archive.Root, path));
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             // Файл занят или недоступен: запись оставляем, попробуем позже.
+            CrashLog.Write($"Не удалось удалить архивный файл {path}", error);
             return null;
         }
 
@@ -218,21 +220,20 @@ public static class StorageManager
     /// <summary>Файлы хранилища от самых ранних к поздним.</summary>
     private static IEnumerable<FileInfo> OldestFirst(ArchiveDirectory archive)
     {
-        FileInfo[] files;
         try
         {
             archive.Verify();
-            files = new DirectoryInfo(archive.Path).EnumerateDirectories()
+            return new DirectoryInfo(archive.Path).EnumerateDirectories()
                 .Where(d => ArchiveGuard.IsDeviceFolderName(d.Name) && !d.Attributes.HasFlag(FileAttributes.ReparsePoint))
                 .SelectMany(d => d.EnumerateFiles("*", Walk))
+                .OrderBy(f => f.LastWriteTimeUtc)
                 .ToArray();
         }
-        catch (Exception)
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
+            CrashLog.Write($"Не удалось прочитать файлы архива {archive.Root}", error);
             return Array.Empty<FileInfo>();
         }
-
-        return files.OrderBy(f => f.LastWriteTimeUtc);
     }
 
 }

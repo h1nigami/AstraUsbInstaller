@@ -1,6 +1,7 @@
 #!/bin/sh
 # docker run --rm --network none -e ARCHIVE_LEAF_TEST_CONTAINER=1 -v "${PWD}:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh /src/avalonia/AstraUsb.Tests/archive-leaf-integration.sh
 set -eu
+umask 022
 [ "${ARCHIVE_LEAF_TEST_CONTAINER:-}" = 1 ] && [ -f /.dockerenv ] || exit 2
 mkdir -p /tmp/archive-leaf
 # Меняем только физическую политику в тестовой копии. Native I/O остаётся настоящим.
@@ -25,6 +26,7 @@ cat > /tmp/archive-leaf/ArchiveLeaf.csproj <<'PROJECT'
   <ItemGroup>
     <Compile Include="/src/avalonia/AstraUsb.Tests/ArchiveLeafIntegration.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/ArchiveDirectory.cs" />
+    <Compile Include="/src/avalonia/AstraUsb/Services/AppPaths.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/FileCopier.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/Markers.cs" />
     <Compile Include="/tmp/archive-leaf/ArchiveGuard.LeafFixture.cs" />
