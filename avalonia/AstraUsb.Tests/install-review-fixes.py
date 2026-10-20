@@ -38,7 +38,7 @@ case "$1" in
  list-unit-files) echo 'astra-usb-monitor.service disabled';;
  is-active) case "$unit" in astra-usb-monitor*|astra-usb-update.timer|astra-usb-update.service) [ "$PYTHON_ACTIVE" = 1 ] && [ "${PYTHON_ACTIVE_UNIT:-$unit}" = "$unit" ];; *) exit 3;; esac;;
  is-enabled) case "$unit" in astra-usb-monitor*|astra-usb-update.timer) [ "$PYTHON_ENABLED" = 1 ];; astra-usb-update.service) [ "${PYTHON_STATIC_UPDATER:-0}" = 1 ];; *) exit 1;; esac;;
- show) echo loaded;;
+ show) case "$*" in *ActiveState*) echo "${PYTHON_ACTIVE_STATE:-inactive}";; *) echo loaded;; esac;;
  *) echo "systemctl $*" >> "$REVIEW_ROOT/commands";;
 esac
 """)
@@ -148,6 +148,17 @@ else: pathlib.Path(output).write_bytes(package)
                 result = self.run_script(script, *args)
                 self.assertNotEqual(0, result.returncode, result.stdout)
                 self.assertEqual("", self.commands.read_text())
+
+    def test_activating_or_deactivating_python_updater_blocks_all_installers(self):
+        preinst = self.build_preinst()
+        for state in ("activating", "deactivating"):
+            self.env["PYTHON_ACTIVE_STATE"] = state
+            for script, args in ((self.native, ()), (self.online, ("v2.7.0",)), (preinst, ("install",))):
+                with self.subTest(state=state, script=script.name):
+                    self.commands.write_text("")
+                    result = self.run_script(script, *args)
+                    self.assertNotEqual(0, result.returncode, result.stdout)
+                    self.assertEqual("", self.commands.read_text())
 
     def test_online_without_tag_selects_station_instead_of_python_latest(self):
         result = self.run_script(self.online)

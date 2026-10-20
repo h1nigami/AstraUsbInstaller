@@ -60,6 +60,7 @@ set -e
 if [ "${1:-}" != remove ] && [ -d /run/systemd/system ]; then
     for unit in astra-usb-monitor.service astra-usb-update.timer astra-usb-update.service; do
         if systemctl is-active --quiet "$unit" || \
+            systemctl show -p ActiveState --value "$unit" | grep -Eq '^(activating|deactivating)$' || \
             { [ "$unit" != astra-usb-update.service ] && systemctl is-enabled --quiet "$unit"; }; then
             echo "Установка прервана: Python-версия активна или включена. Сначала выполните явную миграцию."
             exit 1

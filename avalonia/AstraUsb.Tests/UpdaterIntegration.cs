@@ -46,9 +46,13 @@ public static class UpdaterIntegration
         if (scenario is "offline-busy" or "offline-lock")
         {
             File.WriteAllBytes(archive + ".sha256", checksum);
-            var staged = Updater.StageOffline(archive, Updater.Platform());
+            var pending = Updater.OfflineSpoolDir + ".pending-test";
+            var staged = Updater.StageOffline(archive, Updater.Platform(), pending);
             if (staged.Error is not null)
                 throw new InvalidOperationException(staged.Error);
+            if (Updater.TakeOfflineSpool() is not null)
+                throw new InvalidOperationException("неопубликованный пакет виден службе");
+            Updater.PublishOffline(pending);
             var offline = Updater.TakeOfflineSpool()!.Value;
             using var operation = scenario == "offline-lock" ? OperationGuard.Acquire(exclusive: true) : null;
             var run = typeof(Updater).GetMethod("RunOffline", BindingFlags.NonPublic | BindingFlags.Static)!;

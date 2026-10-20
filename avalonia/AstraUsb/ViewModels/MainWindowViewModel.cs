@@ -248,10 +248,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool _offlineChecking;
     private int _offlineGeneration;
-    private readonly Func<string, string, (string? Tag, string? Error)> _stageOffline =
-        (archive, platform) => Updater.StageOffline(archive, platform);
+    private readonly object _offlinePublication = new();
+    private readonly string _offlineSpoolDir = Updater.OfflineSpoolDir;
+    private readonly Func<string, string, string, (string? Tag, string? Error)> _stageOffline =
+        (archive, platform, spool) => Updater.StageOffline(archive, platform, spool);
     private readonly Func<string> _startUpdateService = () => Updater.StartService(checkNetwork: false);
-    private readonly Action _clearOfflineSpool = () => Updater.ClearOfflineSpool();
 
     [RelayCommand]
     private void StartOfflineUpdate()
@@ -267,17 +268,24 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        Interlocked.Increment(ref _offlineGeneration);
-        _offlineKnown = _recent.Values.Select(entry => entry.Device.Name).ToHashSet(StringComparer.Ordinal);
-        OfflineStatus = "Вставьте флешку с файлом обновления…";
-        OfflineWaiting = true;
+        lock (_offlinePublication)
+        {
+            Interlocked.Increment(ref _offlineGeneration);
+            _offlineKnown = _recent.Values.Select(entry => entry.Device.Name).ToHashSet(StringComparer.Ordinal);
+            OfflineStatus = "Вставьте флешку с файлом обновления…";
+            OfflineWaiting = true;
+        }
     }
 
     [RelayCommand]
     private void CancelOfflineUpdate()
     {
-        Interlocked.Increment(ref _offlineGeneration);
-        StopOfflineWaiting(keep: null);
+        lock (_offlinePublication)
+        {
+            if (!OfflineWaiting) return;
+            Interlocked.Increment(ref _offlineGeneration);
+            StopOfflineWaiting(keep: null);
+        }
     }
 
     private void StopOfflineWaiting(string? keep)
@@ -336,7 +344,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         _offlineChecking = true;
         var generation = _offlineGeneration;
-        _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform(), generation))
+        var pending = _offlineSpoolDir + ".pending-" + Guid.NewGuid().ToString("N");
+        _ = Task.Run(() => CheckOfflineMedia(targets, Updater.InstalledTag(), Updater.Platform(), generation, pending))
             .ContinueWith(task =>
             {
                 var failure = task.Exception?.GetBaseException();
@@ -350,42 +359,47 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                     try
                     {
                         if (_disposed || generation != _offlineGeneration || !OfflineWaiting)
-                        {
-                            if (done) await Task.Run(_clearOfflineSpool);
                             return;
-                        }
                         if (!done)
                         {
                             OfflineStatus = status;
                             return;
                         }
 
-                        // Передача установщику начинается только для текущего ожидания.
-                        StopOfflineWaiting(keep: name);
-                        var kick = await Task.Run(() => generation == Volatile.Read(ref _offlineGeneration)
-                            ? _startUpdateService() : "");
-                        if (kick != Updater.UpdateStarted) await Task.Run(_clearOfflineSpool);
+                        lock (_offlinePublication)
+                        {
+                            if (_disposed || generation != _offlineGeneration || !OfflineWaiting) return;
+                            Updater.PublishOffline(pending, _offlineSpoolDir);
+                            // После публикации пакет принадлежит службе, ожидание завершено.
+                            StopOfflineWaiting(keep: name);
+                        }
+                        var kick = await Task.Run(_startUpdateService);
                         if (_disposed || generation != _offlineGeneration) return;
                         if (kick == Updater.UpdateStarted)
                         {
                             _actions.Write(ActionLog.Settings, $"обновление {tag} с флешки передано установщику");
                             Settings.Hint = $"обновление {tag} передано установщику, программа скоро перезапустится";
                         }
-                        else Settings.Hint = kick;
+                        else Settings.Hint = $"{kick}. Пакет сохранён для следующей проверки обновлений";
                     }
                     catch (Exception error)
                     {
                         var message = UserError.Report("Не удалось передать обновление установщику", error);
                         if (!_disposed && generation == _offlineGeneration) Settings.Hint = message;
                     }
-                    finally { _offlineChecking = false; }
+                    finally
+                    {
+                        await Task.Run(() => Updater.ClearOfflineSpool(pending));
+                        _offlineChecking = false;
+                    }
                 });
             });
     }
 
     /// <summary>Ищет архив на флешках и готовит его для службы обновления. Идёт в стороне от интерфейса.</summary>
     private (bool Done, string Status, string Tag, string Name) CheckOfflineMedia(
-        IReadOnlyList<(string Name, string Mount)> targets, string installed, string platform, int generation)
+        IReadOnlyList<(string Name, string Mount)> targets, string installed, string platform, int generation,
+        string pending)
     {
         var status = "На подключённой флешке обновление не найдено";
         foreach (var (name, mount) in targets)
@@ -403,12 +417,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             }
 
             if (generation != Volatile.Read(ref _offlineGeneration)) break;
-            var (staged, error) = _stageOffline(archive, platform);
+            var (staged, error) = _stageOffline(archive, platform, pending);
             if (generation != Volatile.Read(ref _offlineGeneration))
-            {
-                _clearOfflineSpool();
                 break;
-            }
             if (error is not null)
             {
                 status = $"Архив {tag}: {error}";
@@ -2039,9 +2050,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
-        Interlocked.Increment(ref _offlineGeneration);
+        lock (_offlinePublication)
+        {
+            if (_disposed) return;
+            _disposed = true;
+            Interlocked.Increment(ref _offlineGeneration);
+        }
         Search.CancelSearch();
         SafeRemovalActive = true;
         _mountStop.Cancel();

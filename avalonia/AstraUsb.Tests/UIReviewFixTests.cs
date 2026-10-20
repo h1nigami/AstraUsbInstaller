@@ -178,9 +178,9 @@ public sealed class UIReviewFixTests : IDisposable
         var stick = UpdateStick("v2.99");
         var spool = Path.Combine(_dir, "spool");
         var handoff = Path.Combine(_dir, "handoff");
-        SetField(model, "_stageOffline", new Func<string, string, (string? Tag, string? Error)>(
-            (archive, platform) => Updater.StageOffline(archive, platform, spool)));
-        SetField(model, "_clearOfflineSpool", new Action(() => Updater.ClearOfflineSpool(spool)));
+        SetField(model, "_stageOffline", new Func<string, string, string, (string? Tag, string? Error)>(
+            (archive, platform, pending) => Updater.StageOffline(archive, platform, pending)));
+        SetField(model, "_offlineSpoolDir", spool);
         SetField(model, "_startUpdateService", new Func<string>(() =>
         {
             File.WriteAllText(handoff, "передано");
@@ -246,9 +246,9 @@ public sealed class UIReviewFixTests : IDisposable
         var handoff = Path.Combine(_dir, "handoff");
         var staged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
-        SetField(model, "_stageOffline", new Func<string, string, (string? Tag, string? Error)>((archive, platform) =>
+        SetField(model, "_stageOffline", new Func<string, string, string, (string? Tag, string? Error)>((archive, platform, pending) =>
         {
-            var result = Updater.StageOffline(archive, platform, spool);
+            var result = Updater.StageOffline(archive, platform, pending);
             if (archive.Contains("v2.99"))
             {
                 staged.SetResult();
@@ -256,7 +256,7 @@ public sealed class UIReviewFixTests : IDisposable
             }
             return result;
         }));
-        SetField(model, "_clearOfflineSpool", new Action(() => Updater.ClearOfflineSpool(spool)));
+        SetField(model, "_offlineSpoolDir", spool);
         SetField(model, "_startUpdateService", new Func<string>(() =>
         {
             File.WriteAllText(handoff, Updater.TakeOfflineSpool(spool)!.Value.Tag);
@@ -269,7 +269,7 @@ public sealed class UIReviewFixTests : IDisposable
             model.CancelOfflineUpdateCommand.Execute(null);
             model.OfflineWaiting = true;
             Watch(model, second);
-            Assert.Equal("v2.99", Updater.TakeOfflineSpool(spool)!.Value.Tag);
+            Assert.Null(Updater.TakeOfflineSpool(spool));
             release.Set();
             await WaitForOfflineCheck(model);
             Assert.True(model.OfflineWaiting);
@@ -280,6 +280,88 @@ public sealed class UIReviewFixTests : IDisposable
             await WaitForOfflineCheck(model);
             Assert.Equal("v2.100", File.ReadAllText(handoff));
             Assert.Equal("v2.100", Updater.TakeOfflineSpool(spool)!.Value.Tag);
+        }
+        finally { release.Set(); }
+    }
+
+    [AvaloniaFact]
+    public async Task Cancelling_pending_cleanup_preserves_another_published_package()
+    {
+        using var model = new MainWindowViewModel(() => []) { OfflineWaiting = true };
+        var first = UpdateStick("v2.99");
+        var second = UpdateStick("v2.100");
+        var spool = Path.Combine(_dir, "spool");
+        var staged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        SetField(model, "_stageOffline", new Func<string, string, string, (string? Tag, string? Error)>((archive, platform, pending) =>
+        {
+            var result = Updater.StageOffline(archive, platform, pending);
+            staged.SetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+            return result;
+        }));
+        SetField(model, "_offlineSpoolDir", spool);
+        SetField(model, "_startUpdateService", new Func<string>(() => throw new InvalidOperationException("Отменённое обновление передано")));
+        try
+        {
+            Watch(model, first);
+            await staged.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            model.CancelOfflineUpdateCommand.Execute(null);
+            var package = Assert.Single(Updater.FindOfflineArchives(second, Updater.Platform()));
+            Assert.Null(Updater.StageOffline(package.Archive, Updater.Platform(), spool).Error);
+            release.Set();
+            await WaitForOfflineCheck(model);
+            Assert.Equal("v2.100", Updater.TakeOfflineSpool(spool)?.Tag);
+        }
+        finally { release.Set(); }
+    }
+
+    [AvaloniaFact]
+    public async Task A_pending_check_does_not_replace_a_package_owned_by_the_updater()
+    {
+        using var model = new MainWindowViewModel(() => []) { OfflineWaiting = true };
+        var first = UpdateStick("v2.99");
+        var second = UpdateStick("v2.100");
+        var spool = Path.Combine(_dir, "spool");
+        var package = Assert.Single(Updater.FindOfflineArchives(first, Updater.Platform()));
+        Assert.Null(Updater.StageOffline(package.Archive, Updater.Platform(), spool).Error);
+        SetField(model, "_offlineSpoolDir", spool);
+        SetField(model, "_startUpdateService", new Func<string>(() => throw new InvalidOperationException("Пакет заменён")));
+
+        Watch(model, second);
+        await WaitForOfflineCheck(model);
+
+        Assert.Equal("v2.99", Updater.TakeOfflineSpool(spool)?.Tag);
+        Assert.True(model.OfflineWaiting);
+        Assert.Empty(Directory.GetDirectories(_dir, "spool.pending-*"));
+    }
+
+    [AvaloniaFact]
+    public async Task Published_offline_package_belongs_to_the_updater_after_waiting_ends()
+    {
+        using var model = new MainWindowViewModel(() => []) { OfflineWaiting = true };
+        var stick = UpdateStick("v2.99");
+        var spool = Path.Combine(_dir, "spool");
+        var starting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        SetField(model, "_offlineSpoolDir", spool);
+        SetField(model, "_startUpdateService", new Func<string>(() =>
+        {
+            starting.SetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(10))) throw new TimeoutException();
+            return Updater.UpdateStarted;
+        }));
+        try
+        {
+            Watch(model, stick);
+            await starting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(model.OfflineWaiting);
+            model.CancelOfflineUpdateCommand.Execute(null);
+            Assert.Equal("v2.99", Updater.TakeOfflineSpool(spool)?.Tag);
+            release.Set();
+            await WaitForOfflineCheck(model);
+            Assert.Equal("v2.99", Updater.TakeOfflineSpool(spool)?.Tag);
+            Assert.Empty(Directory.GetDirectories(_dir, "spool.pending-*"));
         }
         finally { release.Set(); }
     }
