@@ -164,11 +164,11 @@ public sealed class WebPanel : IDisposable
                 Kind = Enum.TryParse<MediaKind>(kind, true, out var parsed) ? parsed : MediaKind.Any,
             };
 
-            var root = Path.GetFullPath(Settings.Load().BackupRoot);
-            var rows = new ArchiveSearch(_dbPath).Find(filter, 100).Select(r => new
+            var root = Path.GetFullPath(Settings.Load().ResolveBackupRoot());
+            var rows = new ArchiveSearch(_dbPath, root).Find(filter, 100).Select(r => new
             {
-                file = Path.GetFileName(r.File.DestPath),
-                path = RelativeTo(root, r.File.DestPath),
+                file = Path.GetFileName(r.Path),
+                path = RelativeTo(root, r.Path),
                 kind = MediaKinds.Name(r.Kind),
                 camera = r.CameraName,
                 employee = r.EmployeeName,
@@ -180,31 +180,36 @@ public sealed class WebPanel : IDisposable
             return Results.Json(rows);
         });
 
-        app.MapGet("/api/file", (HttpContext context, string p) =>
+        app.MapGet("/api/file", async (HttpContext context, string p) =>
         {
             if (!Authorized(context))
-                return Results.Unauthorized();
+            {
+                await Results.Unauthorized().ExecuteAsync(context);
+                return;
+            }
 
-            // Путь приходит относительным и складывается с корнем архива, а
-            // потом проверяется, что не вышел из него: иначе панель отдавала
-            // бы любой файл станции по «..» в запросе.
-            var root = Path.GetFullPath(Settings.Load().BackupRoot);
-            var full = Path.GetFullPath(Path.Combine(root, p));
+            try
+            {
+                using var operation = OperationGuard.Acquire(dbPath: _dbPath);
+                var current = Settings.Load();
+                using var archive = ArchiveGuard.Open(current.ResolveBackupRoot(), settings: current);
+                if (Path.IsPathRooted(p))
+                    throw new IOException("путь вне архива");
+                var full = current.ArchivePathResolver(archive.Root)(Path.Combine(archive.Root, p));
+                using var source = archive.OpenRead(Path.GetRelativePath(archive.Root, full));
 
-            if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                && !full.Equals(root, StringComparison.OrdinalIgnoreCase))
-                return Results.BadRequest("путь вне архива");
+                new ActionLog(_dbPath).Write(ActionLog.Export,
+                    $"веб-панель: скачана запись {Path.GetFileName(full)}");
 
-            if (!File.Exists(full))
-                return Results.NotFound("записи больше нет в архиве");
-
-            new ActionLog(_dbPath).Write(ActionLog.Export,
-                $"веб-панель: скачана запись {Path.GetFileName(full)}");
-
-            // Range нужен и для перемотки в браузере, и для докачки после
-            // обрыва: записи весят гигабайты.
-            return Results.File(full, enableRangeProcessing: true,
-                fileDownloadName: Path.GetFileName(full));
+                // Защита и блокировка живут до конца передачи, включая Range и отмену запроса.
+                await Results.File(source, enableRangeProcessing: true,
+                    fileDownloadName: Path.GetFileName(full)).ExecuteAsync(context);
+            }
+            catch (Exception error) when (!context.Response.HasStarted
+                && error is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                await Results.NotFound("запись недоступна в подтверждённом архиве").ExecuteAsync(context);
+            }
         });
 
         app.MapPost("/api/bay/{slot:int}/{action}", (HttpContext context, int slot, string action) =>

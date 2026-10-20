@@ -13,7 +13,7 @@ AppId={{8F3B5A64-51D0-4B2C-9C4E-1B5C7C6E9A21}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={autopf}\BestCam Station
+DefaultDirName={localappdata}\Programs\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 VersionInfoVersion={#AppVersion}
@@ -23,9 +23,8 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Программа пишет базу и записи рядом с собой, поэтому ставится с правами
-; администратора: в Program Files иначе не записать.
-PrivilegesRequired=admin
+; База и записи лежат рядом с программой, каталог доступен текущему пользователю.
+PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\AstraUsb.exe
 
 [Languages]

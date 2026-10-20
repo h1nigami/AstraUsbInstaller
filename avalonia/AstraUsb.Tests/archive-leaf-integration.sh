@@ -25,6 +25,8 @@ cat > /tmp/archive-leaf/ArchiveLeaf.csproj <<'PROJECT'
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="/src/avalonia/AstraUsb.Tests/ArchiveLeafIntegration.cs" />
+    <Compile Include="/src/avalonia/AstraUsb.Tests/SourceCleanerRaceIntegration.cs" />
+    <Compile Include="/src/avalonia/AstraUsb/Services/SourceCleaner.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/ArchiveDirectory.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/AppPaths.cs" />
     <Compile Include="/src/avalonia/AstraUsb/Services/FileCopier.cs" />

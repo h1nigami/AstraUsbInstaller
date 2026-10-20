@@ -306,7 +306,84 @@ public sealed class ArchiveDirectory : IDisposable
             ? $"/proc/{Environment.ProcessId}/fd/{output.SafeFileHandle.DangerousGetHandle().ToInt32()}"
             : System.IO.Path.Combine(Path, relative)), null, producer: true);
 
-    private static SafeFileHandle OpenSource(string source)
+    internal static SafeFileHandle OpenSourceDirectory(string source)
+    {
+        RejectLinks(source);
+        return OperatingSystem.IsLinux()
+            ? OpenAt(-100, source, DirectoryFlags) : OpenWindowsDirectory(source);
+    }
+
+    internal static SourceFileIdentity SourceIdentity(SafeFileHandle handle)
+    {
+        var (device, inode) = Identity(handle);
+        if (OperatingSystem.IsLinux() && !Regular(handle))
+            throw new IOException("Источник не является обычным файлом");
+        return new SourceFileIdentity(device, inode, RandomAccess.GetLength(handle), File.GetLastWriteTimeUtc(handle));
+    }
+
+    internal static void DeleteSourceFile(SafeFileHandle root, string sourceRoot, string relative,
+        SourceFileIdentity expected, CancellationToken token)
+    {
+        var parts = Parts(relative);
+        if (parts.Length == 0) throw new IOException("Не задано имя исходного файла");
+        var parent = OperatingSystem.IsLinux() ? OpenAt(root.DangerousGetHandle().ToInt32(), ".", DirectoryFlags)
+            : OpenSourceDirectory(sourceRoot);
+        var path = sourceRoot;
+        try
+        {
+            foreach (var part in parts[..^1])
+            {
+                path = System.IO.Path.Combine(path, part);
+                var child = OperatingSystem.IsLinux() ? OpenChild(parent, part, create: false)
+                    : OpenSourceDirectory(path);
+                parent.Dispose();
+                parent = child;
+            }
+            var name = parts[^1];
+            path = System.IO.Path.Combine(path, name);
+            RejectLinks(path);
+            using var file = OperatingSystem.IsLinux()
+                ? OpenAt(parent.DangerousGetHandle().ToInt32(), name, 0x800 | 0x20000 | 0x80000)
+                : OpenWindowsHandle(path, directory: false, deleting: true);
+            if (SourceIdentity(file) != expected)
+                throw new IOException("Исходный файл сменился после копирования");
+            token.ThrowIfCancellationRequested();
+            if (OperatingSystem.IsLinux())
+            {
+                var fd = parent.DangerousGetHandle().ToInt32();
+                var quarantine = ".astra-clean-" + Guid.NewGuid().ToString("N");
+                if (renameat2(fd, name, fd, quarantine, 1) != 0)
+                    throw Error("Не удалось изолировать исходный файл перед удалением");
+                try
+                {
+                    if (LinuxIdentity(Stat(fd, quarantine, 0x100)) != (expected.Device, expected.Inode)
+                        || SourceIdentity(file) != expected)
+                        throw new IOException("Исходный файл подменён перед удалением");
+                    token.ThrowIfCancellationRequested();
+                    if (unlinkat(fd, quarantine, 0) != 0) throw Error("Не удалось удалить исходный файл");
+                }
+                catch (Exception error)
+                {
+                    if (renameat2(fd, quarantine, fd, name, 1) != 0)
+                    {
+                        var message = $"Исходный файл сохранён под временным именем {System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path)!, quarantine)}";
+                        throw error is OperationCanceledException
+                            ? new OperationCanceledException(message, error, token) : new IOException(message, error);
+                    }
+                    throw;
+                }
+            }
+            else
+            {
+                var delete = new byte[] { 1 };
+                if (!SetFileInformationByHandle(file, 4, delete, 1))
+                    throw Error("Не удалось удалить исходный файл");
+            }
+        }
+        finally { parent.Dispose(); }
+    }
+
+    internal static SafeFileHandle OpenSource(string source)
     {
         try
         {
@@ -544,7 +621,7 @@ public sealed class ArchiveDirectory : IDisposable
 
     private static SafeFileHandle OpenWindowsHandle(string path, bool directory, bool deleting = false, bool append = false)
     {
-        var handle = CreateFileW(path, append ? 0xC0000000u : 0x80000000u,
+        var handle = CreateFileW(path, append ? 0xC0000000u : deleting ? 0x80010000u : 0x80000000u,
             directory ? 3u : deleting ? 5u : 1u, IntPtr.Zero, append ? 4u : 3u,
             (directory ? 0x02000000u : 0) | 0x00200000, IntPtr.Zero);
         if (handle.IsInvalid)
@@ -602,6 +679,8 @@ public sealed class ArchiveDirectory : IDisposable
     [DllImport("libc", SetLastError = true)] private static extern int openat(int fd, string path, int flags, uint mode);
     [DllImport("libc", SetLastError = true)] private static extern int mkdirat(int fd, string path, uint mode);
     [DllImport("libc", SetLastError = true)] private static extern int unlinkat(int fd, string path, int flags);
+    [DllImport("libc", SetLastError = true)] private static extern int renameat2(int oldFd, string oldPath, int newFd,
+        string newPath, uint flags);
     [DllImport("libc", SetLastError = true)] private static extern int fsync(int fd);
     [DllImport("libc", SetLastError = true)] private static extern int flock(int fd, int operation);
     [DllImport("libc", SetLastError = true)] private static extern int statx(int fd, string path, int flags, uint mask, [Out] byte[] stat);
@@ -610,4 +689,8 @@ public sealed class ArchiveDirectory : IDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandle(SafeFileHandle handle, [Out] byte[] info);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int informationClass,
+        byte[] information, uint size);
 }

@@ -26,7 +26,7 @@ public sealed class SourceCleanerTests : IDisposable
         var notSaved = Write("not-saved.mp4");
 
         var deleted = SourceCleaner.DeleteBackedUpVideos(
-            _src, new HashSet<string> { saved });
+            _src, Copied(saved));
 
         Assert.Equal(1, deleted);
         Assert.False(File.Exists(saved));
@@ -41,7 +41,7 @@ public sealed class SourceCleanerTests : IDisposable
         var doc = Write("report.pdf");
 
         var deleted = SourceCleaner.DeleteBackedUpVideos(
-            _src, new HashSet<string> { photo, doc });
+            _src, Copied(photo, doc));
 
         Assert.Equal(0, deleted);
         Assert.True(File.Exists(photo));
@@ -54,7 +54,7 @@ public sealed class SourceCleanerTests : IDisposable
         var clip = Write(Path.Combine("DCIM", "100", "clip.MOV"));
 
         var deleted = SourceCleaner.DeleteBackedUpVideos(
-            _src, new HashSet<string> { clip });
+            _src, Copied(clip));
 
         Assert.Equal(1, deleted);
         Assert.False(File.Exists(clip));
@@ -65,10 +65,17 @@ public sealed class SourceCleanerTests : IDisposable
     {
         var clip = Write("clip.mp4");
 
-        var deleted = SourceCleaner.DeleteBackedUpVideos(_src, new HashSet<string>());
+        var deleted = SourceCleaner.DeleteBackedUpVideos(_src, Copied());
 
         Assert.Equal(0, deleted);
         Assert.True(File.Exists(clip), "пустой список сохранённых не даёт удалять ничего");
+    }
+
+    private CopyResult Copied(params string[] paths)
+    {
+        var result = FileCopier.Copy(_src, _src + "-archive", "20261020_120000");
+        return result with { Destinations = result.Destinations.Where(pair => paths.Contains(pair.Key))
+            .ToDictionary(pair => pair.Key, pair => pair.Value) };
     }
 
     public void Dispose()
@@ -76,6 +83,7 @@ public sealed class SourceCleanerTests : IDisposable
         try
         {
             Directory.Delete(_src, recursive: true);
+            if (Directory.Exists(_src + "-archive")) Directory.Delete(_src + "-archive", recursive: true);
         }
         catch (IOException)
         {

@@ -73,9 +73,10 @@ public static class StorageManager
     /// выбирается очередь на удаление. Запись забывается вместе с файлом,
     /// иначе поиск обещал бы оператору то, чего на диске уже нет.
     /// </param>
+    /// <param name="preservePaths">Текущие пути копий, используемых в расчёте недостающего объёма.</param>
     /// <returns>Сколько байт освобождено.</returns>
     public static long FreeUpSpace(string root, long bytesToFree, StorageMode mode,
-        CollectionLog? log = null)
+        CollectionLog? log = null, IReadOnlySet<string>? preservePaths = null)
     {
         if (mode != StorageMode.Overwrite || bytesToFree <= 0)
             return 0;
@@ -88,6 +89,8 @@ public static class StorageManager
         var freed = 0L;
         var known = log?.CollectedBetween(DateTime.MinValue, DateTime.MaxValue) ?? [];
         var protectedPaths = ProtectedPaths(known, resolve);
+        if (preservePaths is not null)
+            protectedPaths.UnionWith(preservePaths.Select(Full));
         var now = DateTime.Now;
 
         foreach (var entry in known.Where(entry => entry.CollectedAt < now).OrderBy(entry => entry.CollectedAt))
@@ -120,7 +123,7 @@ public static class StorageManager
             // Файл из журнала, до которого очередь не дошла: он новее тех,
             // что уже удалены, и трогать его рано.
             var path = Path.Combine(root, Path.GetRelativePath(archive.Path, file.FullName));
-            if (accounted.Contains(Full(path)))
+            if (accounted.Contains(Full(path)) || protectedPaths.Contains(Full(path)))
                 continue;
 
             freed += Remove(archive, path, log: null) ?? 0;

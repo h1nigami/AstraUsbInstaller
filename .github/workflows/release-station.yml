@@ -41,6 +41,10 @@ jobs:
       - name: Полный набор C# на Windows
         if: runner.os == 'Windows'
         run: dotnet test avalonia/AstraUsb.Tests/AstraUsb.Tests.csproj -c Release
+      - name: Установка Windows без повышения прав
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./avalonia/AstraUsb.Tests/windows-install-guard.ps1
       - name: Проверки C# на Linux
         if: runner.os == 'Linux'
         # Положительные тесты временного архива идут на Windows: Linux
@@ -55,19 +59,32 @@ jobs:
           for script in avalonia/*.sh avalonia/packaging/*.sh avalonia/AstraUsb.Tests/*.sh; do
             bash -n "$script"
           done
+          python3 avalonia/AstraUsb.Tests/install-review-fixes.py "$PWD"
+          docker build -t astra-station-tests -f avalonia/AstraUsb.Tests/Dockerfile .
+          leaf="$(mktemp -d)"
+          docker run --rm --network none -e ARCHIVE_LEAF_TEST_CONTAINER=1 \
+            -v "$PWD:/src:ro" -v "$leaf:/tmp/archive-leaf" mcr.microsoft.com/dotnet/sdk:8.0 \
+            sh /src/avalonia/AstraUsb.Tests/archive-leaf-integration.sh
+          python3 avalonia/AstraUsb.Tests/source-cleaner-race.py "$(command -v dotnet)" "$leaf/bin/ArchiveLeaf.dll"
           docker run --rm --network none -e ARCHIVE_LEAF_TEST_CONTAINER=1 \
             -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
-            sh /src/avalonia/AstraUsb.Tests/archive-leaf-integration.sh
+            sh /src/avalonia/AstraUsb.Tests/station-log-integration.sh
           for scenario in busy offline-busy offline-lock mismatch restarts success handoff; do
             docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 \
               -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
               sh /src/avalonia/AstraUsb.Tests/updater-integration.sh "$scenario"
           done
+
           for script in installer-guard package-guard; do
             docker run --rm --network none -e UPDATER_TEST_CONTAINER=1 \
-              -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 \
+              -v "$PWD:/src:ro" astra-station-tests \
               bash "/src/avalonia/AstraUsb.Tests/$script.sh"
           done
+
+      - name: Перемонтирование архива, веб-панель и FTP на Linux
+        if: runner.os == 'Linux'
+        shell: pwsh
+        run: ./avalonia/AstraUsb.Tests/web-remount-review-integration.ps1 ci -Linux
 
   build:
     needs: verify

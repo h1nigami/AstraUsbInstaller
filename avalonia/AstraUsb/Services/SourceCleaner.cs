@@ -19,25 +19,33 @@ public static class SourceCleaner
     /// </summary>
     /// <param name="sourceRoot">Корень носителя.</param>
     /// <param name="backedUp">
-    /// Пути, которые точно сохранены. Видео вне этого списка не трогается:
-    /// файл, который не удалось скопировать, обязан остаться на носителе.
+    /// Результат копирования с идентичностью сохранённых оригиналов.
+    /// Файл без подтверждённой копии остаётся на носителе.
     /// </param>
     /// <returns>Сколько файлов удалено.</returns>
-    public static int DeleteBackedUpVideos(string sourceRoot, IReadOnlySet<string> backedUp)
+    public static int DeleteBackedUpVideos(string sourceRoot, CopyResult backedUp, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         var deleted = 0;
-
-        foreach (var file in EnumerateFiles(sourceRoot))
+        Microsoft.Win32.SafeHandles.SafeFileHandle root;
+        try { root = ArchiveDirectory.OpenSourceDirectory(sourceRoot); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
-            if (!VideoExtensions.Contains(Path.GetExtension(file)))
-                continue;
-
-            if (!backedUp.Contains(file))
-                continue;
+            CrashLog.Write($"Не удалось прочитать носитель для удаления видео {sourceRoot}", error);
+            return 0;
+        }
+        using var heldRoot = root;
+        VerifyRoot();
+        foreach (var file in backedUp.Destinations.Keys)
+        {
+            token.ThrowIfCancellationRequested();
+            VerifyRoot();
+            if (!VideoExtensions.Contains(Path.GetExtension(file))
+                || !backedUp.SourceFiles.TryGetValue(file, out var identity)) continue;
 
             try
             {
-                File.Delete(file);
+                ArchiveDirectory.DeleteSourceFile(root, sourceRoot, Path.GetRelativePath(sourceRoot, file), identity, token);
                 deleted++;
             }
             catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -46,25 +54,16 @@ public static class SourceCleaner
             }
         }
 
+        token.ThrowIfCancellationRequested();
         if (deleted > 0) StationLog.Write($"С носителя удалено видео: {deleted}");
         return deleted;
-    }
 
-    private static IEnumerable<string> EnumerateFiles(string root)
-    {
-        try
+        void VerifyRoot()
         {
-            return Directory.EnumerateFiles(root, "*", new EnumerationOptions
-            {
-                RecurseSubdirectories = true,
-                AttributesToSkip = FileAttributes.ReparsePoint,
-                IgnoreInaccessible = false,
-            }).ToArray();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
-        {
-            CrashLog.Write($"Не удалось прочитать носитель для удаления видео {root}", error);
-            return Array.Empty<string>();
+            using var current = ArchiveDirectory.OpenSourceDirectory(sourceRoot);
+            if (backedUp.SourceRootIdentity != ArchiveDirectory.Identity(root)
+                || ArchiveDirectory.Identity(current) != backedUp.SourceRootIdentity)
+                throw new IOException("Носитель сменился после копирования");
         }
     }
 }

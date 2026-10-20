@@ -117,83 +117,101 @@ public sealed class BackupService
             // Освобождаем место заранее, если так настроено: иначе копирование
             // упадёт на середине и часть файлов останется недокопированной.
             PurgeExpired(settings, root);
-            EnsureSpace(settings, root, total.Bytes);
-
-            using var operation = OperationGuard.Acquire(dbPath: _dbPath);
-            using var archive = ArchiveGuard.Open(root, settings: settings);
+            (long Bytes, IReadOnlySet<string> ReusedFiles) pending;
+            using (OperationGuard.Acquire(dbPath: _dbPath))
+            using (ArchiveGuard.Open(root, settings: settings))
+                pending = await Task.Run(() => FileCopier.PendingBytes(mountPoint, destination, token), token);
             token.ThrowIfCancellationRequested();
-            if (ReadDeviceId(mountPoint) != deviceId)
-                throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
-
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            var lastPercent = -1d;
-            var lastLog = TimeSpan.Zero;
-            var loggedDone = false;
-            void LogProgress(int files, long bytes, string name, bool copied)
+            progress.Report(new BackupProgress(BackupStage.Scanning, 0, "проверяем место в архиве"));
+            while (true)
             {
-                if (!copied && bytes < total.Bytes) return;
-                var percent = total.Bytes > 0 ? 100d * bytes / total.Bytes : 0;
-                var elapsed = watch.Elapsed;
-                if (percent < lastPercent + 5 && elapsed.TotalSeconds < 30
-                    && (elapsed - lastLog).TotalSeconds < 10
-                    && (percent > 0 && percent < 100 || percent == 100 && loggedDone)) return;
-                lastPercent = percent;
-                lastLog = elapsed;
-                loggedDone = percent >= 100;
-                var eta = percent > 0.5
-                    ? TimeSpan.FromSeconds(Math.Max(0, elapsed.TotalSeconds * (100 / percent - 1)))
-                    : TimeSpan.Zero;
-                var remaining = percent <= 0.5 ? "--:--"
-                    : eta.TotalHours >= 1 ? $"{(int)eta.TotalHours}:{eta.Minutes:00}:{eta.Seconds:00}"
-                    : $"{(int)eta.TotalMinutes}:{eta.Seconds:00}";
-                StationLog.Write($"камера {deviceId}: {percent:0.0}% | {files}/{total.Files} файлов "
-                    + $"| {Size(bytes)}/{Size(total.Bytes)} | осталось {remaining} | {name[..Math.Min(name.Length, 45)]}");
+                token.ThrowIfCancellationRequested();
+                EnsureSpace(settings, root, pending.Bytes, pending.ReusedFiles);
+
+                using var operation = OperationGuard.Acquire(dbPath: _dbPath);
+                using var archive = ArchiveGuard.Open(root, settings: settings);
+                token.ThrowIfCancellationRequested();
+                if (ReadDeviceId(mountPoint) != deviceId)
+                    throw new InvalidDataException($"ID носителя не совпадает с {deviceId}");
+
+                var current = await Task.Run(() => FileCopier.PendingBytes(mountPoint, destination, token), token);
+                if (current.Bytes > pending.Bytes)
+                {
+                    pending = current;
+                    continue;
+                }
+
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var lastPercent = -1d;
+                var lastLog = TimeSpan.Zero;
+                var loggedDone = false;
+                void LogProgress(int files, long bytes, string name, bool copied)
+                {
+                    if (!copied && bytes < total.Bytes) return;
+                    var percent = total.Bytes > 0 ? 100d * bytes / total.Bytes : 0;
+                    var elapsed = watch.Elapsed;
+                    if (percent < lastPercent + 5 && elapsed.TotalSeconds < 30
+                        && (elapsed - lastLog).TotalSeconds < 10
+                        && (percent > 0 && percent < 100 || percent == 100 && loggedDone)) return;
+                    lastPercent = percent;
+                    lastLog = elapsed;
+                    loggedDone = percent >= 100;
+                    var eta = percent > 0.5
+                        ? TimeSpan.FromSeconds(Math.Max(0, elapsed.TotalSeconds * (100 / percent - 1)))
+                        : TimeSpan.Zero;
+                    var remaining = percent <= 0.5 ? "--:--"
+                        : eta.TotalHours >= 1 ? $"{(int)eta.TotalHours}:{eta.Minutes:00}:{eta.Seconds:00}"
+                        : $"{(int)eta.TotalMinutes}:{eta.Seconds:00}";
+                    StationLog.Write($"камера {deviceId}: {percent:0.0}% | {files}/{total.Files} файлов "
+                        + $"| {Size(bytes)}/{Size(total.Bytes)} | осталось {remaining} | {name[..Math.Min(name.Length, 45)]}");
+                }
+
+                var result = await Task.Run(() => FileCopier.Copy(
+                    mountPoint, destination, stamp,
+                    (files, bytes) => progress.Report(new BackupProgress(
+                        BackupStage.Copying,
+                        total.Bytes > 0 ? (double)bytes / total.Bytes : 0,
+                        $"{files} из {total.Files}")), token, LogProgress), token);
+
+                token.ThrowIfCancellationRequested();
+                archive.Verify();
+                ArchiveGuard.RepairOwnership(root, destination);
+                var recorded = RecordCollected(deviceId, result, started, settings, archive.Root);
+                QueueForServer(settings, result);
+
+                // Карту могли подменить прямо во время копирования: пути из
+                // BackedUp тогда относятся к ушедшей карте, и удаление пошло бы
+                // по совпадающим путям уже на новой.
+                var sameDevice = StillSameDevice(mountPoint, deviceId);
+
+                // Без записи в журнале поиск копию не найдёт, поэтому оригиналы
+                // на карте остаются, пока сеанс не запишется.
+                token.ThrowIfCancellationRequested();
+                archive.Verify();
+                if (settings.DeleteVideoAfterCopy && result.Failed == 0 && sameDevice && recorded)
+                    SourceCleaner.DeleteBackedUpVideos(mountPoint, result, token);
+
+                var (stage, detail, logLine) =
+                    result.Failed > 0
+                        ? (BackupStage.Failed,
+                            $"не скопировано: {Numerals.Plural(result.Failed, "файл", "файла", "файлов")}",
+                            $"камера {deviceId}: не скопировано "
+                            + $"{Numerals.Plural(result.Failed, "файл", "файла", "файлов")}")
+                    : !sameDevice
+                        ? (BackupStage.Failed, "носитель сменился, файлы сохранены",
+                            $"камера {deviceId}: носитель сменился во время копирования, исходные файлы сохранены")
+                    : !recorded
+                        ? (BackupStage.Failed, "копия сделана, но не записана в журнал",
+                            $"камера {deviceId}: копия сделана, но не записана в журнал")
+                    : (BackupStage.Done,
+                        $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}",
+                        $"камера {deviceId}: загружено "
+                        + $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}");
+
+                progress.Report(new BackupProgress(stage, 1, detail));
+                new ActionLog(_dbPath).Write(ActionLog.Backup, logLine);
+                break;
             }
-
-            var result = await Task.Run(() => FileCopier.Copy(
-                mountPoint, destination, stamp,
-                (files, bytes) => progress.Report(new BackupProgress(
-                    BackupStage.Copying,
-                    total.Bytes > 0 ? (double)bytes / total.Bytes : 0,
-                    $"{files} из {total.Files}")), token, LogProgress), token);
-
-            token.ThrowIfCancellationRequested();
-            archive.Verify();
-            ArchiveGuard.RepairOwnership(root, destination);
-            var recorded = RecordCollected(deviceId, result, started, settings, archive.Root);
-            QueueForServer(settings, result);
-
-            // Карту могли подменить прямо во время копирования: пути из
-            // BackedUp тогда относятся к ушедшей карте, и удаление пошло бы
-            // по совпадающим путям уже на новой.
-            var sameDevice = StillSameDevice(mountPoint, deviceId);
-
-            // Без записи в журнале поиск копию не найдёт, поэтому оригиналы
-            // на карте остаются, пока сеанс не запишется.
-            token.ThrowIfCancellationRequested();
-            archive.Verify();
-            if (settings.DeleteVideoAfterCopy && result.Failed == 0 && sameDevice && recorded)
-                SourceCleaner.DeleteBackedUpVideos(mountPoint, result.BackedUp);
-
-            var (stage, detail, logLine) =
-                result.Failed > 0
-                    ? (BackupStage.Failed,
-                        $"не скопировано: {Numerals.Plural(result.Failed, "файл", "файла", "файлов")}",
-                        $"камера {deviceId}: не скопировано "
-                        + $"{Numerals.Plural(result.Failed, "файл", "файла", "файлов")}")
-                : !sameDevice
-                    ? (BackupStage.Failed, "носитель сменился, файлы сохранены",
-                        $"камера {deviceId}: носитель сменился во время копирования, исходные файлы сохранены")
-                : !recorded
-                    ? (BackupStage.Failed, "копия сделана, но не записана в журнал",
-                        $"камера {deviceId}: копия сделана, но не записана в журнал")
-                : (BackupStage.Done,
-                    $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}",
-                    $"камера {deviceId}: загружено "
-                    + $"{Numerals.Plural(result.CopiedFiles, "файл", "файла", "файлов")}, {Size(result.CopiedBytes)}");
-
-            progress.Report(new BackupProgress(stage, 1, detail));
-            new ActionLog(_dbPath).Write(ActionLog.Backup, logLine);
         }
         catch (OperationCanceledException)
         {
@@ -277,13 +295,14 @@ public sealed class BackupService
     }
 
     /// <summary>Освобождает место под выгрузку, если включена перезапись.</summary>
-    private void EnsureSpace(Settings settings, string root, long needed)
+    private void EnsureSpace(Settings settings, string root, long needed, IReadOnlySet<string> reusedFiles)
     {
+        if (needed <= 0) return;
         var status = StorageManager.Check(root, settings.MinFreeBytes);
         var shortfall = needed + settings.MinFreeBytes - status.FreeBytes;
         if (shortfall > 0)
             StorageManager.FreeUpSpace(root, shortfall, settings.StorageMode,
-                new CollectionLog(_dbPath));
+                new CollectionLog(_dbPath), reusedFiles);
     }
 
     /// <summary>

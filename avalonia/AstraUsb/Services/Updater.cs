@@ -381,7 +381,13 @@ public static class Updater
             Directory.CreateDirectory(spool);
             File.Copy(archive, Path.Combine(spool, "release.tar.gz"));
             File.Copy(archive + ".sha256", Path.Combine(spool, "release.tar.gz.sha256"));
-            // Тег пишется последним: служба берёт спул только целиком.
+            // Копия с флешки могла побиться по дороге: до проверки пакет не готов.
+            if (VerifyChecksumFile(Path.Combine(spool, "release.tar.gz"),
+                    Path.Combine(spool, "release.tar.gz.sha256")) is { } copied)
+            {
+                Wipe(spool);
+                return (null, copied);
+            }
             File.WriteAllText(Path.Combine(spool, "tag"), tag, Encoding.UTF8);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -390,14 +396,15 @@ public static class Updater
             return (null, $"не удалось подготовить обновление: {e.Message}");
         }
 
-        // Копия с флешки могла побиться по дороге.
-        if (VerifyChecksumFile(Path.Combine(spool, "release.tar.gz"),
-                Path.Combine(spool, "release.tar.gz.sha256")) is { } copied)
-        {
-            Wipe(spool);
-            return (null, copied);
-        }
         return (tag, null);
+    }
+
+    internal static void PublishOffline(string pending, string? spoolDir = null)
+    {
+        if (TakeOfflineSpool(pending) is null)
+            throw new IOException("Пакет обновления не подготовлен");
+        // Move не заменяет пакет, который уже читает отдельная служба.
+        Directory.Move(pending, spoolDir ?? OfflineSpoolDir);
     }
 
     /// <summary>Тег и архив из спула или null, если там ничего готового нет.</summary>

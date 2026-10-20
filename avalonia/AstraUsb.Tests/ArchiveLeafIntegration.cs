@@ -5,8 +5,10 @@ namespace AstraUsb.Tests
 {
     public static class ArchiveLeafIntegration
     {
-        public static int Main()
+        public static int Main(string[] args)
         {
+            if (args.Length == 3 && args[0] == "source-cleaner-race")
+                return SourceCleanerRaceIntegration.Run(args[1], args[2]);
             if (!OperatingSystem.IsLinux() || Environment.GetEnvironmentVariable("ARCHIVE_LEAF_TEST_CONTAINER") != "1"
                 || !File.Exists("/.dockerenv"))
                 throw new InvalidOperationException("Нужен изолированный тестовый Linux-контейнер");
@@ -211,6 +213,7 @@ namespace AstraUsb.Services
 {
     public static class StationLog
     {
+        public static void Write(string message) => Console.Error.WriteLine(message);
         public static void LocalOnce(string key, string? message)
         {
             if (message is not null)

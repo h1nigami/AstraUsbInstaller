@@ -9,7 +9,7 @@ namespace AstraUsb.Services;
 /// </summary>
 public sealed class AccessGuard
 {
-    private readonly TimeSpan _timeout;
+    private TimeSpan _timeout;
     private DateTime _until;
 
     /// <param name="timeoutMinutes">Минуты простоя до закрытия; 0 не закрывает.</param>
@@ -19,6 +19,12 @@ public sealed class AccessGuard
     }
 
     public bool Unlocked { get; private set; }
+
+    public void SetTimeout(int timeoutMinutes, DateTime now)
+    {
+        _timeout = TimeSpan.FromMinutes(Math.Max(timeoutMinutes, 0));
+        Touch(now);
+    }
 
     /// <summary>Пароль принят: раздел открыт.</summary>
     public void Unlock(DateTime now)

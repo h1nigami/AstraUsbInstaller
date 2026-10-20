@@ -33,7 +33,12 @@ public sealed record CopyResult(
     int Failed)
 {
     public IReadOnlySet<string> BackedUp => Destinations.Keys.ToHashSet(StringComparer.Ordinal);
+    internal (string Device, ulong Inode)? SourceRootIdentity { get; init; }
+    internal IReadOnlyDictionary<string, SourceFileIdentity> SourceFiles { get; init; } =
+        new Dictionary<string, SourceFileIdentity>();
 }
+
+internal readonly record struct SourceFileIdentity(string Device, ulong Inode, long Length, DateTime Modified);
 
 /// <summary>
 /// Инкрементальное копирование. Перенесено из Python-версии
@@ -58,6 +63,10 @@ public static class FileCopier
         var processedBytes = 0L;
         var failed = 0;
         var backedUp = new Dictionary<string, string>(StringComparer.Ordinal);
+        var sourceFiles = new Dictionary<string, SourceFileIdentity>(StringComparer.Ordinal);
+        (string Device, ulong Inode) sourceIdentity;
+        using (var sourceDirectory = ArchiveDirectory.OpenSourceDirectory(sourceRoot))
+            sourceIdentity = ArchiveDirectory.Identity(sourceDirectory);
         ArchiveDirectory destination;
         try { destination = ArchiveGuard.Open(destRoot, create: true, requireMarker: false); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -127,17 +136,21 @@ public static class FileCopier
                 token.ThrowIfCancellationRequested();
                 try
                 {
+                    using var sourceHandle = ArchiveDirectory.OpenSource(sourceFile);
+                    var sourceIdentityBefore = ArchiveDirectory.SourceIdentity(sourceHandle);
                     var name = Path.GetFileName(sourceFile);
                     var target = Path.Combine(destDir, name);
 
                     if (Path.Exists(Path.Combine(targetDirectory.Path, name)))
                     {
-                        var savedName = targetDirectory.SameFile(sourceFile, name)
-                            ? name : SameTimestampedCopy(targetDirectory, sourceFile);
+                        var savedName = SavedCopy(targetDirectory, sourceFile);
                         if (savedName is not null)
                         {
-                            var savedSize = new FileInfo(sourceFile).Length;
+                            var savedSize = sourceIdentityBefore.Length;
+                            VerifySource();
                             backedUp.Add(sourceFile, Path.Combine(destDir, savedName));
+                            sourceFiles.Add(sourceFile, sourceIdentityBefore);
+                            sourceHandle.Dispose();
                             processedFiles++;
                             processedBytes += savedSize;
                             onProgress?.Invoke(processedFiles, processedBytes);
@@ -154,14 +167,25 @@ public static class FileCopier
                     }
 
                     var size = targetDirectory.CopyFile(sourceFile, name, token);
+                    VerifySource();
 
                     copiedFiles++;
                     copiedBytes += size;
                     processedFiles++;
                     processedBytes += size;
                     backedUp.Add(sourceFile, target);
+                    sourceFiles.Add(sourceFile, sourceIdentityBefore);
+                    sourceHandle.Dispose();
                     onProgress?.Invoke(processedFiles, processedBytes);
                     onFile?.Invoke(processedFiles, processedBytes, Path.GetFileName(sourceFile), true);
+
+                    void VerifySource()
+                    {
+                        using var current = ArchiveDirectory.OpenSource(sourceFile);
+                        if (ArchiveDirectory.SourceIdentity(sourceHandle) != sourceIdentityBefore
+                            || ArchiveDirectory.SourceIdentity(current) != sourceIdentityBefore)
+                            throw new IOException("Исходный файл изменился во время копирования");
+                    }
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (DeviceLostException) { throw; }
@@ -177,7 +201,48 @@ public static class FileCopier
         }
 
         token.ThrowIfCancellationRequested();
-        return new CopyResult(copiedFiles, copiedBytes, backedUp, failed + walkErrors);
+        return new CopyResult(copiedFiles, copiedBytes, backedUp, failed + walkErrors)
+        {
+            SourceRootIdentity = sourceIdentity,
+            SourceFiles = sourceFiles,
+        };
+    }
+
+    internal static (long Bytes, IReadOnlySet<string> ReusedFiles) PendingBytes(
+        string sourceRoot, string destRoot, CancellationToken token)
+    {
+        using var destination = ArchiveGuard.Open(destRoot, create: true, requireMarker: false);
+        var bytes = 0L;
+        var reused = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+        foreach (var directory in EnumerateDirectories(sourceRoot, () => throw new IOException("Носитель не читается")))
+        {
+            token.ThrowIfCancellationRequested();
+            var relative = Path.GetRelativePath(sourceRoot, directory);
+            using var target = destination.CreateDirectory(relative == "." ? "" : relative);
+            foreach (var file in Directory.GetFiles(directory))
+            {
+                token.ThrowIfCancellationRequested();
+                var name = Path.GetFileName(file);
+                if (Markers.IsService(name)) continue;
+                var saved = SavedCopy(target, file);
+                if (saved is null)
+                    bytes = checked(bytes + new FileInfo(file).Length);
+                else
+                {
+                    reused.Add(Path.Combine(target.Root, saved));
+                    // Поиск сохранённой версии также требует исходное имя в архиве.
+                    reused.Add(Path.Combine(target.Root, name));
+                }
+            }
+        }
+        return (bytes, reused);
+    }
+
+    private static string? SavedCopy(ArchiveDirectory directory, string source)
+    {
+        var name = Path.GetFileName(source);
+        return !Path.Exists(Path.Combine(directory.Path, name)) ? null
+            : directory.SameFile(source, name) ? name : SameTimestampedCopy(directory, source);
     }
 
     private static string? SameTimestampedCopy(ArchiveDirectory directory, string source)

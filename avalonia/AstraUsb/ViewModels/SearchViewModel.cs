@@ -64,6 +64,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
     /// <summary>Поколение запроса: ответ прежнего не должен перебить новый.</summary>
     private int _generation;
+    private int _departmentGeneration;
 
     public ObservableCollection<FoundFile> Results { get; } = new();
     public ObservableCollection<DepartmentRow> Departments { get; } = new();
@@ -146,6 +147,18 @@ public sealed partial class SearchViewModel : ObservableObject
     private int _frameRequest;
     private int _openRequest;
 
+    internal Func<bool> AccessAllowed { get; set; } = () => true;
+    private bool CanView() => AccessAllowed();
+
+    internal void RefreshAccess()
+    {
+        if (!CanView()) CloseViewer();
+        PlayCommand.NotifyCanExecuteChanged();
+        OpenExternallyCommand.NotifyCanExecuteChanged();
+        StepBackCommand.NotifyCanExecuteChanged();
+        StepForwardCommand.NotifyCanExecuteChanged();
+    }
+
     partial void OnViewerImageChanged(Bitmap? value) => OnPropertyChanged(nameof(ViewerHasImage));
     partial void OnViewerTextChanged(string value) => OnPropertyChanged(nameof(ViewerHasText));
 
@@ -162,16 +175,16 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>Шаг по записи: искать нужный момент ползунком неудобно.</summary>
-    [RelayCommand]
-    private void StepBack() => ViewerPosition = Math.Max(0, ViewerPosition - 10);
+    [RelayCommand(CanExecute = nameof(CanView))]
+    private void StepBack() { if (CanView()) ViewerPosition = Math.Max(0, ViewerPosition - 10); }
 
-    [RelayCommand]
-    private void StepForward() => ViewerPosition = Math.Min(ViewerLength, ViewerPosition + 10);
+    [RelayCommand(CanExecute = nameof(CanView))]
+    private void StepForward() { if (CanView()) ViewerPosition = Math.Min(ViewerLength, ViewerPosition + 10); }
 
     /// <summary>Достаёт кадр записи и показывает его, если он ещё нужен.</summary>
     private void ShowFrame(TimeSpan at)
     {
-        if (_videoPath.Length == 0)
+        if (!CanView() || _videoPath.Length == 0)
             return;
 
         var mine = ++_frameRequest;
@@ -208,7 +221,7 @@ public sealed partial class SearchViewModel : ObservableObject
 
             _ui.Post(() =>
             {
-                if (mine != _frameRequest)
+                if (!CanView() || mine != _frameRequest)
                     return;
 
                 try
@@ -272,33 +285,33 @@ public sealed partial class SearchViewModel : ObservableObject
     /// <summary>Список отделов для отбора. Пополняется, пока станция работает.</summary>
     public async Task ReloadDepartments()
     {
+        var generation = ++_departmentGeneration;
         var kept = Department?.Id ?? 0;
-
-        // Выбор снимается до очистки: список, который смотрит на коллекцию,
-        // при очистке пытается прочитать выбранный элемент по его прежнему
-        // месту и падает с выходом за границы.
-        Department = null;
-        Departments.Clear();
-        Departments.Add(new DepartmentRow { Id = 0, Path = "Все отделы" });
-
         try
         {
             // Путь отдела собирается по всей ветке предков, а таких запросов
             // столько же, сколько отделов: читаем в стороне от интерфейса.
-            var staff = new StaffDirectory(_dbPath);
-            var loaded = await Task.Run(() => staff.Departments()
-                .Select(d => new DepartmentRow { Id = d.Id, Path = staff.DepartmentPath(d.Id) })
-                .ToList());
+            var loaded = await Task.Run(() =>
+            {
+                var staff = new StaffDirectory(_dbPath);
+                return staff.Departments()
+                    .Select(d => new DepartmentRow { Id = d.Id, Path = staff.DepartmentPath(d.Id) })
+                    .ToList();
+            });
+            if (generation != _departmentGeneration) return;
 
+            Department = null;
+            Departments.Clear();
+            Departments.Add(new DepartmentRow { Id = 0, Path = "Все отделы" });
             foreach (var department in loaded)
                 Departments.Add(department);
+            Department = Departments.FirstOrDefault(d => d.Id == kept) ?? Departments[0];
         }
         catch (Exception error)
         {
             CrashLog.Write("Не удалось обновить список отделов поиска", error);
         }
 
-        Department = Departments.FirstOrDefault(d => d.Id == kept) ?? Departments[0];
     }
 
     partial void OnCurrentChanged(FoundFile? value)
@@ -323,7 +336,7 @@ public sealed partial class SearchViewModel : ObservableObject
     /// форматом регистратора.
     /// </summary>
     /// <summary>Что удалось открыть: готовится в стороне от интерфейса.</summary>
-    private sealed record Opened(Bitmap? Image, string Text, TimeSpan? Length, string Message);
+    private sealed record Opened(Bitmap? Image, string Text, TimeSpan? Length, string Message, bool External = false);
 
     /// <summary>
     /// Открывает выбранную запись. Снимок надо раскодировать, у видео узнать
@@ -331,9 +344,10 @@ public sealed partial class SearchViewModel : ObservableObject
     /// на станции занимает сотни миллисекунд, поэтому окно просмотра
     /// открывается сразу, а содержимое подставляется, когда прочитается.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanView))]
     private async Task Play()
     {
+        if (!CanView()) return;
         if (Current is not { } file)
         {
             Hint = "выберите запись в списке";
@@ -357,9 +371,16 @@ public sealed partial class SearchViewModel : ObservableObject
         var opened = await Task.Run(() => Open(path, kind));
 
         // Пока читали, оператор мог закрыть просмотр или выбрать другое.
-        if (request != _openRequest)
+        if (!CanView() || request != _openRequest)
         {
             opened.Image?.Dispose();
+            return;
+        }
+
+        if (opened.External)
+        {
+            OpenExternally();
+            ViewerVisible = false;
             return;
         }
 
@@ -431,10 +452,7 @@ public sealed partial class SearchViewModel : ObservableObject
                     break;
                 }
 
-                var result = MediaTools.Open(path, _archiveRoot, _dbPath);
-                return new Opened(null, "", null, result.Ok
-                    ? $"{Path.GetFileName(path)} открыт системным проигрывателем"
-                    : result.Message);
+                return new Opened(null, "", null, "", External: true);
             });
         }
         catch (Exception e)
@@ -444,9 +462,10 @@ public sealed partial class SearchViewModel : ObservableObject
     }
 
     /// <summary>Отдаёт запись системному проигрывателю по просьбе оператора.</summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanView))]
     private void OpenExternally()
     {
+        if (!CanView()) return;
         if (Current is not { } file)
             return;
 
@@ -930,13 +949,15 @@ public sealed partial class SearchViewModel : ObservableObject
             return null;
 
         using var registry = new DeviceRegistry(_dbPath);
-        var match = registry.ListDevices().FirstOrDefault(d =>
-            d.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase)
+        var devices = registry.ListDevices();
+        var exact = devices.Where(d => d.Id.ToString(CultureInfo.InvariantCulture) == wanted
+            || string.Equals(d.FirmwareId, wanted, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (exact.Length > 0)
+            return exact.Length == 1 ? exact[0].Id : -1;
+        var matches = devices.Where(d => d.Name.Contains(wanted, StringComparison.OrdinalIgnoreCase)
             || d.FirmwareId.Contains(wanted, StringComparison.OrdinalIgnoreCase)
-            || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)
-            || d.Id.ToString() == wanted);
-
-        return match?.Id ?? -1;
+            || d.Serial.Contains(wanted, StringComparison.OrdinalIgnoreCase)).Take(2).ToArray();
+        return matches.Length == 1 ? matches[0].Id : -1;
     }
 
     private static bool TryDate(string text, out DateTime value) =>
