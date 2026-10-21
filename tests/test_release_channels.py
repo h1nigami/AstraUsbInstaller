@@ -13,12 +13,13 @@ def job_body(workflow, job):
     return re.search(rf"^  {job}:\n(.*?)(?=^  [\w-]+:|\Z)", text, re.M | re.S).group(1)
 
 
-def enabled(workflow, job, event, tag="", prerelease=False):
+def enabled(workflow, job, event, tag="", prerelease=False, action=None):
     condition = re.search(r"^    if: (.+)$", job_body(workflow, job), re.M).group(1)
     values = {
         "github.event_name": event,
         "github.event.release.prerelease": prerelease,
         "github.event.release.tag_name": tag,
+        "github.event.action": action or ("published" if prerelease else "released"),
         "inputs.tag": tag,
     }
     for name, value in values.items():
@@ -30,6 +31,29 @@ def enabled(workflow, job, event, tag="", prerelease=False):
 
 
 class ReleaseChannelsTests(unittest.TestCase):
+    def test_station_builds_once_per_release_and_supports_promotion(self):
+        for job in ("verify", "build", "windows-setup"):
+            for prerelease, action, expected in (
+                (False, "published", False), (False, "released", True),
+                (True, "published", True), (True, "released", False),
+            ):
+                with self.subTest(job=job, prerelease=prerelease, action=action):
+                    self.assertEqual(expected, enabled("release-station.yml", job, "release", "v2.0.10", prerelease, action))
+
+    def test_download_publisher_accepts_only_stable_station_releases(self):
+        for event, tag, prerelease, action, expected in (
+            ("release", "v2.0.10", False, "released", True),
+            ("release", "v2.0.10", False, "published", False),
+            ("release", "v2.0.10", True, "published", False),
+            ("release", "v1.25", False, "released", False),
+            ("release", "v20.0.1", False, "released", False),
+            ("workflow_dispatch", "v2.0.10", False, "", False),
+            ("push", "", False, "", False),
+            ("pull_request", "", False, "", False),
+        ):
+            with self.subTest(event=event, tag=tag, action=action):
+                self.assertEqual(expected, enabled("release-station.yml", "publish-download", event, tag, prerelease, action))
+
     def test_station_accepts_stable_and_prerelease_v2(self):
         for prerelease in (False, True):
             for job in ("verify", "build", "windows-setup"):
