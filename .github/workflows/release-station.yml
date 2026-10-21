@@ -7,12 +7,14 @@ name: Проверки и выпуск C# станции
 on:
   pull_request:
     branches: [master]
-    paths: ['avalonia/**', '.github/workflows/release-station.yml']
+    paths: ['avalonia/**', '.github/workflows/release-station.yml', 'tools/publish_station_release.py', 'tests/test_station_publication.py', 'tests/test_release_channels.py']
   push:
     branches: [master]
-    paths: ['avalonia/**', '.github/workflows/release-station.yml']
+    paths: ['avalonia/**', '.github/workflows/release-station.yml', 'tools/publish_station_release.py', 'tests/test_station_publication.py', 'tests/test_release_channels.py']
   release:
-    types: [published]
+    # stable: released, включая перевод prerelease; prerelease: published.
+    # Фильтры заданий исключают двойную сборку нового стабильного релиза.
+    types: [published, released]
   workflow_dispatch:
     inputs:
       tag:
@@ -26,7 +28,7 @@ jobs:
   verify:
     permissions:
       contents: read
-    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.') && ((github.event.release.prerelease == false && github.event.action == 'released') || (github.event.release.prerelease && github.event.action == 'published'))) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
@@ -38,6 +40,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Проверки издателя Station и разделения релизов
+        if: runner.os == 'Linux'
+        run: |
+          python3 -m unittest discover -s tests -p test_station_publication.py -v
+          python3 -m unittest discover -s tests -p test_release_channels.py -v
       - name: Полный набор C# на Windows
         if: runner.os == 'Windows'
         run: dotnet test avalonia/AstraUsb.Tests/AstraUsb.Tests.csproj -c Release
@@ -71,7 +78,7 @@ jobs:
 
   build:
     needs: verify
-    if: (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    if: (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.') && ((github.event.release.prerelease == false && github.event.action == 'released') || (github.event.release.prerelease && github.event.action == 'published'))) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: ubuntu-latest
 
     steps:
@@ -211,7 +218,7 @@ jobs:
   # ставит программу без установки.
   windows-setup:
     needs: verify
-    if: (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    if: (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.') && ((github.event.release.prerelease == false && github.event.action == 'released') || (github.event.release.prerelease && github.event.action == 'published'))) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: windows-latest
 
     steps:
@@ -296,3 +303,36 @@ jobs:
         with:
           name: windows-setup-${{ inputs.tag }}
           path: dist
+
+  publish-download:
+    needs: [build, windows-setup]
+    if: github.event_name == 'release' && github.event.action == 'released' && startsWith(github.event.release.tag_name, 'v2.') && github.event.release.prerelease == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    concurrency:
+      group: bestcam-station-download
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Скачать готовый релиз Avalonia
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          mkdir -p "$RUNNER_TEMP/station-download"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" > "$RUNNER_TEMP/station-release.json"
+          gh release download "$TAG" --dir "$RUNNER_TEMP/station-download"
+      - name: Опубликовать и проверить bestcam-station
+        env:
+          DOWNLOAD_STATION_TOKEN: ${{ secrets.DOWNLOAD_STATION_TOKEN }}
+        run: >-
+          python tools/publish_station_release.py
+          "$RUNNER_TEMP/station-release.json" "$RUNNER_TEMP/station-download"
