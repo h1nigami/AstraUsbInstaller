@@ -11,7 +11,7 @@ public sealed class OperatorFormsTests : IDisposable
     private string Db => Path.Combine(_dir, "devices.db");
 
     [Fact]
-    public void Employee_save_and_department_actions_keep_their_confirmation()
+    public void Employee_save_and_delete_keep_their_confirmation()
     {
         var model = new StaffViewModel(Db);
         model.PersonnelNoInput = "111";
@@ -23,16 +23,10 @@ public sealed class OperatorFormsTests : IDisposable
         model.SaveEmployeeCommand.Execute(null);
         Assert.Contains("сохранена", model.Hint);
         Assert.Equal("Иван Иванов", Assert.Single(model.Employees).FullName);
-        model.DeactivateCommand.Execute(null);
-        Assert.Contains("уволенный", model.Hint);
-        Assert.False(Assert.Single(model.Employees).Active);
-        model.DepartmentNameInput = "Охрана";
-        model.AddDepartmentCommand.Execute(null);
-        Assert.Contains("добавлен", model.Hint);
-        model.SelectedDepartment = Assert.Single(model.Departments);
-        model.DeleteDepartmentCommand.Execute(null);
+        model.DeleteEmployeeCommand.Execute(null);
         Assert.Contains("удалён", model.Hint);
-        Assert.Empty(model.Departments);
+        Assert.Empty(model.Employees);
+        Assert.Empty(new StaffDirectory(Db).Employees());
     }
 
     [Fact]

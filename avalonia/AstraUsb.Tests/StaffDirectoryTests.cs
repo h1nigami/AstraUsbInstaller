@@ -125,6 +125,68 @@ public sealed class StaffDirectoryTests : IDisposable
     }
 
     [Fact]
+    public void Deleting_an_employee_clears_device_links_and_does_not_restore_a_legacy_card()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var deviceId = registry.ResolveDeviceId(Card("delete", 1234570), "SER-10", "cam", "sdb1");
+        using (var db = new SqliteConnection($"Data Source={_db}"))
+        {
+            db.Open();
+            using var command = db.CreateCommand();
+            command.CommandText = "UPDATE devices SET person = 'Иванов И.И.' WHERE id = $id";
+            command.Parameters.AddWithValue("$id", deviceId);
+            command.ExecuteNonQuery();
+        }
+        var staff = NewDirectory();
+        var employee = Assert.Single(staff.Employees());
+        var other = staff.AddEmployee("Петров П.П.", "88");
+        var archive = Path.Combine(_dir, "archived-video.mp4");
+        File.WriteAllText(archive, "recording");
+
+        staff.DeleteEmployee(employee.Id);
+
+        Assert.Null(staff.EmployeeOfDevice(deviceId));
+        Assert.Equal(other, Assert.Single(NewDirectory().Employees()).Id);
+        Assert.Null(Assert.Single(registry.ListDevices()).EmployeeId);
+        Assert.Equal("recording", File.ReadAllText(archive));
+    }
+
+    [Fact]
+    public void A_deleted_employees_number_can_be_reused()
+    {
+        var staff = NewDirectory();
+        var employee = staff.AddEmployee("Иванов И.И.", "77");
+
+        staff.DeleteEmployee(employee);
+        var replacement = staff.AddEmployee("Петров П.П.", "77");
+
+        Assert.Equal(replacement, Assert.Single(staff.Employees()).Id);
+        Assert.NotEqual(employee, replacement);
+    }
+
+    [Fact]
+    public void A_failed_delete_keeps_the_employee_and_device_assignment_together()
+    {
+        using var registry = new DeviceRegistry(_db);
+        var deviceId = registry.ResolveDeviceId(Card("delete-fail", 1234571), "SER-11", "cam", "sdc1");
+        var staff = NewDirectory();
+        var employee = staff.AddEmployee("Иванов И.И.", "77");
+        staff.AssignDevice(deviceId, employee);
+        using (var db = new SqliteConnection($"Data Source={_db}"))
+        {
+            db.Open();
+            using var command = db.CreateCommand();
+            command.CommandText = "CREATE TRIGGER block_delete BEFORE DELETE ON employees BEGIN SELECT RAISE(ABORT, 'blocked'); END";
+            command.ExecuteNonQuery();
+        }
+
+        Assert.Throws<SqliteException>(() => staff.DeleteEmployee(employee));
+
+        Assert.Equal(employee, Assert.Single(staff.Employees()).Id);
+        Assert.Equal(employee, staff.EmployeeOfDevice(deviceId)?.Id);
+    }
+
+    [Fact]
     public void Old_person_field_becomes_a_card()
     {
         // База, накопленная прежней версией: человек записан строкой у устройства.

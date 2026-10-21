@@ -3,8 +3,7 @@
 
   <!--
     Пластика прототипа: пилюли вместо прямоугольников, крупные скругления,
-    мягкие тени, никаких резких границ. Размеры взяты из задания под палец:
-    нажатие не меньше 44 точек, основные кнопки от 52.
+    мягкие тени, компактные кнопки для экрана 800×600.
   -->
 
   <Style Selector="Window">
@@ -82,6 +81,7 @@
         <BrushTransition Property="Background" Duration="0:0:0.12" Easing="CubicEaseOut" />
         <BrushTransition Property="BorderBrush" Duration="0:0:0.12" Easing="CubicEaseOut" />
         <BrushTransition Property="Foreground" Duration="0:0:0.12" Easing="CubicEaseOut" />
+        <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.16" Easing="CubicEaseOut" />
       </Transitions>
     </Setter>
   </Style>
@@ -90,6 +90,7 @@
     <Setter Property="Transitions">
       <Transitions>
         <BrushTransition Property="Background" Duration="0:0:0.18" Easing="CubicEaseOut" />
+        <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.18" Easing="CubicEaseOut" />
       </Transitions>
     </Setter>
   </Style>
@@ -160,7 +161,20 @@
        как подёргивание, особенно когда разделы разной высоты. -->
   <Style Selector=":is(Control).fade[IsVisible=true]">
     <Style.Animations>
-      <Animation Duration="0:0:0.14" Easing="CubicEaseOut" FillMode="Forward">
+      <Animation Duration="0:0:0.18" Easing="CubicEaseOut" FillMode="Forward">
+        <KeyFrame Cue="0%">
+          <Setter Property="Opacity" Value="0" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="Opacity" Value="1" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
+  <Style Selector="TabItem:selected > Grid">
+    <Style.Animations>
+      <Animation Duration="0:0:0.18" Easing="CubicEaseOut">
         <KeyFrame Cue="0%">
           <Setter Property="Opacity" Value="0" />
         </KeyFrame>
@@ -208,16 +222,36 @@
        короткий: длиннее ста миллисекунд уже читается как задержка. -->
   <Style Selector="Button">
     <Setter Property="RenderTransformOrigin" Value="50%,50%" />
+    <Setter Property="RenderTransform" Value="none" />
     <Setter Property="Transitions">
       <Transitions>
         <TransformOperationsTransition Property="RenderTransform"
-                                       Duration="0:0:0.09" Easing="CubicEaseOut" />
+                                       Duration="0:0:0.1" Easing="CubicEaseOut" />
       </Transitions>
     </Setter>
   </Style>
 
   <Style Selector="Button:pressed">
-    <Setter Property="RenderTransform" Value="scale(0.96)" />
+    <Setter Property="RenderTransform" Value="scale(0.98)" />
+  </Style>
+
+  <Style Selector="Button /template/ ContentPresenter">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowSm}" />
+  </Style>
+  <Style Selector="Button:pointerover /template/ ContentPresenter">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowMd}" />
+  </Style>
+  <Style Selector="Button.primary /template/ ContentPresenter">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowAccent}" />
+  </Style>
+  <Style Selector="Button:pressed /template/ ContentPresenter">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowSm}" />
+  </Style>
+  <Style Selector="Button:focus-visible /template/ ContentPresenter">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowFocus}" />
+  </Style>
+  <Style Selector="Button:disabled /template/ ContentPresenter, Button.key /template/ ContentPresenter">
+    <Setter Property="BoxShadow" Value="none" />
   </Style>
 
   <!-- Прокрутка с продолжением движения: экран сенсорный, и список,
@@ -237,7 +271,7 @@
     <Setter Property="FontSize" Value="13" />
     <Setter Property="Height" Value="{StaticResource ButtonHeight}" />
     <Setter Property="MinWidth" Value="{StaticResource TapMin}" />
-    <Setter Property="Padding" Value="20,0" />
+    <Setter Property="Padding" Value="12,0" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusPill}" />
     <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
     <Setter Property="Foreground" Value="{StaticResource FgMainBrush}" />
@@ -277,11 +311,7 @@
     <Setter Property="TextElement.Foreground" Value="{StaticResource FgOnDarkBrush}" />
   </Style>
 
-  <!--
-    Кнопка внутри строки списка. Основной размер в 52 точки рассчитан на палец
-    и на отдельно стоящую кнопку; в строке таблицы такие кнопки наезжают друг
-    на друга, поэтому здесь высота равна высоте строки.
-  -->
+  <!-- Кнопка внутри строки списка -->
   <Style Selector="Button.compact">
     <Setter Property="Height" Value="34" />
     <Setter Property="FontSize" Value="11" />
@@ -323,15 +353,13 @@
   </Style>
 
   <!-- Клавиша экранной клавиатуры -->
-  <!-- Клавиша экранной клавиатуры: под палец, но так, чтобы полная
-       раскладка уместилась в ширину экрана станции. -->
   <Style Selector="Button.key">
     <Setter Property="FontSize" Value="17" />
     <Setter Property="Padding" Value="0" />
     <Setter Property="Margin" Value="2" />
-    <Setter Property="Width" Value="66" />
-    <Setter Property="Height" Value="42" />
-    <Setter Property="MinHeight" Value="42" />
+    <Setter Property="Width" Value="54" />
+    <Setter Property="Height" Value="34" />
+    <Setter Property="MinHeight" Value="34" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="Focusable" Value="False" />
     <Setter Property="Background" Value="{StaticResource BgAppBrush}" />
@@ -353,6 +381,11 @@
   <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
     <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}" />
     <Setter Property="BorderThickness" Value="2" />
+  </Style>
+
+  <Style Selector="TextBox:empty /template/ TextBlock#PART_Watermark">
+    <Setter Property="Opacity" Value="1" />
+    <Setter Property="Foreground" Value="{StaticResource FgFaintBrush}" />
   </Style>
 
   <Style Selector="TextBox:pointerover /template/ Border#PART_BorderElement">
@@ -385,14 +418,14 @@
     <Setter Property="Background" Value="White" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusMd}" />
     <Setter Property="BorderThickness" Value="0" />
-    <Setter Property="BoxShadow" Value="{StaticResource ShadowSm}" />
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowSoft}" />
   </Style>
 
   <!-- Пункт бокового меню настроек -->
   <Style Selector="Button.nav">
-    <Setter Property="Height" Value="{StaticResource TapMin}" />
+    <Setter Property="Height" Value="{StaticResource ButtonHeight}" />
     <Setter Property="FontSize" Value="12" />
-    <Setter Property="Padding" Value="14,0" />
+    <Setter Property="Padding" Value="12,0" />
     <Setter Property="Margin" Value="0,0,0,6" />
     <Setter Property="HorizontalAlignment" Value="Stretch" />
     <Setter Property="HorizontalContentAlignment" Value="Left" />
@@ -416,9 +449,9 @@
     <Setter Property="FontFamily" Value="{StaticResource FontHeading}" />
     <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="FontSize" Value="13" />
-    <Setter Property="MinHeight" Value="{StaticResource TapMin}" />
-    <Setter Property="Height" Value="{StaticResource TapMin}" />
-    <Setter Property="Padding" Value="18,0" />
+    <Setter Property="MinHeight" Value="{StaticResource ButtonHeight}" />
+    <Setter Property="Height" Value="{StaticResource ButtonHeight}" />
+    <Setter Property="Padding" Value="12,0" />
     <Setter Property="Margin" Value="0,0,8,0" />
     <Setter Property="CornerRadius" Value="22" />
     <Setter Property="Background" Value="{StaticResource BgPanelBrush}" />
@@ -433,6 +466,13 @@
 
   <Style Selector="TabItem:selected /template/ Border#PART_SelectedPipe">
     <Setter Property="IsVisible" Value="False" />
+  </Style>
+
+  <Style Selector="TabItem:selected /template/ Border#PART_LayoutRoot">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowAccent}" />
+  </Style>
+  <Style Selector="TabItem:focus-visible /template/ Border#PART_LayoutRoot">
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowFocus}" />
   </Style>
 
   <!-- Наведение не должно гасить признак открытого раздела: экран
@@ -463,6 +503,7 @@
 
   <Style Selector="ListBoxItem:selected /template/ ContentPresenter">
     <Setter Property="Background" Value="{StaticResource Accent100Brush}" />
+    <Setter Property="BoxShadow" Value="2 0 0 0 #2F77AD inset" />
   </Style>
 
   <Style Selector="ListBoxItem:pointerover /template/ ContentPresenter">

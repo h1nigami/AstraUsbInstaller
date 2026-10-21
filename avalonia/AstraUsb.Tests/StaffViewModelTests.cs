@@ -5,9 +5,7 @@ using Xunit;
 namespace AstraUsb.Tests;
 
 /// <summary>
-/// Вкладка «Сотрудники»: здесь оператор заводит людей и отделы. Терять при
-/// этом никого нельзя: уволенный остаётся в базе, а удалённый отдел отдаёт
-/// своих людей выше.
+/// Создание, редактирование и удаление карточек сотрудников.
 /// </summary>
 public sealed class StaffViewModelTests : IDisposable
 {
@@ -96,7 +94,7 @@ public sealed class StaffViewModelTests : IDisposable
     }
 
     [Fact]
-    public void A_dismissed_employee_stays_in_the_list()
+    public void A_deleted_employee_is_removed_from_the_list_and_database()
     {
         var model = NewModel();
         model.PersonnelNoInput = "222222";
@@ -104,58 +102,12 @@ public sealed class StaffViewModelTests : IDisposable
         model.SaveEmployeeCommand.Execute(null);
         model.Selected = model.Employees[0];
 
-        model.DeactivateCommand.Execute(null);
+        model.DeleteEmployeeCommand.Execute(null);
 
-        Assert.False(Assert.Single(model.Employees).Active);
-    }
-
-    [Fact]
-    public void A_department_can_be_nested_under_the_selected_one()
-    {
-        var model = NewModel();
-        model.DepartmentNameInput = "Охрана";
-        model.AddDepartmentCommand.Execute(null);
-
-        model.SelectedDepartment = model.Departments.Single(d => d.Path == "Охрана");
-        model.DepartmentNameInput = "Смена 1";
-        model.AddDepartmentCommand.Execute(null);
-
-        Assert.Contains(model.Departments, d => d.Path == "Охрана / Смена 1");
-    }
-
-    [Fact]
-    public void A_department_with_employees_is_not_deleted()
-    {
-        var model = NewModel();
-        model.DepartmentNameInput = "Охрана";
-        model.AddDepartmentCommand.Execute(null);
-
-        model.PersonnelNoInput = "222222";
-        model.FullNameInput = "Смирнов С.С.";
-        model.DepartmentInput = model.Departments[0];
-        model.SaveEmployeeCommand.Execute(null);
-
-        model.SelectedDepartment = model.Departments[0];
-        model.DeleteDepartmentCommand.Execute(null);
-
-        // Сначала людей переводят: иначе они тихо оказались бы в чужом месте
-        // структуры.
-        Assert.Single(model.Departments);
-        Assert.Contains("переведите", model.Hint);
-        Assert.Equal("Смирнов С.С.", Assert.Single(model.Employees).FullName);
-    }
-
-    [Fact]
-    public void An_empty_department_is_deleted()
-    {
-        var model = NewModel();
-        model.DepartmentNameInput = "Охрана";
-        model.AddDepartmentCommand.Execute(null);
-
-        model.SelectedDepartment = model.Departments[0];
-        model.DeleteDepartmentCommand.Execute(null);
-
-        Assert.Empty(model.Departments);
+        Assert.Empty(model.Employees);
+        Assert.Empty(new StaffDirectory(_db).Employees());
+        Assert.Null(model.Selected);
+        Assert.False(model.DeleteEmployeeCommand.CanExecute(null));
     }
 
     [Fact]
@@ -168,6 +120,24 @@ public sealed class StaffViewModelTests : IDisposable
         model.ReloadCommand.Execute(null);
 
         Assert.Equal("333333", Assert.Single(model.Employees).PersonnelNo);
+    }
+
+    [Fact]
+    public void Editing_a_legacy_card_keeps_the_existing_department_and_role()
+    {
+        var staff = new StaffDirectory(_db);
+        var department = staff.AddDepartment("Охрана");
+        var employee = staff.AddEmployee("Иванов И.И.", "77", role: "инспектор", departmentId: department);
+        var model = NewModel();
+        model.Selected = model.Employees.Single(person => person.Id == employee);
+        model.PhoneInput = "+7 900 123-45-67";
+
+        model.SaveEmployeeCommand.Execute(null);
+
+        var saved = Assert.Single(staff.Employees());
+        Assert.Equal(department, saved.DepartmentId);
+        Assert.Equal("инспектор", saved.Role);
+        Assert.Equal("+7 900 123-45-67", saved.Phone);
     }
 
     public void Dispose()

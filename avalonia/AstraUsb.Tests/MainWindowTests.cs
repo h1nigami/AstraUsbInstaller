@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using AstraUsb.Services;
 using AstraUsb.ViewModels;
 using AstraUsb.Views;
@@ -268,7 +269,75 @@ public sealed class MainWindowTests : IDisposable
     [InlineData("grid")]
     [InlineData("list")]
     [InlineData("rack")]
-    public void Every_layout_shows_the_astra_id(string layout)
+    public async Task Device_highlight_follows_occupancy_without_moving_the_bay(string layout)
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var window = new MainWindow(model) { WindowState = WindowState.Normal, Width = 800, Height = 600 };
+        window.Show();
+        try
+        {
+            model.SetLayoutCommand.Execute(layout);
+            await Task.Yield();
+            await Task.Delay(300);
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            window.UpdateLayout();
+            var port = model.Ports[0];
+            var bay = window.GetVisualDescendants().OfType<Border>()
+                .Single(b => b.Classes.Contains("bay") && b.IsEffectivelyVisible && ReferenceEquals(b.DataContext, port));
+            var bounds = bay.Bounds;
+            var idleShadow = bay.BoxShadow;
+            var outside = bay.TranslatePoint(new Point(-2, bay.Bounds.Height / 2), window)!.Value;
+            var idlePixel = ReadPixel(window, outside);
+
+            port.CameraId = "64001";
+            port.State = PortState.Copying;
+            await Task.Delay(400);
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            window.UpdateLayout();
+
+            Assert.NotEqual(idleShadow, bay.BoxShadow);
+            Assert.NotEqual(idlePixel, ReadPixel(window, outside));
+            Assert.Equal(bounds, bay.Bounds);
+            port.Clear();
+            await Task.Delay(400);
+            AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+            window.UpdateLayout();
+
+            Assert.Equal(idleShadow, bay.BoxShadow);
+            Assert.Equal(idlePixel, ReadPixel(window, outside));
+            Assert.Equal(bounds, bay.Bounds);
+        }
+        finally
+        {
+            model.ExitCommand.Execute(null);
+            model.PasswordInput = PasswordGate.Default();
+            model.ConfirmPasswordCommand.Execute(null);
+        }
+    }
+
+    private static int ReadPixel(Window window, Point point)
+    {
+        AvaloniaHeadlessPlatform.ForceRenderTimerTick();
+        using var frame = window.CaptureRenderedFrame()!;
+        var pixel = new PixelRect((int)(point.X * frame.PixelSize.Width / window.ClientSize.Width),
+            (int)(point.Y * frame.PixelSize.Height / window.ClientSize.Height), 1, 1);
+        var buffer = Marshal.AllocHGlobal(4);
+        try
+        {
+            frame.CopyPixels(pixel, buffer, 4, 4);
+            return Marshal.ReadInt32(buffer);
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    [AvaloniaTheory]
+    [InlineData("grid", "64001")]
+    [InlineData("list", "64001")]
+    [InlineData("rack", "64001")]
+    [InlineData("grid", "Патруль-3")]
+    [InlineData("list", "Патруль-3")]
+    [InlineData("rack", "Патруль-3")]
+    public void Every_layout_shows_the_device_number_or_name(string layout, string label)
     {
         using var model = new MainWindowViewModel(() => []);
         var window = new MainWindow(model);
@@ -276,10 +345,10 @@ public sealed class MainWindowTests : IDisposable
         try
         {
             model.SetLayoutCommand.Execute(layout);
-            model.Ports[0].CameraId = "Astra ID 7 · 64001";
+            model.Ports[0].CameraId = label;
             window.UpdateLayout();
             Assert.Contains(window.GetVisualDescendants().OfType<TextBlock>(),
-                text => text.IsEffectivelyVisible && text.Text == "Astra ID 7 · 64001");
+                text => text.IsEffectivelyVisible && text.Text == label);
         }
         finally
         {
