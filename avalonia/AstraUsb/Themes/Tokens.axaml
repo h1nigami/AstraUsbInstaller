@@ -106,7 +106,7 @@
   <Color x:Key="Warn">#6E4700</Color>
   <SolidColorBrush x:Key="WarnBrush" Color="{StaticResource Warn}" />
 
-  <!-- Шрифты вшиты в сборку: на киоске сети нет, подтянуть их неоткуда -->
+  <!-- Статические начертания: Avalonia 11 загружает вариативные шрифты с минимальной толщиной. -->
   <FontFamily x:Key="FontHeading">avares://AstraUsb/Assets/Fonts#Nunito</FontFamily>
   <FontFamily x:Key="FontBody">avares://AstraUsb/Assets/Fonts#Manrope</FontFamily>
 
@@ -117,14 +117,17 @@
   <CornerRadius x:Key="RadiusCard">32</CornerRadius>
   <CornerRadius x:Key="RadiusPill">26</CornerRadius>
 
-  <!-- Сенсорные размеры из задания: нажатие от 44, основные кнопки от 52 -->
+  <!-- Размеры элементов для компактного экрана станции -->
   <x:Double x:Key="TapMin">44</x:Double>
-  <x:Double x:Key="ButtonHeight">52</x:Double>
+  <x:Double x:Key="ButtonHeight">36</x:Double>
   <x:Double x:Key="FieldHeight">46</x:Double>
 
   <!-- Тени перетонированы в холодный грунт новой темы -->
   <BoxShadows x:Key="ShadowSm">0 1 2 0 #24212D3B</BoxShadows>
   <BoxShadows x:Key="ShadowMd">0 3 10 0 #29212D3B</BoxShadows>
   <BoxShadows x:Key="ShadowLg">0 12 32 0 #38212D3B</BoxShadows>
+  <BoxShadows x:Key="ShadowSoft">0 2 6 0 #20212D3B</BoxShadows>
+  <BoxShadows x:Key="ShadowAccent">0 0 0 1 #402F77AD, 0 3 9 0 #242F77AD</BoxShadows>
+  <BoxShadows x:Key="ShadowFocus">0 0 0 2 #722F77AD</BoxShadows>
 
 </ResourceDictionary>

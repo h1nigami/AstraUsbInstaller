@@ -2,10 +2,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:AstraUsb.ViewModels"
         xmlns:svc="clr-namespace:AstraUsb.Services"
+        xmlns:conv="using:Avalonia.Data.Converters"
         x:Class="AstraUsb.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="BestCam USB Backup Manager"
+        Icon="avares://AstraUsb/Assets/app.ico"
         Width="800" Height="600"
+        MinWidth="780" MinHeight="560"
         WindowState="FullScreen"
         SystemDecorations="None"
         Background="{StaticResource BgAppBrush}"
@@ -22,26 +25,83 @@
       <Setter Property="BorderThickness" Value="2" />
       <Setter Property="Padding" Value="12,10" />
       <Setter Property="Margin" Value="4" />
-      <Setter Property="ClipToBounds" Value="True" />
+      <Setter Property="BoxShadow" Value="{StaticResource ShadowSoft}" />
       <Setter Property="Transitions">
         <Transitions>
-          <BrushTransition Property="Background" Duration="0:0:0.3" />
-          <BrushTransition Property="BorderBrush" Duration="0:0:0.3" />
+          <BrushTransition Property="Background" Duration="0:0:0.3" Easing="CubicEaseOut" />
+          <BrushTransition Property="BorderBrush" Duration="0:0:0.3" Easing="CubicEaseOut" />
+          <BoxShadowsTransition Property="BoxShadow" Duration="0:0:0.25" Easing="CubicEaseOut" />
         </Transitions>
       </Setter>
     </Style>
 
-    <!-- Полоса растёт плавно, а не рывком на каждый отчёт о ходе выгрузки. -->
-    <Style Selector="Border.fill">
+    <Style Selector="Border.bay.occupied, Border.bay:pointerover">
+      <Setter Property="BoxShadow" Value="{StaticResource ShadowAccent}" />
+    </Style>
+
+    <Style Selector="ProgressBar.bay-progress">
       <Setter Property="Transitions">
         <Transitions>
-          <DoubleTransition Property="Width" Duration="0:0:0.45" Easing="CubicEaseOut" />
+          <DoubleTransition Property="Value" Duration="0:0:0.25" Easing="CubicEaseOut" />
+          <BrushTransition Property="Foreground" Duration="0:0:0.3" Easing="CubicEaseOut" />
         </Transitions>
       </Setter>
+    </Style>
+
+    <Style Selector="Grid.search-header > TextBlock">
+      <Setter Property="LetterSpacing" Value="0" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+    </Style>
+
+    <Style Selector="Grid.directory-row > TextBlock">
+      <Setter Property="TextWrapping" Value="Wrap" />
+      <Setter Property="Margin" Value="0,4,6,4" />
+    </Style>
+
+    <Style Selector="TabControl#Tabs TextBox">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="Height" Value="30" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="8,0" />
+    </Style>
+    <Style Selector="TabControl#Tabs ComboBox">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="8,0" />
+    </Style>
+    <Style Selector="TabControl#Tabs TextBox.form, TabControl#Tabs ComboBox.form">
+      <Setter Property="MinHeight" Value="30" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="TabControl#Tabs Button">
+      <Setter Property="Height" Value="30" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style Selector="TabControl#Tabs Button.nav">
+      <Setter Property="Height" Value="30" />
+      <Setter Property="Padding" Value="10,0" />
+    </Style>
+    <Style Selector="TabControl#Tabs CheckBox">
+      <Setter Property="MinHeight" Value="30" />
+    </Style>
+    <Style Selector="TabControl#Tabs TextBlock.field">
+      <Setter Property="FontSize" Value="11" />
+      <Setter Property="Margin" Value="0,0,0,3" />
+    </Style>
+    <Style Selector="TabControl#Tabs ListBoxItem">
+      <Setter Property="MinHeight" Value="28" />
+    </Style>
+    <Style Selector="TabControl#Tabs TabItem">
+      <Setter Property="MinHeight" Value="32" />
+      <Setter Property="Height" Value="32" />
+      <Setter Property="FontSize" Value="12" />
+      <Setter Property="Padding" Value="10,0" />
     </Style>
   </Window.Styles>
 
-  <Grid RowDefinitions="62,Auto,*,30" Background="{StaticResource BgAppBrush}">
+  <Grid RowDefinitions="52,Auto,*,30" Background="{StaticResource BgAppBrush}">
 
     <!-- Шапка: марка, название станции, часы, выход -->
     <Grid Grid.Row="0" Background="{StaticResource BgPanelBrush}"
@@ -68,7 +128,7 @@
       </Border>
 
       <Button Grid.Column="4" Classes="danger" Content="Выход" Margin="0,0,12,0"
-              Height="40" Padding="18,0" VerticalAlignment="Center"
+              Padding="12,0" VerticalAlignment="Center"
               Command="{Binding ExitCommand}" />
     </Grid>
 
@@ -78,8 +138,8 @@
       <!-- Пилюли служб сжимаются первыми: сводка по гнёздам и состояние
            станции нужнее, чем полный список служб. -->
       <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" ClipToBounds="True"
-                  Margin="12,0,0,8" VerticalAlignment="Center">
-        <Border Classes="pill" Padding="10,4" CornerRadius="14" Background="{StaticResource Teal100Brush}">
+                  Margin="12,0,0,4" VerticalAlignment="Center">
+        <Border Classes="pill" Padding="8,2" CornerRadius="14" Background="{StaticResource Teal100Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}" />
@@ -87,7 +147,7 @@
                        Foreground="{StaticResource Teal900Brush}" />
           </StackPanel>
         </Border>
-        <Border Classes="pill" Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
+        <Border Classes="pill" Padding="8,2" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Teal500Brush}" />
@@ -96,7 +156,7 @@
           </StackPanel>
         </Border>
 
-        <Border Classes="pill" Padding="10,4" CornerRadius="14" IsVisible="{Binding FtpEnabled}"
+        <Border Classes="pill" Padding="8,2" CornerRadius="14" IsVisible="{Binding FtpEnabled}"
                 Background="{StaticResource Accent100Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
@@ -108,7 +168,7 @@
 
         <!-- Состояние сети видно всегда: при её отсутствии отправка наружу
              молча копилась бы в очереди. -->
-        <Border Classes="pill" Padding="10,4" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
+        <Border Classes="pill" Padding="8,2" CornerRadius="14" Background="{StaticResource Neutral200Brush}">
           <StackPanel Orientation="Horizontal" Spacing="6">
             <Ellipse Classes="dot" Width="7" Height="7" VerticalAlignment="Center"
                      Fill="{StaticResource Neutral500Brush}"
@@ -124,14 +184,19 @@
 
       <!-- Состояние станции стоит в подвале и второй раз здесь не нужно:
            из-за него сводка по гнёздам не влезала в ширину экрана. -->
-      <TextBlock Grid.Column="1" Text="{Binding Summary}" FontSize="12" Margin="8,0,12,8"
+      <TextBlock Grid.Column="1" Text="{Binding Summary}" FontSize="12" Margin="8,0,12,4"
                  VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
     </Grid>
 
     <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
+      <TabControl.ItemsPanel>
+        <ItemsPanelTemplate>
+          <StackPanel Orientation="Horizontal" />
+        </ItemsPanelTemplate>
+      </TabControl.ItemsPanel>
 
       <TabItem Header="СБОР ДАННЫХ">
-        <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="10,8">
+        <Grid RowDefinitions="Auto,Auto,Auto,*" Margin="10,4">
 
           <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="4,0,4,6">
             <StackPanel Grid.Column="0" Spacing="0" VerticalAlignment="Center">
@@ -144,13 +209,13 @@
             <Border Grid.Column="1" Padding="4" CornerRadius="20" VerticalAlignment="Center"
                     Background="{StaticResource Neutral200Brush}">
               <StackPanel Orientation="Horizontal" Spacing="2">
-                <Button Content="Сетка" Height="36" Padding="14,0" FontSize="12"
+                <Button Content="Сетка" Padding="12,0" FontSize="12"
                         Classes.primary="{Binding IsGridLayout}"
                         Command="{Binding SetLayoutCommand}" CommandParameter="grid" />
-                <Button Content="Список" Height="36" Padding="14,0" FontSize="12"
+                <Button Content="Список" Padding="12,0" FontSize="12"
                         Classes.primary="{Binding IsListLayout}"
                         Command="{Binding SetLayoutCommand}" CommandParameter="list" />
-                <Button Content="Схема" Height="36" Padding="14,0" FontSize="12"
+                <Button Content="Схема" Padding="12,0" FontSize="12"
                         Classes.primary="{Binding IsRackLayout}"
                         Command="{Binding SetLayoutCommand}" CommandParameter="rack" />
               </StackPanel>
@@ -159,9 +224,9 @@
 
           <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="4,0,4,8">
             <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="Остановить сбор" Height="42" Padding="14,0"
+              <Button Content="Остановить сбор" Padding="12,0"
                       Command="{Binding StopCollectionCommand}" />
-              <Button Content="Возобновить сбор" Height="42" Padding="14,0"
+              <Button Content="Возобновить сбор" Padding="12,0"
                       IsVisible="{Binding SafeRemovalActive}" Command="{Binding ResumeCollectionCommand}" />
             </StackPanel>
             <TextBlock Grid.Column="1" Margin="12,0,0,0" FontSize="11" TextWrapping="Wrap"
@@ -192,40 +257,40 @@
             </ItemsControl.ItemsPanel>
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:PortViewModel">
-                <Border Classes="bay" Padding="10,8" Background="{Binding Fill}"
+                <Border Classes="bay" Classes.occupied="{Binding IsBusy}" Padding="10,6" Background="{Binding Fill}"
                         BorderBrush="{Binding Edge}">
-                  <Grid RowDefinitions="22,Auto,*,Auto,3,7">
+                  <Grid RowDefinitions="22,Auto,22,Auto,3,7">
 
-                    <Border Grid.Row="0" Width="22" Height="22" CornerRadius="11"
+                    <Grid Grid.Row="0" ColumnDefinitions="*,Auto">
+                      <Border Width="22" Height="22" CornerRadius="11" HorizontalAlignment="Left"
                               Background="{Binding Mark}">
                         <TextBlock Text="{Binding SlotLabel}" FontSize="11"
                                    FontFamily="{StaticResource FontHeading}"
                                    FontWeight="ExtraBold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center"
                                    Foreground="{Binding SlotInk}" />
-                    </Border>
-
-                    <TextBlock Grid.Row="1" Text="{Binding CameraLine}" FontSize="11"
-                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
-                               Foreground="{Binding InkMuted}" />
-                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto" VerticalAlignment="Center">
-                      <TextBlock Grid.Column="0" Text="{Binding StateText}" Classes="state"
-                                 FontSize="17" VerticalAlignment="Center"
-                                 TextTrimming="CharacterEllipsis" Foreground="{Binding Ink}" />
+                      </Border>
                       <TextBlock Grid.Column="1" Text="{Binding PercentText}" Classes="mono"
                                  FontSize="11" FontWeight="Bold" VerticalAlignment="Center"
                                  Foreground="{Binding Ink}" />
                     </Grid>
 
-                    <TextBlock Grid.Row="3" Text="{Binding StateHint}" FontSize="12"
-                               FontWeight="Bold"
-                               TextTrimming="CharacterEllipsis" Foreground="{Binding InkMuted}" />
+                    <TextBlock Grid.Row="1" Text="{Binding CameraLine}" FontSize="11"
+                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
+                               Foreground="{Binding InkMuted}" />
+                    <Viewbox Grid.Row="2" Stretch="Uniform" StretchDirection="DownOnly"
+                             HorizontalAlignment="Left" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding StateText}" Classes="state" FontSize="17"
+                                 Foreground="{Binding Ink}" />
+                    </Viewbox>
 
-                    <Border Grid.Row="5" Height="7" CornerRadius="4" ClipToBounds="True"
-                            Background="{Binding Track}">
-                      <Border Classes="fill" HorizontalAlignment="Left" CornerRadius="4"
-                              Width="{Binding BarFill}" Background="{Binding Mark}" />
-                    </Border>
+                    <TextBlock Grid.Row="3" Text="{Binding StateHint}" FontSize="11"
+                               FontWeight="Bold" MinHeight="32" LineHeight="16"
+                               TextWrapping="Wrap" Foreground="{Binding InkMuted}" />
+
+                    <ProgressBar Grid.Row="5" Classes="bay-progress" Height="7" CornerRadius="4"
+                                 MinWidth="0" BorderThickness="0" Maximum="{x:Static vm:PortViewModel.BarWidth}"
+                                 Value="{Binding BarFill}" Foreground="{Binding Mark}" Background="{Binding Track}" />
                   </Grid>
                 </Border>
               </DataTemplate>
@@ -240,9 +305,9 @@
                 <DataTemplate x:DataType="vm:PortViewModel">
                   <!-- Строка ниже плитки: в списке состояние и так стоит
                        в своей колонке, а высота нужна под десять гнёзд. -->
-                  <Border Classes="bay" Padding="12,6" Margin="4,3" MinHeight="46"
+                  <Border Classes="bay" Classes.occupied="{Binding IsBusy}" Padding="12,6" Margin="4,3" MinHeight="46"
                           Background="{Binding Fill}" BorderBrush="{Binding Edge}">
-                    <Grid ColumnDefinitions="28,150,110,*,Auto">
+                    <Grid ColumnDefinitions="28,150,110,*,140">
                       <Border Grid.Column="0" Width="24" Height="24" CornerRadius="12"
                               Background="{Binding Mark}" VerticalAlignment="Center">
                         <TextBlock Text="{Binding SlotLabel}" FontSize="12"
@@ -257,17 +322,18 @@
                                  FontWeight="SemiBold" TextTrimming="CharacterEllipsis"
                                  Foreground="{Binding InkMuted}" />
 
-                      <TextBlock Grid.Column="2" Text="{Binding StateText}"
+                      <Viewbox Grid.Column="2" Stretch="Uniform" StretchDirection="DownOnly"
+                               HorizontalAlignment="Left" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding StateText}"
                                  FontFamily="{StaticResource FontHeading}"
                                  FontWeight="ExtraBold" FontSize="13"
                                  VerticalAlignment="Center" Foreground="{Binding Ink}" />
+                      </Viewbox>
 
-                      <Border Grid.Column="3" Height="7" CornerRadius="4" ClipToBounds="True"
-                              VerticalAlignment="Center" Margin="8,0"
-                              Background="{Binding Track}">
-                        <Border Classes="fill" HorizontalAlignment="Left" CornerRadius="4"
-                                Width="{Binding BarFill}" Background="{Binding Mark}" />
-                      </Border>
+                      <ProgressBar Grid.Column="3" Classes="bay-progress" Height="7" CornerRadius="4"
+                                   MinWidth="0" BorderThickness="0" Margin="8,0"
+                                   Maximum="{x:Static vm:PortViewModel.BarWidth}" Value="{Binding BarFill}"
+                                   Foreground="{Binding Mark}" Background="{Binding Track}" />
 
                       <StackPanel Grid.Column="4" VerticalAlignment="Center"
                                   HorizontalAlignment="Right">
@@ -275,7 +341,7 @@
                                    FontWeight="Bold" HorizontalAlignment="Right"
                                    Foreground="{Binding Ink}" />
                         <TextBlock Text="{Binding FilesLine}" FontSize="11"
-                                   HorizontalAlignment="Right"
+                                   HorizontalAlignment="Right" MaxWidth="140" TextTrimming="CharacterEllipsis"
                                    Foreground="{Binding InkMuted}" />
                       </StackPanel>
                     </Grid>
@@ -303,7 +369,7 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                   <DataTemplate x:DataType="vm:PortViewModel">
-                    <Border Classes="bay" Padding="8" Margin="4"
+                    <Border Classes="bay" Classes.occupied="{Binding IsBusy}" Padding="8" Margin="4"
                             Background="{Binding Fill}" BorderBrush="{Binding Edge}">
                       <StackPanel Spacing="4" VerticalAlignment="Center">
                         <!-- Скоба сверху повторяет вид регистратора в отсеке -->
@@ -337,15 +403,15 @@
       </TabItem>
 
       <TabItem Header="ЗАПРОС ДАННЫХ">
-        <Grid RowDefinitions="*,*,Auto" Margin="10,8">
+        <Grid RowDefinitions="Auto,*,Auto" Margin="10,4">
 
           <!-- Панель условий по макету: поверхность со скруглением 30, поля в
                сетке от 210 точек на колонку, подпись над полем капсом. -->
           <Border Grid.Row="0" Background="{StaticResource BgSurfaceBrush}"
-                  CornerRadius="24" Padding="14,12" Margin="0,0,0,8">
-            <Grid RowDefinitions="*,Auto">
-              <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Spacing="10">
+                  CornerRadius="16" Padding="8,6" Margin="0,0,0,4">
+            <Grid RowDefinitions="Auto,Auto">
+              <ScrollViewer MaxHeight="80" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="4">
               <UniformGrid Classes="fade" Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ОТДЕЛ" Classes="field" />
@@ -354,7 +420,7 @@
                             HorizontalAlignment="Stretch">
                     <ComboBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:DepartmentRow">
-                        <TextBlock Text="{Binding Path}" />
+                        <TextBlock Text="{Binding Path}" TextWrapping="Wrap" />
                       </DataTemplate>
                     </ComboBox.ItemTemplate>
                   </ComboBox>
@@ -388,7 +454,7 @@
 
                 <StackPanel>
                   <TextBlock Text="ОТБОР" Classes="field" />
-                  <CheckBox Content="только защищённые" FontSize="12" MinHeight="52"
+                  <CheckBox Content="только защищённые" FontSize="12" MinHeight="30"
                             IsChecked="{Binding Search.ProtectedOnly}" />
                 </StackPanel>
               </UniformGrid>
@@ -396,7 +462,7 @@
               <UniformGrid Columns="3">
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ДАТА ИЗМЕНЕНИЯ ФАЙЛА" Classes="field" />
-                  <Grid ColumnDefinitions="*,10,*">
+                  <Grid ColumnDefinitions="*,6,*">
                     <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.From}" />
                     <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.To}" />
                   </Grid>
@@ -404,7 +470,7 @@
 
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ВРЕМЯ СЪЁМКИ" Classes="field" />
-                  <Grid ColumnDefinitions="*,10,*">
+                  <Grid ColumnDefinitions="*,6,*">
                     <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.ShotFrom}"
                              Watermark="любое" />
                     <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.ShotTo}"
@@ -422,14 +488,14 @@
 
                 </StackPanel>
               </ScrollViewer>
-              <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="0,10,0,0">
+              <Grid Grid.Row="1" ColumnDefinitions="Auto,*" Margin="0,4,0,0">
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                <Button Classes="primary" Content="Запрос" Height="52" Width="140"
+                <Button Classes="primary" Content="Запрос"
                         IsEnabled="{Binding !Search.Searching}"
                         Command="{Binding Search.SearchCommand}" />
-                <Button Content="Сброс" Height="52" Width="110"
+                <Button Content="Сброс"
                         Command="{Binding Search.ResetCommand}" />
-                <Button Content="{Binding Search.FiltersLabel}" Height="52" FontSize="12"
+                <Button Content="{Binding Search.FiltersLabel}" FontSize="12"
                         Command="{Binding Search.ToggleFiltersCommand}" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding Search.Hint}" Classes="hint" VerticalAlignment="Center"
@@ -441,24 +507,24 @@
           </Border>
 
           <Border Grid.Row="1" Classes="card">
-            <Grid RowDefinitions="26,*">
-              <Grid Grid.Row="0" ColumnDefinitions="30,86,*,54,52,78,92,92,52" Margin="12,7,12,0">
-                <TextBlock Grid.Column="1" Text="УСТРОЙСТВО" Classes="label" />
-                <TextBlock Grid.Column="2" Text="ФАЙЛ" Classes="label" />
-                <TextBlock Grid.Column="3" Text="ТИП" Classes="label" />
-                <TextBlock Grid.Column="4" Text="РАЗМЕР" Classes="label" />
-                <TextBlock Grid.Column="5" Text="СОТРУДНИК" Classes="label" />
-                <TextBlock Grid.Column="6" Text="СНЯТО" Classes="label" />
-                <TextBlock Grid.Column="7" Text="ЗАГРУЖЕНО" Classes="label" />
-                <TextBlock Grid.Column="8" Text="ЗАЩИТА" Classes="label" />
+            <Grid RowDefinitions="22,*">
+              <Grid Grid.Row="0" Classes="search-header" ColumnDefinitions="30,86,*,54,52,78,92,92,52" Margin="12,4,12,0">
+                <TextBlock Grid.Column="1" Text="Устройство" Classes="label" />
+                <TextBlock Grid.Column="2" Text="Файл" Classes="label" />
+                <TextBlock Grid.Column="3" Text="Тип" Classes="label" />
+                <TextBlock Grid.Column="4" Text="Размер" Classes="label" />
+                <TextBlock Grid.Column="5" Text="Сотрудник" Classes="label" />
+                <TextBlock Grid.Column="6" Text="Снято" Classes="label" />
+                <TextBlock Grid.Column="7" Text="Загружено" Classes="label" />
+                <TextBlock Grid.Column="8" Text="Защита" Classes="label" />
               </Grid>
 
               <ListBox Grid.Row="1" ItemsSource="{Binding Search.Results}"
                        SelectedItem="{Binding Search.Current}">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:FoundFile">
-                    <Grid ColumnDefinitions="30,86,*,54,52,78,92,92,52" Height="34">
-                      <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="30"
+                    <Grid ColumnDefinitions="30,86,*,54,52,78,92,92,52" Height="28">
+                      <CheckBox Grid.Column="0" IsChecked="{Binding Selected}" MinHeight="24"
                                 VerticalAlignment="Center" />
                       <TextBlock Grid.Column="1" Text="{Binding Camera}" Classes="mono"
                                  FontSize="11" VerticalAlignment="Center"
@@ -494,34 +560,44 @@
             </Grid>
           </Border>
 
-          <StackPanel Grid.Row="2" Spacing="6" Margin="0,8,0,0">
+          <StackPanel Grid.Row="2" Spacing="4" Margin="0,4,0,0">
             <!-- Действия над выбранной записью -->
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="Смотреть" Height="46" FontSize="12"
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <Button Content="Смотреть" FontSize="12"
                       Command="{Binding Search.PlayCommand}" />
               <ComboBox ItemsSource="{Binding Search.Formats}"
-                        SelectedItem="{Binding Search.Format}" Width="96" Height="46" />
-              <Button Content="Перевести" Height="46" FontSize="12"
+                        SelectedItem="{Binding Search.Format}" Width="96" />
+              <Button Content="Перевести" FontSize="12"
                       IsEnabled="{Binding !Search.Converting}"
                       Command="{Binding Search.ConvertFileCommand}" />
-              <TextBox Text="{Binding Search.NoteInput}" Width="160" Height="46"
+              <TextBox Text="{Binding Search.NoteInput}" Width="160"
                        Watermark="заметка" />
-              <Button Content="Заметка" Height="46" FontSize="12"
+              <Button Content="Заметка" FontSize="12"
                       Command="{Binding Search.SaveNoteCommand}" />
-              <Button Content="Защита" Height="46" FontSize="12"
+              <Button Content="Защита" FontSize="12"
                       Command="{Binding Search.ToggleImportantCommand}" />
             </StackPanel>
 
             <!-- Действия над отобранными галочками -->
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="Отобрать все" Height="46" FontSize="12"
+            <StackPanel Orientation="Horizontal" Spacing="4">
+              <Button Content="Отобрать все" FontSize="12"
                       Command="{Binding Search.SelectAllCommand}" />
-              <TextBox Text="{Binding Search.ExportTarget}" Width="230" Height="46"
-                       Watermark="папка или флешка" />
-              <Button Classes="primary" Content="{Binding Search.ExportLabel}" Height="46"
+              <Button x:Name="ChooseExportFolder" Width="230"
+                      HorizontalContentAlignment="Stretch"
+                      IsEnabled="{Binding !Search.Exporting}"
+                      ToolTip.Tip="{Binding Search.ExportTarget}"
+                      AutomationProperties.Name="Выбрать папку для выгрузки"
+                      Click="ChooseExportFolder_Click">
+                <Grid>
+                  <TextBlock Text="Папка или флешка…"
+                             IsVisible="{Binding Search.ExportTarget, Converter={x:Static conv:StringConverters.IsNullOrEmpty}}" />
+                  <TextBlock Text="{Binding Search.ExportTarget}" TextTrimming="CharacterEllipsis" />
+                </Grid>
+              </Button>
+              <Button Classes="primary" Content="{Binding Search.ExportLabel}"
                       FontSize="12"
                       Command="{Binding Search.ExportCommand}" />
-              <Button Classes="danger" Content="{Binding Search.DeleteLabel}" Height="46"
+              <Button Classes="danger" Content="{Binding Search.DeleteLabel}"
                       FontSize="12" Command="{Binding Search.DeleteCommand}" />
             </StackPanel>
           </StackPanel>
@@ -529,7 +605,7 @@
       </TabItem>
 
       <TabItem Header="УСТРОЙСТВА">
-        <Grid RowDefinitions="*,Auto" Margin="10,8">
+        <Grid RowDefinitions="*,Auto" Margin="10,4">
           <!-- Панель управления прижата к низу и получает место раньше списка:
                на экране 1024x600 иначе она уезжает за край. -->
           <Border Grid.Row="0" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
@@ -552,7 +628,7 @@
                      Background="Transparent" BorderThickness="0">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:DeviceRow">
-                  <Grid ColumnDefinitions="96,124,*,96,58" Height="30">
+                  <Grid Classes="directory-row" ColumnDefinitions="96,124,*,96,58" MinHeight="30">
                     <TextBlock Grid.Column="0" Text="{Binding Display}"
                                FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                FontWeight="Bold" VerticalAlignment="Center"
@@ -584,10 +660,10 @@
               <TextBlock Text="Имя камеры" Width="86" FontSize="12"
                          VerticalAlignment="Center"
                          Foreground="{StaticResource FgMutedBrush}" />
-              <TextBox Text="{Binding Devices.NameInput}" Width="190" Height="44" />
-              <Button Content="Переименовать" Height="44" FontSize="12"
+              <TextBox Text="{Binding Devices.NameInput}" Width="190" />
+              <Button Content="Переименовать" FontSize="12"
                       Command="{Binding Devices.RenameCommand}" />
-              <Button Content="Обновить" Height="44" FontSize="12"
+              <Button Content="Обновить" FontSize="12"
                       Command="{Binding Devices.ReloadCommand}" />
             </StackPanel>
 
@@ -596,14 +672,14 @@
                          VerticalAlignment="Center"
                          Foreground="{StaticResource FgMutedBrush}" />
               <ComboBox ItemsSource="{Binding Devices.Employees}"
-                        SelectedItem="{Binding Devices.EmployeeInput}" Width="190" Height="44">
+                        SelectedItem="{Binding Devices.EmployeeInput}" Width="190">
                 <ComboBox.ItemTemplate>
                   <DataTemplate x:DataType="svc:Employee">
-                    <TextBlock Text="{Binding FullName}" />
+                    <TextBlock Text="{Binding FullName}" TextWrapping="Wrap" />
                   </DataTemplate>
                 </ComboBox.ItemTemplate>
               </ComboBox>
-              <Button Content="Закрепить" Height="44" FontSize="12"
+              <Button Content="Закрепить" FontSize="12"
                       Command="{Binding Devices.AssignCommand}" />
             </StackPanel>
 
@@ -613,129 +689,81 @@
         </Grid>
       </TabItem>
       <TabItem Header="СОТРУДНИКИ">
-        <Grid ColumnDefinitions="224,*" RowDefinitions="*,Auto" Margin="10,8">
-
-          <!-- Отделы. Путь показан целиком: вложенность иначе не видна. -->
-          <Border Grid.Row="0" Grid.Column="0" Margin="0,0,8,0"
-                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
+        <Grid RowDefinitions="*,Auto" Margin="10,4">
+          <Border Grid.Row="0" BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
                   CornerRadius="2" Background="{StaticResource BgPanelBrush}">
             <Grid RowDefinitions="24,*">
-              <TextBlock Grid.Row="0" Text="ОТДЕЛЫ" Margin="10,6,0,0" FontSize="11"
-                         Foreground="{StaticResource FgMutedBrush}" />
-              <TextBlock Grid.Row="1" IsVisible="{Binding Staff.NoDepartments}"
-                         Text="Отделов пока нет. Введите название внизу и нажмите «Добавить отдел»."
-                         Margin="12,8" TextWrapping="Wrap" FontSize="11"
-                         Foreground="{StaticResource FgMutedBrush}" />
-              <ListBox Grid.Row="1" ItemsSource="{Binding Staff.Departments}"
-                       SelectedItem="{Binding Staff.SelectedDepartment}"
+              <Grid Grid.Row="0" ColumnDefinitions="112,*,190" Margin="10,6,10,0">
+                <TextBlock Text="НОМЕР" FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="1" Text="ФИО" FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+                <TextBlock Grid.Column="2" Text="ТЕЛЕФОН" FontSize="11" Foreground="{StaticResource FgMutedBrush}" />
+              </Grid>
+              <ListBox Grid.Row="1" ItemsSource="{Binding Staff.Employees}"
+                       SelectedItem="{Binding Staff.Selected}"
                        Background="Transparent" BorderThickness="0">
                 <ListBox.ItemTemplate>
-                  <DataTemplate x:DataType="vm:DepartmentRow">
-                    <TextBlock Text="{Binding Path}" Height="26" VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMainBrush}" />
+                  <DataTemplate x:DataType="svc:Employee">
+                    <Grid Classes="directory-row" ColumnDefinitions="112,*,190" MinHeight="28">
+                      <TextBlock Text="{Binding PersonnelNo}"
+                                 FontFamily="DejaVu Sans Mono, Consolas, monospace"
+                                 FontWeight="Bold" VerticalAlignment="Center"
+                                 Foreground="{StaticResource Accent700Brush}" />
+                      <TextBlock Grid.Column="1" Text="{Binding FullName}" VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="2" Text="{Binding Phone}" FontSize="11"
+                                 VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
+                    </Grid>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
             </Grid>
           </Border>
 
-          <Border Grid.Row="0" Grid.Column="1"
-                  BorderBrush="{StaticResource LineBrush}" BorderThickness="1"
-                  CornerRadius="2" Background="{StaticResource BgPanelBrush}">
-            <Grid RowDefinitions="24,*">
-              <Grid Grid.Row="0" ColumnDefinitions="84,*,104,58" Margin="10,6,10,0">
-                <TextBlock Grid.Column="0" Text="НОМЕР" FontSize="11"
-                           Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="1" Text="ИМЯ" FontSize="11"
-                           Foreground="{StaticResource FgMutedBrush}" />
-                <TextBlock Grid.Column="2" Text="ТЕЛЕФОН" FontSize="11"
-                           Foreground="{StaticResource FgMutedBrush}" />
-              </Grid>
-              <ListBox Grid.Row="1" ItemsSource="{Binding Staff.Employees}"
-                     SelectedItem="{Binding Staff.Selected}"
-                     Background="Transparent" BorderThickness="0">
-              <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="svc:Employee">
-                  <Grid ColumnDefinitions="84,*,104,58" Height="28">
-                    <TextBlock Grid.Column="0" Text="{Binding PersonnelNo}"
-                               FontFamily="DejaVu Sans Mono, Consolas, monospace"
-                               FontWeight="Bold" VerticalAlignment="Center"
-                               Foreground="{StaticResource Accent700Brush}" />
-                    <TextBlock Grid.Column="1" Text="{Binding FullName}"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMainBrush}" />
-                    <TextBlock Grid.Column="2" Text="{Binding Phone}"
-                               FontSize="11" VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMutedBrush}" />
-                    <TextBlock Grid.Column="3" Text="уволен" IsVisible="{Binding !Active}"
-                               FontSize="11" VerticalAlignment="Center"
-                               Foreground="{StaticResource FgMutedBrush}" />
-                  </Grid>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-              </ListBox>
+          <StackPanel Grid.Row="1" Spacing="8" Margin="0,10,0,0">
+            <Grid ColumnDefinitions="132,8,*,8,190">
+              <StackPanel>
+                <TextBlock Text="НОМЕР" Classes="field" />
+                <TextBox Text="{Binding Staff.PersonnelNoInput}" Watermark="из регистратора"
+                         FontSize="13" Padding="10,0" />
+              </StackPanel>
+              <StackPanel Grid.Column="2">
+                <TextBlock Text="ФАМИЛИЯ, ИМЯ И ОТЧЕСТВО" Classes="field" />
+                <TextBox Text="{Binding Staff.FullNameInput}" Watermark="Фамилия Имя Отчество"
+                         FontSize="13" Padding="10,0" />
+              </StackPanel>
+              <StackPanel Grid.Column="4">
+                <TextBlock Text="ТЕЛЕФОН" Classes="field" />
+                <TextBox Text="{Binding Staff.PhoneInput}" Watermark="+7 …"
+                         FontSize="13" Padding="10,0" />
+              </StackPanel>
             </Grid>
-          </Border>
 
-          <StackPanel Grid.Row="1" Grid.Column="0" Spacing="6" Margin="0,8,8,0">
-            <TextBox Text="{Binding Staff.DepartmentNameInput}" Height="44"
-                     Watermark="Название отдела" />
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <Button Content="Добавить" Height="44" FontSize="12"
-                      Command="{Binding Staff.AddDepartmentCommand}" />
-              <Button Content="Удалить" Height="44" FontSize="12"
-                      Command="{Binding Staff.DeleteDepartmentCommand}" />
-            </StackPanel>
-          </StackPanel>
-
-          <!-- Карточка сотрудника по строкам: в одну строку четыре поля и три
-               кнопки на экране станции не помещаются. -->
-          <StackPanel Grid.Row="1" Grid.Column="1" Spacing="6" Margin="0,8,0,0">
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <TextBox Text="{Binding Staff.PersonnelNoInput}" Width="96" Height="44"
-                       Watermark="номер" Classes="mono" />
-              <TextBox Text="{Binding Staff.FullNameInput}" Width="200" Height="44"
-                       Watermark="фамилия и инициалы" />
-              <TextBox Text="{Binding Staff.PhoneInput}" Width="140" Height="44"
-                       Watermark="телефон" />
-            </StackPanel>
-
-            <StackPanel Orientation="Horizontal" Spacing="6">
-              <ComboBox ItemsSource="{Binding Staff.Departments}"
-                        SelectedItem="{Binding Staff.DepartmentInput}" Width="180" Height="44">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="vm:DepartmentRow">
-                    <TextBlock Text="{Binding Path}" />
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-              <Button Content="Новый" Height="44" FontSize="12"
-                      Command="{Binding Staff.NewEmployeeCommand}" />
-              <Button Classes="primary" Content="Сохранить" Height="44" FontSize="12"
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button Classes="primary" Content="{Binding Staff.SaveLabel}" FontSize="12"
                       Command="{Binding Staff.SaveEmployeeCommand}" />
-              <Button Content="Уволить" Height="44" FontSize="12"
-                      Command="{Binding Staff.DeactivateCommand}" />
+              <Button Content="Новый сотрудник" FontSize="12"
+                      Command="{Binding Staff.NewEmployeeCommand}" />
+              <Button Classes="danger" Content="Удалить" FontSize="12"
+                      Command="{Binding Staff.DeleteEmployeeCommand}" />
             </StackPanel>
-
             <TextBlock Text="{Binding Staff.Hint}" Classes="hint"
                        Foreground="{StaticResource Accent700Brush}" />
           </StackPanel>
         </Grid>
       </TabItem>
       <TabItem Header="ЖУРНАЛ">
-        <Grid RowDefinitions="Auto,*,Auto" Margin="10,8">
+        <Grid RowDefinitions="Auto,*,Auto" Margin="10,4">
           <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
             <TextBlock Text="События с" VerticalAlignment="Center" FontSize="11"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Log.From}" Width="100" Height="44" />
+            <TextBox Text="{Binding Log.From}" Width="100" />
             <TextBlock Text="по" VerticalAlignment="Center" FontSize="11"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Log.To}" Width="100" Height="44" />
-            <Button Classes="primary" Content="Показать" Height="44" FontSize="12"
+            <TextBox Text="{Binding Log.To}" Width="100" />
+            <Button Classes="primary" Content="Показать" FontSize="12"
                     Command="{Binding Log.ReloadCommand}" />
-            <Button Content="Сегодня" Height="44" FontSize="12"
+            <Button Content="Сегодня" FontSize="12"
                     Command="{Binding Log.TodayCommand}" />
-            <Button Content="Неделя" Height="44" FontSize="12"
+            <Button Content="Неделя" FontSize="12"
                     Command="{Binding Log.WeekCommand}" />
           </StackPanel>
 
@@ -754,7 +782,7 @@
                        Background="Transparent" BorderThickness="0">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:LogRow">
-                    <Grid ColumnDefinitions="128,90,*" Height="24">
+                    <Grid Classes="directory-row" ColumnDefinitions="128,90,*" MinHeight="24">
                       <TextBlock Grid.Column="0" Text="{Binding At}" FontSize="11"
                                  FontFamily="DejaVu Sans Mono, Consolas, monospace"
                                  VerticalAlignment="Center"
@@ -763,7 +791,7 @@
                                  VerticalAlignment="Center"
                                  Foreground="{StaticResource Accent700Brush}" />
                       <TextBlock Grid.Column="2" Text="{Binding Message}" FontSize="11"
-                                 TextTrimming="CharacterEllipsis" VerticalAlignment="Center"
+                                 VerticalAlignment="Center"
                                  Foreground="{StaticResource FgMainBrush}" />
                     </Grid>
                   </DataTemplate>
@@ -775,7 +803,7 @@
           <Grid Grid.Row="2" ColumnDefinitions="*,Auto" Margin="0,6,0,0">
             <TextBlock Text="{Binding Log.Hint}" FontSize="11" TextWrapping="Wrap"
                        VerticalAlignment="Center" Foreground="{StaticResource Accent700Brush}" />
-            <Button Grid.Column="1" Content="Выгрузить диагностику" Height="44" FontSize="12" Margin="8,0,0,0"
+            <Button Grid.Column="1" Content="Выгрузить диагностику" FontSize="12" Margin="8,0,0,0"
                     IsEnabled="{Binding !Log.Exporting}" Click="ExportDiagnostics_Click" />
           </Grid>
         </Grid>
@@ -785,7 +813,7 @@
         <!-- Боковое меню и один подраздел справа, как в прототипе: одной
              простынёй с прокруткой на экране станции не пользоваться, а
              искать в ней нужное поле. -->
-        <Grid ColumnDefinitions="176,*" Margin="10,8">
+        <Grid ColumnDefinitions="176,*" Margin="10,4">
 
           <StackPanel Grid.Column="0" Margin="0,0,10,0">
             <Button Classes="nav" Content="Станция и хранилище"
@@ -813,7 +841,7 @@
 
               <!-- Станция и хранилище -->
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsStationSection}">
-                <StackPanel Spacing="14">
+                <StackPanel Spacing="8">
                   <TextBlock Text="Станция и хранилище" Classes="section" />
 
                   <UniformGrid Columns="2">
@@ -838,7 +866,7 @@
                                  Text="{Binding Settings.BayCount}" />
                         <TextBox Grid.Column="2" Classes="form"
                                  Text="{Binding Settings.BaysPerRow}" />
-                        <Button Grid.Column="4" Content="Применить" Height="52"
+                        <Button Grid.Column="4" Content="Применить"
                                 Command="{Binding Settings.SaveBayCountCommand}" />
                       </Grid>
                       <TextBlock Classes="hint" Margin="0,4,0,0"
@@ -889,7 +917,7 @@
                   <TextBlock Classes="hint"
                              Text="Синтез речи берётся системный. Если его в системе нет, подсказки молчат, а работа станции не меняется." />
 
-                  <Button Classes="primary" Content="Сохранить" Height="52" Width="180"
+                  <Button Classes="primary" Content="Сохранить"
                           HorizontalAlignment="Left"
                           Command="{Binding Settings.SaveStorageCommand}" />
                 </StackPanel>
@@ -897,7 +925,7 @@
 
               <!-- Доступ -->
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAccessSection}">
-                <StackPanel Spacing="14">
+                <StackPanel Spacing="8">
                   <TextBlock Text="Доступ" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Учётной записью администратора закрыты выход из программы и все разделы, кроме сбора данных." />
@@ -932,7 +960,7 @@
                     </StackPanel>
                   </UniformGrid>
 
-                  <Button Classes="primary" Content="Сменить пароль" Height="52" Width="220"
+                  <Button Classes="primary" Content="Сменить пароль"
                           HorizontalAlignment="Left"
                           Command="{Binding Settings.ChangePasswordCommand}" />
 
@@ -943,7 +971,7 @@
                     <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
                       <TextBox Grid.Column="0" Classes="form"
                                Text="{Binding Settings.LockTimeoutMinutes}" />
-                      <Button Grid.Column="2" Content="Сохранить" Height="52"
+                      <Button Grid.Column="2" Content="Сохранить"
                               Command="{Binding Settings.SaveLockTimeoutCommand}" />
                     </Grid>
                     <TextBlock Classes="hint" Margin="0,4,0,0"
@@ -954,7 +982,7 @@
 
               <!-- Отправка на сервер -->
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsFtpSection}">
-                <StackPanel Spacing="14">
+                <StackPanel Spacing="8">
                   <TextBlock Text="Отправка на сервер" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Записи уходят на сервер после того, как легли в архив, и никогда вместо него. При обрыве связи они остаются в очереди и уйдут, когда сеть вернётся." />
@@ -1001,12 +1029,12 @@
                              Text="Пароль сервера хранится в файле настроек как есть: клиент предъявляет его при каждой отправке. Защита здесь это права на папку data, а не шифрование." />
 
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Classes="primary" Content="Сохранить" Height="52" Width="150"
+                    <Button Classes="primary" Content="Сохранить"
                             Command="{Binding Settings.SaveFtpCommand}" />
-                    <Button Content="Проверить" Height="52" Width="150"
+                    <Button Content="Проверить"
                             IsEnabled="{Binding !Settings.FtpTesting}"
                             Command="{Binding Settings.TestFtpCommand}" />
-                    <Button Content="Повторить отложенные" Height="52"
+                    <Button Content="Повторить отложенные"
                             Command="{Binding Settings.RetryFtpCommand}" />
                   </StackPanel>
 
@@ -1017,7 +1045,7 @@
 
               <!-- Внешняя база -->
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsSqlSection}">
-                <StackPanel Spacing="14">
+                <StackPanel Spacing="8">
                   <TextBlock Text="Внешняя база" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Станция работает на своей базе рядом с программой, и настраивать здесь нечего, пока внешнего сервера нет." />
@@ -1070,12 +1098,12 @@
                   </UniformGrid>
 
                   <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button Classes="primary" Content="Сохранить" Height="52" Width="150"
+                    <Button Classes="primary" Content="Сохранить"
                             Command="{Binding Settings.SaveSqlCommand}" />
-                    <Button Content="Проверить" Height="52" Width="150"
+                    <Button Content="Проверить"
                             IsEnabled="{Binding !Settings.SqlTesting}"
                             Command="{Binding Settings.TestSqlCommand}" />
-                    <Button Content="Отправить сведения" Height="52"
+                    <Button Content="Отправить сведения"
                             IsEnabled="{Binding !Settings.SqlTesting}"
                             Command="{Binding Settings.SyncSqlCommand}" />
                   </StackPanel>
@@ -1087,7 +1115,7 @@
 
               <!-- Веб-панель -->
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsWebSection}">
-                <StackPanel Spacing="14">
+                <StackPanel Spacing="8">
                   <TextBlock Text="Веб-панель" Classes="section" />
                   <TextBlock Classes="hint"
                              Text="Панель показывает состояние отсеков, архив и журнал с телефона или компьютера в той же сети. Один адрес, одни данные, раскладка меняется по ширине экрана." />
@@ -1113,7 +1141,7 @@
                     <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
                       <TextBox Grid.Column="0" Classes="form"
                                Text="{Binding Settings.WebPort}" />
-                      <Button Grid.Column="2" Classes="primary" Content="Сохранить" Height="52"
+                      <Button Grid.Column="2" Classes="primary" Content="Сохранить"
                               Command="{Binding Settings.SaveWebCommand}" />
                     </Grid>
                   </StackPanel>
@@ -1147,7 +1175,7 @@
               <ScrollViewer Classes="fade" Padding="0,0,14,0" Grid.Row="0" IsVisible="{Binding Settings.IsAboutSection}">
               <StackPanel Spacing="8">
                 <TextBlock Text="О программе" Classes="section" />
-                <Button Content="Показать все состояния окон" Height="52"
+                <Button Content="Показать все состояния окон"
                         HorizontalAlignment="Left"
                         Command="{Binding DemonstrateCommand}" />
                 <TextBlock Classes="hint"
@@ -1162,24 +1190,24 @@
                 <TextBlock Classes="hint" TextWrapping="Wrap"
                            Text="Станция сама проверяет обновления раз в шесть часов. Без интернета обновление ставится с флешки: в её корне должны лежать архив bestcam-station-…tar.gz для этой станции и файл .sha256 рядом." />
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                  <Button Content="Проверить обновления" Height="52"
+                  <Button Content="Проверить обновления"
                           IsEnabled="{Binding !Settings.UpdateChecking}"
                           Command="{Binding Settings.CheckUpdatesCommand}" />
-                  <Button Content="С флешки" Height="52"
+                  <Button Content="С флешки"
                           Command="{Binding StartOfflineUpdateCommand}" />
                 </StackPanel>
 
                 <TextBlock Text="Заводской сброс" Classes="h2" FontSize="16" Margin="0,12,0,0" />
                 <TextBlock Classes="hint" TextWrapping="Wrap"
                            Text="Удаляет все устройства, историю выгрузок, файлы архива, пароль и настройки. Журнал действий и справочник сотрудников остаются. После сброса программа перезапустится." />
-                <Button Classes="danger" Content="Сбросить до заводских" Height="52"
+                <Button Classes="danger" Content="Сбросить до заводских"
                         HorizontalAlignment="Left" IsVisible="{Binding !Settings.ResetArmed}"
                         IsEnabled="{Binding !Settings.ResetRunning}"
                         Command="{Binding Settings.ArmFactoryResetCommand}" />
                 <StackPanel Orientation="Horizontal" Spacing="8" IsVisible="{Binding Settings.ResetArmed}">
-                  <Button Classes="danger" Content="Да, удалить всё" Height="52"
+                  <Button Classes="danger" Content="Да, удалить всё"
                           Command="{Binding Settings.RunFactoryResetCommand}" />
-                  <Button Content="Отмена" Height="52"
+                  <Button Content="Отмена"
                           Command="{Binding Settings.CancelFactoryResetCommand}" />
                 </StackPanel>
               </StackPanel>
@@ -1237,7 +1265,7 @@
         <Grid RowDefinitions="Auto,*,Auto">
           <StackPanel Grid.Row="0" Margin="0,0,0,10">
             <TextBlock Text="{Binding Search.ViewerTitle}" Classes="h2" FontSize="16"
-                       TextTrimming="CharacterEllipsis" />
+                       TextWrapping="Wrap" />
             <TextBlock Text="{Binding Search.ViewerNote}" Classes="hint" />
           </StackPanel>
 
@@ -1258,13 +1286,13 @@
             <!-- Шкала времени видео: кадр берётся из записи по месту
                  ползунка, поэтому в звуке и движении её не заменит. -->
             <Grid ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding Search.ViewerHasVideo}">
-              <Button Grid.Column="0" Content="&lt; 10 с" Height="42" Width="82" FontSize="12"
+              <Button Grid.Column="0" Content="&lt; 10 с" FontSize="12"
                       HorizontalContentAlignment="Center"
                       Command="{Binding Search.StepBackCommand}" />
               <Slider Grid.Column="1" Margin="10,0" VerticalAlignment="Center"
                       Minimum="0" Maximum="{Binding Search.ViewerLength}"
                       Value="{Binding Search.ViewerPosition}" />
-              <Button Grid.Column="2" Content="10 с &gt;" Height="42" Width="82" FontSize="12"
+              <Button Grid.Column="2" Content="10 с &gt;" FontSize="12"
                       HorizontalContentAlignment="Center"
                       Command="{Binding Search.StepForwardCommand}" />
             </Grid>
@@ -1273,10 +1301,10 @@
               <TextBlock Grid.Column="0" Text="{Binding Search.ViewerTimeLabel}" Classes="mono"
                          FontSize="12" FontWeight="Bold" VerticalAlignment="Center"
                          IsVisible="{Binding Search.ViewerHasVideo}" />
-              <Button Grid.Column="2" Content="Открыть в системе" Height="46" FontSize="12"
+              <Button Grid.Column="2" Content="Открыть в системе" FontSize="12"
                       Margin="0,0,8,0"
                       Command="{Binding Search.OpenExternallyCommand}" />
-              <Button Grid.Column="3" Classes="primary" Content="Закрыть" Height="46" Width="140"
+              <Button Grid.Column="3" Classes="primary" Content="Закрыть"
                       Command="{Binding Search.CloseViewerCommand}" />
             </Grid>
           </StackPanel>
@@ -1306,7 +1334,7 @@
 
             <StackPanel Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center">
               <TextBlock Text="{Binding BayTitle}" Classes="h2" FontSize="18"
-                         TextTrimming="CharacterEllipsis" />
+                         TextWrapping="Wrap" />
               <TextBlock Text="{Binding DepartmentLine}" Classes="hint" />
             </StackPanel>
 
@@ -1321,13 +1349,13 @@
 
           <UniformGrid Columns="3">
             <StackPanel Margin="0,0,8,0">
-              <TextBlock Text="НОМЕР УСТРОЙСТВА" Classes="label" />
+              <TextBlock Text="НОМЕР УСТРОЙСТВА" Classes="label" TextWrapping="Wrap" />
               <TextBlock Text="{Binding CameraLine}" Classes="mono" FontSize="13"
-                         TextTrimming="CharacterEllipsis" />
+                         TextWrapping="Wrap" />
             </StackPanel>
             <StackPanel Margin="0,0,8,0">
-              <TextBlock Text="ТАБЕЛЬНЫЙ НОМЕР" Classes="label" />
-              <TextBlock Text="{Binding PersonnelLine}" Classes="mono" FontSize="13" />
+              <TextBlock Text="ТАБЕЛЬНЫЙ НОМЕР" Classes="label" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding PersonnelLine}" Classes="mono" FontSize="13" TextWrapping="Wrap" />
             </StackPanel>
             <StackPanel>
               <TextBlock Text="ОТСЕК" Classes="label" />
@@ -1336,11 +1364,9 @@
           </UniformGrid>
 
           <StackPanel Spacing="5">
-            <Border Height="9" CornerRadius="5" ClipToBounds="True"
-                    Background="{Binding Track}">
-              <Border Classes="fill" HorizontalAlignment="Left" CornerRadius="5"
-                      Width="{Binding BarFill}" Background="{Binding Mark}" />
-            </Border>
+            <ProgressBar Classes="bay-progress" Height="9" CornerRadius="5" MinWidth="0"
+                         BorderThickness="0" Maximum="{x:Static vm:PortViewModel.BarWidth}"
+                         Value="{Binding BarFill}" Foreground="{Binding Mark}" Background="{Binding Track}" />
             <Grid ColumnDefinitions="*,Auto">
               <TextBlock Grid.Column="0" Text="{Binding FilesLine}" Classes="hint" />
               <TextBlock Grid.Column="1" Text="{Binding PercentText}" Classes="mono"
@@ -1358,15 +1384,15 @@
                        Text="Нажмите то же действие ещё раз, чтобы подтвердить" />
 
             <StackPanel Orientation="Horizontal" Spacing="8">
-              <Button Classes="primary" Content="Первым в очередь" Height="46" FontSize="12"
+              <Button Classes="primary" Content="Первым в очередь" FontSize="12"
                       Command="{Binding $parent[Window].DataContext.PrioritizeBayCommand}" />
-              <Button Content="Только зарядка" Height="46" FontSize="12"
+              <Button Content="Только зарядка" FontSize="12"
                       IsVisible="{Binding !IsChargeOnly}"
                       Command="{Binding $parent[Window].DataContext.ChargeOnlyBayCommand}" />
-              <Button Content="Возобновить" Height="46" FontSize="12"
+              <Button Content="Возобновить" FontSize="12"
                       IsVisible="{Binding IsChargeOnly}"
                       Command="{Binding $parent[Window].DataContext.ResumeBayCommand}" />
-              <Button Content="Закрыть" Height="46" FontSize="12"
+              <Button Content="Закрыть" FontSize="12"
                       Command="{Binding $parent[Window].DataContext.CloseBayCommand}" />
             </StackPanel>
           </StackPanel>
@@ -1428,20 +1454,20 @@
 
           <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center"
                       Margin="0,4,0,0">
-            <Button Content="Регистр" Width="96" Height="42" Focusable="False" FontSize="13"
+            <Button Content="Регистр" Focusable="False" FontSize="13"
                     HorizontalContentAlignment="Center"
                     Classes.primary="{Binding KeysUpper}"
                     Command="{Binding ToggleKeysCaseCommand}" />
-            <Button Content="Стереть" Width="96" Height="42" Focusable="False" FontSize="13"
+            <Button Content="Стереть" Focusable="False" FontSize="13"
                     HorizontalContentAlignment="Center"
                     Command="{Binding PasswordKeyCommand}" CommandParameter="&lt;" />
-            <Button Content="Очистить" Width="104" Height="42" Focusable="False" FontSize="13"
+            <Button Content="Очистить" Focusable="False" FontSize="13"
                     HorizontalContentAlignment="Center"
                     Command="{Binding PasswordKeyCommand}" CommandParameter="clear" />
-            <Button Classes="primary" Content="Войти" Width="120" Height="42" IsDefault="True"
+            <Button Classes="primary" Content="Войти" IsDefault="True"
                     FontSize="13" HorizontalContentAlignment="Center"
                     Command="{Binding ConfirmPasswordCommand}" />
-            <Button Content="Отмена" Width="110" Height="42" FontSize="13"
+            <Button Content="Отмена" FontSize="13"
                     HorizontalContentAlignment="Center"
                     Command="{Binding CancelPasswordCommand}" />
           </StackPanel>
@@ -1458,7 +1484,7 @@
         <TextBlock Text="{Binding OfflineStatus}" FontSize="18" FontWeight="SemiBold"
                    Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center"
                    TextWrapping="Wrap" TextAlignment="Center" />
-        <Button Content="Отмена" Height="52" Width="180" HorizontalAlignment="Center"
+        <Button Content="Отмена" HorizontalAlignment="Center"
                 HorizontalContentAlignment="Center" Margin="0,10,0,0"
                 Command="{Binding CancelOfflineUpdateCommand}" />
       </StackPanel>

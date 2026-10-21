@@ -9,6 +9,22 @@ namespace AstraUsb.Views;
 
 public partial class MainWindow : Window
 {
+    private async void ChooseExportFolder_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel vm || vm.Search.Exporting)
+            return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Выберите папку или флешку для выгрузки", AllowMultiple = false,
+            });
+            if (folders.FirstOrDefault()?.TryGetLocalPath() is { } destination)
+                vm.Search.ExportTarget = destination;
+        }
+        catch (Exception error) { vm.ShowError(error); }
+    }
+
     private async void ExportDiagnostics_Click(object? sender, RoutedEventArgs args)
     {
         if (DataContext is not MainWindowViewModel vm || vm.Log.Exporting)

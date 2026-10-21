@@ -93,6 +93,7 @@ public sealed class StaffDirectory
                     INSERT INTO employees (personnel_no, full_name)
                     SELECT NULL, $name
                     WHERE NOT EXISTS (SELECT 1 FROM employees WHERE full_name = $name)
+                      AND EXISTS (SELECT 1 FROM devices WHERE person = $name)
                     """, ("$name", name));
 
                 Run(db, """
@@ -239,6 +240,23 @@ public sealed class StaffDirectory
     {
         using var db = Open();
         Run(db, "UPDATE employees SET active = 0 WHERE id = $id", ("$id", employeeId));
+    }
+
+    /// <summary>Удаляет карточку и снимает текущие привязки к регистраторам.</summary>
+    public void DeleteEmployee(long employeeId)
+    {
+        using var db = Open();
+        var hasDevices = Scalar(db,
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'devices'") is not null;
+        using var transaction = db.BeginTransaction();
+        using var command = db.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = (hasDevices
+            ? "UPDATE devices SET employee_id = NULL, person = '' WHERE employee_id = $id;"
+            : "") + "DELETE FROM employees WHERE id = $id;";
+        command.Parameters.AddWithValue("$id", employeeId);
+        command.ExecuteNonQuery();
+        transaction.Commit();
     }
 
     public IReadOnlyList<Employee> Employees(bool activeOnly = false, CancellationToken token = default)

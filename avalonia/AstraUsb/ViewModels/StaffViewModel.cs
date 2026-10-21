@@ -14,31 +14,25 @@ public sealed class DepartmentRow
 }
 
 /// <summary>
-/// Вкладка «Сотрудники»: отделы и карточки людей.
-///
-/// Номер сотрудника прописан в самой камере и виден на плитке, но человека
-/// за этим номером знает только оператор. Здесь он заводит карточку с именем,
-/// телефоном и отделом, а закрепляет её за камерой на вкладке «Устройства».
+/// Карточки сотрудников с номером, именем и телефоном.
 /// </summary>
 public sealed partial class StaffViewModel : ObservableObject
 {
     private readonly string _dbPath;
 
-    public ObservableCollection<DepartmentRow> Departments { get; } = new();
     public ObservableCollection<Employee> Employees { get; } = new();
 
-    [ObservableProperty] private Employee? _selected;
-    [ObservableProperty] private DepartmentRow? _selectedDepartment;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SaveLabel))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteEmployeeCommand))]
+    private Employee? _selected;
 
     [ObservableProperty] private string _personnelNoInput = "";
     [ObservableProperty] private string _fullNameInput = "";
     [ObservableProperty] private string _phoneInput = "";
-    [ObservableProperty] private DepartmentRow? _departmentInput;
-    [ObservableProperty] private string _departmentNameInput = "";
     [ObservableProperty] private string _hint = "";
 
-    /// <summary>Отделов ещё нет: список показывает подсказку вместо пустоты.</summary>
-    public bool NoDepartments => Departments.Count == 0;
+    public string SaveLabel => Selected is null ? "Добавить сотрудника" : "Сохранить изменения";
 
     public StaffViewModel() : this(AppPaths.Database)
     {
@@ -56,7 +50,6 @@ public sealed partial class StaffViewModel : ObservableObject
         PersonnelNoInput = value?.PersonnelNo ?? "";
         FullNameInput = value?.FullName ?? "";
         PhoneInput = value?.Phone ?? "";
-        DepartmentInput = Departments.FirstOrDefault(d => d.Id == value?.DepartmentId);
     }
 
     [RelayCommand]
@@ -65,15 +58,11 @@ public sealed partial class StaffViewModel : ObservableObject
     private void Reload(string? confirmation)
     {
         var keepEmployee = Selected?.Id;
-        var keepDepartment = SelectedDepartment?.Id;
 
         // Выбор снимается до очистки: список, который смотрит на коллекцию,
         // при очистке ищет выбранный элемент по прежнему месту и падает.
         Selected = null;
-        SelectedDepartment = null;
-        DepartmentInput = null;
 
-        Departments.Clear();
         Employees.Clear();
 
         try
@@ -83,21 +72,12 @@ public sealed partial class StaffViewModel : ObservableObject
             // мигание списка на ровном месте.
             var staff = new StaffDirectory(_dbPath);
 
-            foreach (var department in staff.Departments())
-                Departments.Add(new DepartmentRow
-                {
-                    Id = department.Id,
-                    Path = staff.DepartmentPath(department.Id),
-                });
-
             foreach (var employee in staff.Employees())
                 Employees.Add(employee);
 
             Selected = Employees.FirstOrDefault(e => e.Id == keepEmployee);
-            SelectedDepartment = Departments.FirstOrDefault(d => d.Id == keepDepartment);
-            OnPropertyChanged(nameof(NoDepartments));
             Hint = confirmation ?? (Employees.Count == 0
-                ? "сотрудников пока нет; заполните номер и имя, затем нажмите «Сохранить»"
+                ? "Сотрудников пока нет. Введите номер и имя, затем нажмите «Добавить сотрудника»"
                 : "");
         }
         catch (Exception e)
@@ -132,25 +112,27 @@ public sealed partial class StaffViewModel : ObservableObject
                 return;
             }
 
+            long savedId;
             if (Selected is { } current)
             {
+                savedId = current.Id;
                 staff.UpdateEmployee(current with
                 {
                     PersonnelNo = number,
                     FullName = name.Length == 0 ? number : name,
                     Phone = PhoneInput.Trim(),
-                    DepartmentId = DepartmentInput?.Id,
                 });
                 Hint = $"карточка {number} сохранена";
             }
             else
             {
-                staff.AddEmployee(name.Length == 0 ? number : name, number,
-                    PhoneInput.Trim(), departmentId: DepartmentInput?.Id);
+                savedId = staff.AddEmployee(name.Length == 0 ? number : name, number,
+                    PhoneInput.Trim());
                 Hint = $"сотрудник {number} добавлен";
             }
 
             Reload(Hint);
+            Selected = Employees.FirstOrDefault(employee => employee.Id == savedId);
         }
         catch (Exception e)
         {
@@ -166,16 +148,14 @@ public sealed partial class StaffViewModel : ObservableObject
         PersonnelNoInput = "";
         FullNameInput = "";
         PhoneInput = "";
-        DepartmentInput = null;
-        Hint = "заполните номер и имя, затем нажмите «Сохранить»";
+        Hint = "Введите номер и имя, затем нажмите «Добавить сотрудника»";
     }
 
-    /// <summary>
-    /// Уволенный сотрудник помечается неактивным, а не удаляется: за ним
-    /// числятся прошлые записи, и они должны остаться подписанными.
-    /// </summary>
-    [RelayCommand]
-    private void Deactivate()
+    private bool CanDeleteEmployee() => Selected is not null;
+
+    /// <summary>Удаляет выбранную карточку из справочника.</summary>
+    [RelayCommand(CanExecute = nameof(CanDeleteEmployee))]
+    private void DeleteEmployee()
     {
         if (Selected is not { } current)
         {
@@ -185,72 +165,13 @@ public sealed partial class StaffViewModel : ObservableObject
 
         try
         {
-            new StaffDirectory(_dbPath).Deactivate(current.Id);
-            Hint = $"{current.FullName} отмечен как уволенный, прошлые записи остались за ним";
+            new StaffDirectory(_dbPath).DeleteEmployee(current.Id);
+            Hint = $"Сотрудник «{current.FullName}» удалён";
             Reload(Hint);
         }
         catch (Exception e)
         {
-            Hint = UserError.Report("Не удалось изменить состояние сотрудника", e);
-        }
-    }
-
-    /// <summary>
-    /// Добавляет отдел. Если в списке выбран отдел, новый становится
-    /// подчинённым ему.
-    /// </summary>
-    [RelayCommand]
-    private void AddDepartment()
-    {
-        var name = DepartmentNameInput.Trim();
-        if (name.Length == 0)
-        {
-            Hint = "введите название отдела";
-            return;
-        }
-
-        try
-        {
-            new StaffDirectory(_dbPath).AddDepartment(name, parentId: SelectedDepartment?.Id);
-            Hint = SelectedDepartment is { } parent
-                ? $"«{name}» добавлен внутрь «{parent.Path}»"
-                : $"отдел «{name}» добавлен";
-            DepartmentNameInput = "";
-            Reload(Hint);
-        }
-        catch (Exception e)
-        {
-            Hint = UserError.Report("Не удалось добавить отдел", e);
-        }
-    }
-
-    /// <summary>
-    /// Удаляет отдел. Подчинённые отделы и сотрудники поднимаются к родителю
-    /// удалённого, чтобы никто не потерялся.
-    /// </summary>
-    [RelayCommand]
-    private void DeleteDepartment()
-    {
-        if (SelectedDepartment is not { } department)
-        {
-            Hint = "выберите отдел в списке";
-            return;
-        }
-
-        try
-        {
-            if (!new StaffDirectory(_dbPath).DeleteDepartment(department.Id))
-            {
-                Hint = $"в отделе «{department.Path}» есть сотрудники, сначала переведите их";
-                return;
-            }
-
-            Hint = $"отдел «{department.Path}» удалён";
-            Reload(Hint);
-        }
-        catch (Exception e)
-        {
-            Hint = UserError.Report("Не удалось удалить отдел", e);
+            Hint = UserError.Report("Не удалось удалить сотрудника", e);
         }
     }
 }
