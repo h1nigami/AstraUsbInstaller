@@ -26,7 +26,7 @@ jobs:
   verify:
     permissions:
       contents: read
-    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    if: github.event_name == 'pull_request' || github.event_name == 'push' || (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest]
@@ -71,7 +71,7 @@ jobs:
 
   build:
     needs: verify
-    if: (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    if: (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: ubuntu-latest
 
     steps:
@@ -170,6 +170,7 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          make_latest: "false"
           files: |
             dist/*.tar.gz
             dist/*.zip
@@ -201,7 +202,8 @@ jobs:
             # метку latest на редактируемый релиз, а релиз станции C# latest
             # получать не должен: его увидели бы апдейтеры Python.
             ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" -q .id)
-            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" -f body="$(cat /tmp/body.md)" > /dev/null
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$ID" \
+              -f body="$(cat /tmp/body.md)" -f make_latest=false > /dev/null
           fi
 
   # Установщик для Windows собирается отдельно: Inno Setup идёт только на
@@ -209,7 +211,7 @@ jobs:
   # ставит программу без установки.
   windows-setup:
     needs: verify
-    if: (github.event_name == 'release' && github.event.release.prerelease == true && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
+    if: (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'v2.')) || (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'v2.'))
     runs-on: windows-latest
 
     steps:
@@ -283,6 +285,7 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          make_latest: "false"
           files: |
             dist/BestCamStationSetup-*.exe
             dist/BestCamStationSetup-*.exe.sha256
