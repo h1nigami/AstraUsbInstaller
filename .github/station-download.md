@@ -8,6 +8,7 @@
 на домен не отправляются.
 
 Токен продукта хранится в GitHub Actions secret `DOWNLOAD_STATION_TOKEN`.
+Передача файлов использует штатный `curl` раннера; токен передаётся через stdin.
 Издатель использует только API `bestcam-station`. Продукт Viewer `bestcam`,
 workflow Python и общий GitHub latest сохраняют прежнее назначение.
 У всех действий загрузки вложений C# остаётся `make_latest=false`.

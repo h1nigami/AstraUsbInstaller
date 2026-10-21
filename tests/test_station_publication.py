@@ -48,6 +48,7 @@ class StationPublicationTests(unittest.TestCase):
         self.fail_promote = False
         self.redirect_api = False
         self.advance_on_pilot = None
+        self.early_conflict = False
         self.requests = []
         state = self
 
@@ -77,6 +78,8 @@ class StationPublicationTests(unittest.TestCase):
                 state.requests.append((self.command, self.path, self.headers.get("Authorization")))
                 if self.headers.get("Authorization") != "Bearer station-only":
                     return self.respond(401, {})
+                if state.early_conflict:
+                    return self.respond(409, {})
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 if state.redirect_api:
                     self.send_response(302)
@@ -150,6 +153,17 @@ class StationPublicationTests(unittest.TestCase):
         self.assertEqual("published", self.publish())
         self.assertEqual(self.contents, self.stored)
 
+    def test_early_conflict_for_large_file_is_resumable(self):
+        self.early_conflict = True
+        path = self.directory / "large.tmp"
+        with path.open("wb") as stream:
+            stream.write(b"large existing file" * 2_000_000)
+        publisher.mutate(self.base, "station-only", "PUT",
+                         "/releases/2.0.10/files/BestCamStationSetup-v2.0.10.exe",
+                         file=path, duplicate_ok=True)
+        self.assertEqual(1, len(self.requests))
+        self.assertEqual({}, self.stored)
+
     def test_first_station_release_preserves_existing_product(self):
         self.stable = None
         self.assertEqual("published", self.publish())
@@ -162,6 +176,11 @@ class StationPublicationTests(unittest.TestCase):
             self.publish()
         self.assertFalse(any(r[1] == "/redirect-target" for r in self.requests))
         self.assertEqual("2.0.9", self.stable)
+        with self.assertRaises(RuntimeError):
+            publisher.mutate(self.base, "station-only", "PUT",
+                             "/releases/2.0.10/files/BestCamStationSetup-v2.0.10.exe",
+                             file=self.directory / "BestCamStationSetup-v2.0.10.exe")
+        self.assertFalse(any(r[1] == "/redirect-target" for r in self.requests))
 
     def test_conflicting_existing_file_blocks_stable(self):
         self.created = True

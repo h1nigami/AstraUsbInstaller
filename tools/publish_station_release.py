@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import subprocess
 import time
 import urllib.error
 import urllib.parse
@@ -91,13 +92,26 @@ def verify_public(base, version, files):
 
 
 def mutate(base, token, method, path, *, payload=None, file=None, duplicate_ok=False):
-    headers = {"Authorization": "Bearer " + token}
     if file:
-        body = file.open("rb")
-        headers["Content-Length"] = str(file.stat().st_size)
-    else:
-        body = json.dumps(payload).encode()
-        headers["Content-Type"] = "application/json"
+        # curl читает ранний 409 во время передачи большого файла; urllib сначала шлёт всё тело.
+        # Токен идёт через stdin, чтобы не попадать в аргументы процесса и журнал ошибок.
+        result = subprocess.run(
+            ["curl", "--disable", "--silent", "--show-error", "--max-time", "600",
+             "--output", os.devnull, "--write-out", "%{http_code}",
+             "--request", method, "--header", "@-", "--upload-file", str(file),
+             base + API + path],
+            input="Authorization: Bearer " + token + "\n", text=True,
+            capture_output=True, check=False,
+        )
+        if result.returncode:
+            raise RuntimeError(f"Не удалось загрузить {file.name}: curl {result.returncode}")
+        status = int(result.stdout)
+        if not (200 <= status < 300 or (duplicate_ok and status == 409)):
+            raise RuntimeError(f"API Station: HTTP {status}, {method} {path}")
+        return
+    headers = {"Authorization": "Bearer " + token}
+    body = json.dumps(payload).encode()
+    headers["Content-Type"] = "application/json"
     request = urllib.request.Request(base + API + path, data=body, method=method, headers=headers)
     try:
         with urllib.request.build_opener(NoRedirect()).open(request, timeout=600) as response:
@@ -106,9 +120,6 @@ def mutate(base, token, method, path, *, payload=None, file=None, duplicate_ok=F
         exc.close()
         if not (duplicate_ok and exc.code == 409):
             raise RuntimeError(f"API Station: HTTP {exc.code}, {method} {path}") from None
-    finally:
-        if file:
-            body.close()
 
 
 def publish(release, directory, base=BASE, token="", *, check_only=False):
