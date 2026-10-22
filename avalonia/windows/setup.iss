@@ -23,8 +23,9 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
-; Программа пишет базу и записи рядом с собой, поэтому ставится с правами
-; администратора: в Program Files иначе не записать.
+; Установка в Program Files требует администратора, но сама программа
+; запускается обычным пользователем, поэтому ниже в [Dirs] каталогу выдаётся
+; запись для всех: иначе data и USB_Backups создать не удастся и окно не откроется.
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\AstraUsb.exe
 
@@ -34,6 +35,9 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; \
     GroupDescription: "Дополнительно:"
+
+[Dirs]
+Name: "{app}"; Permissions: users-modify
 
 [Files]
 Source: "payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
