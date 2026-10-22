@@ -25,6 +25,22 @@ public partial class MainWindow : Window
         catch (Exception error) { vm.ShowError(error); }
     }
 
+    private async void ChooseBackupRoot_Click(object? sender, RoutedEventArgs args)
+    {
+        if (DataContext is not MainWindowViewModel vm)
+            return;
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Выберите папку архива", AllowMultiple = false,
+            });
+            if (folders.FirstOrDefault()?.TryGetLocalPath() is { } root)
+                vm.Settings.BackupRoot = root;
+        }
+        catch (Exception error) { vm.ShowError(error); }
+    }
+
     private async void ExportDiagnostics_Click(object? sender, RoutedEventArgs args)
     {
         if (DataContext is not MainWindowViewModel vm || vm.Log.Exporting)

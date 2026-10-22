@@ -1,6 +1,7 @@
 ; Установщик для Windows. Станции работают на Linux, а Windows-сборка нужна
 ; для проверки и показа, поэтому здесь обычная установка в папку пользователя
-; и ярлыки, без служб и автозапуска.
+; и ярлыки, без служб. Автозапуск это ярлык в общей папке «Автозагрузка»:
+; программа стартует при входе любого пользователя.
 
 #define AppName "BestCam Station"
 #define AppPublisher "Best Electronics"
@@ -35,6 +36,8 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; \
     GroupDescription: "Дополнительно:"
+Name: "autostart"; Description: "Запускать при входе в Windows"; \
+    GroupDescription: "Дополнительно:"
 
 [Dirs]
 Name: "{app}"; Permissions: users-modify
@@ -45,6 +48,7 @@ Source: "payload\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs creat
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\AstraUsb.exe"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\AstraUsb.exe"; Tasks: desktopicon
+Name: "{commonstartup}\{#AppName}"; Filename: "{app}\AstraUsb.exe"; Tasks: autostart
 
 [Run]
 Filename: "{app}\AstraUsb.exe"; Description: "Запустить программу"; \

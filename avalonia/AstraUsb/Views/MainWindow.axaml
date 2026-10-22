@@ -881,7 +881,12 @@
 
                   <StackPanel>
                     <TextBlock Text="ПАПКА АРХИВА" Classes="field" />
-                    <TextBox Classes="form" Text="{Binding Settings.BackupRoot}" Tag="en" />
+                    <Button Classes="form" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            ToolTip.Tip="{Binding Settings.BackupRoot}"
+                            AutomationProperties.Name="Выбрать папку архива"
+                            Click="ChooseBackupRoot_Click">
+                      <TextBlock Text="{Binding Settings.BackupRoot}" TextTrimming="CharacterEllipsis" />
+                    </Button>
                     <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}" Classes="hint"
                                Margin="0,4,0,0" Foreground="{StaticResource WarnBrush}"
                                Text="Архив на системном разделе. Выберите отдельный диск: системный переполнится записями." />
