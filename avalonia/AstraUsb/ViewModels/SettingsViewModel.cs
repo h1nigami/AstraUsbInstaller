@@ -267,7 +267,7 @@ public sealed partial class SettingsViewModel : ObservableObject
     /// перезапускается на новом порту без перезапуска программы.
     /// </summary>
     [RelayCommand]
-    private void SaveWeb()
+    private async Task SaveWeb()
     {
         var wanted = WebPort is > 0 and < 65536 ? WebPort : 8080;
         var changed = _settings.WebEnabled != WebEnabled
@@ -294,7 +294,10 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         // Панель перезапускается при каждом сохранении, не только при смене
         // порта: сертификат и пароль она берёт при старте.
-        var running = ApplyWeb?.Invoke(_settings) ?? WebEnabled;
+        // Не в потоке окна: остановка сервера ждёт открытые соединения, и в
+        // потоке окна программа замирала намертво.
+        var apply = ApplyWeb;
+        var running = apply is null ? WebEnabled : await Task.Run(() => apply(_settings));
 
         ShowWebLinks();
 
