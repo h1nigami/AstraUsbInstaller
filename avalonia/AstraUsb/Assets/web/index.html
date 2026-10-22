@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#eef3f9">
+<title>BestCam BC-10</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+
+<div id="login" class="login">
+  <form id="loginForm" class="login-card" autocomplete="on">
+    <img class="login-logo" src="/logo.png" alt="BestCam">
+    <h1>BestCam BC-10</h1>
+    <p>Состояние станции, архив записей и настройки. Вход по учётной записи администратора.</p>
+    <input id="account" name="account" value="admin" autocomplete="username" aria-label="Учётная запись">
+    <input id="password" name="password" type="password" placeholder="Пароль" autocomplete="current-password" aria-label="Пароль">
+    <button class="btn primary" type="submit">Войти</button>
+    <div class="login-error" id="loginError" role="alert"></div>
+  </form>
+</div>
+
+<div id="panel" hidden>
+  <aside class="side">
+    <div class="brand">
+      <img class="logo" src="/logo.png" alt="BestCam">
+      <div><div class="brand-name">BC-10</div><div class="brand-place" id="place"></div></div>
+    </div>
+    <nav id="sideNav" class="nav"></nav>
+    <div class="side-foot">
+      <div class="path" id="sidePath"></div>
+      <button class="btn soft" data-act="logout">Выйти</button>
+    </div>
+  </aside>
+
+  <div class="frame">
+    <div class="offline" id="offline" role="status">Нет связи со станцией. Пробуем снова…</div>
+    <header class="top">
+      <img class="logo" src="/logo.png" alt="BestCam">
+      <div class="who">
+        <div class="station" id="station">BC-10</div>
+        <div class="clock" id="clock"></div>
+      </div>
+      <h2 class="desk" id="desk"></h2>
+      <div class="pills" id="pills"></div>
+    </header>
+    <main id="main"><div id="view" class="view"></div></main>
+    <div id="selbar" class="selbar" aria-live="polite"></div>
+    <nav class="tabs" id="tabs"></nav>
+  </div>
+</div>
+
+<div id="layer"></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/app.js" defer></script>
+</body>
+</html>
