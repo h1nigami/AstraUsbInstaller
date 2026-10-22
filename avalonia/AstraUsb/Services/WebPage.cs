@@ -243,6 +243,29 @@ public static class WebPage
           .sheet button.plain { border: 0; background: transparent; color: var(--n700);
             font-weight: 600; }
 
+          /* просмотр записи поверх страницы: фон темнеет, запись выплывает */
+          @keyframes zoomin {
+            from { opacity: 0; transform: scale(.94) translateY(12px); }
+            to   { opacity: 1; transform: none; }
+          }
+          .viewer {
+            position: fixed; inset: 0; z-index: 90; display: flex;
+            align-items: center; justify-content: center; padding: 24px;
+            background: #0f1620d9; backdrop-filter: blur(4px);
+            animation: dim .22s ease-out both;
+          }
+          .viewer.closing { opacity: 0; transition: opacity .18s ease-in; }
+          .viewer .media {
+            max-width: 100%; max-height: 100%; border-radius: 18px; background: #000;
+            box-shadow: 0 24px 60px #0008;
+            animation: zoomin .32s cubic-bezier(.25, .8, .25, 1) .04s both;
+          }
+          .viewer .x {
+            position: absolute; top: 16px; right: 16px; width: 44px; height: 44px;
+            border: 0; border-radius: 999px; background: #ffffff26; color: #fff;
+            font-size: 22px; cursor: pointer;
+          }
+
           /* компьютер: то же самое, боковым меню и шире */
           @media (min-width: 900px) {
             #panel { flex-direction: row; }
@@ -351,6 +374,7 @@ public static class WebPage
         </div>
 
         <div id="sheet"></div>
+        <div id="viewer"></div>
 
         <script>
         const TABS = [
@@ -711,8 +735,34 @@ public static class WebPage
         async function watch(path) {
           const blob = await fetchFile(path);
           if (!blob) return;
-          window.open(URL.createObjectURL(blob), '_blank');
+          const url = URL.createObjectURL(blob);
+          const kind = blob.type.split('/')[0];
+          const tag = { image: 'img', video: 'video', audio: 'audio' }[kind];
+
+          // Журналы и прочее, что не покажешь картинкой, открываем как раньше.
+          if (!tag) { window.open(url, '_blank'); return; }
+
+          const box = document.getElementById('viewer');
+          box.innerHTML = `
+            <div class="viewer" onclick="if (event.target === this) closeViewer()">
+              <${tag} class="media" src="${url}" ${tag === 'img' ? '' : 'controls autoplay'}></${tag}>
+              <button class="x" onclick="closeViewer()" aria-label="Закрыть">✕</button>
+            </div>`;
+          box.dataset.url = url;
         }
+
+        function closeViewer() {
+          const box = document.getElementById('viewer');
+          const shell = box.firstElementChild;
+          if (!shell) return;
+          shell.classList.add('closing');
+          setTimeout(() => {
+            URL.revokeObjectURL(box.dataset.url);
+            box.innerHTML = '';
+          }, 180);
+        }
+
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeViewer(); });
 
         async function download(path, name) {
           const blob = await fetchFile(path);
