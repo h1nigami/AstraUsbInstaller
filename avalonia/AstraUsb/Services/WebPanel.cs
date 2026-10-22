@@ -203,8 +203,14 @@ public sealed class WebPanel : IDisposable
 
             // Range нужен и для перемотки в браузере, и для докачки после
             // обрыва: записи весят гигабайты.
-            return Results.File(full, enableRangeProcessing: true,
-                fileDownloadName: Path.GetFileName(full));
+            // Тип по расширению, а не octet-stream: иначе «Смотреть» не
+            // открывает фото и видео в браузере, а скачивает. Имя для
+            // «Скачать» задаёт страница.
+            new Microsoft.AspNetCore.StaticFiles.FileExtensionContentTypeProvider()
+                .TryGetContentType(full, out var type);
+
+            return Results.File(full, type ?? "application/octet-stream",
+                enableRangeProcessing: true);
         });
 
         app.MapPost("/api/bay/{slot:int}/{action}", (HttpContext context, int slot, string action) =>
