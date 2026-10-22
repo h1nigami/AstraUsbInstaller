@@ -424,7 +424,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private bool _demonstrating;
 
     /// <summary>Веб-панель, если она включена в настройках.</summary>
-    private readonly WebPanel? _web;
+    private WebPanel? _web;
+
+    /// <summary>Останавливает панель и, если она включена, поднимает заново. Возвращает, работает ли она.</summary>
+    private bool RestartWeb(Settings settings)
+    {
+        _web?.Dispose();
+        _web = null;
+        if (!settings.WebEnabled)
+            return false;
+
+        _web = new WebPanel(AppPaths.Database);
+        if (!_web.Start(settings))
+            return false;
+
+        _actions.Write(ActionLog.Settings, $"веб-панель открыта на порту {WebPanel.Port(settings)}");
+        return true;
+    }
 
     /// <summary>
     /// Выбранная компоновка доски: сетка, список или схема стойки. Все три
@@ -531,15 +547,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (_stationSettings.BackupRoot == AppPaths.BackupsRoot)
             ArchiveGuard.Mark(_stationSettings.BackupRoot);
 
-        // Панель поднимается один раз при запуске: порт нельзя переоткрыть на
-        // ходу, поэтому её включение вступает в силу после перезапуска.
-        if (_stationSettings.WebEnabled)
-        {
-            _web = new WebPanel(AppPaths.Database);
-            if (_web.Start(_stationSettings))
-                _actions.Write(ActionLog.Settings,
-                    $"веб-панель открыта на порту {WebPanel.Port(_stationSettings)}");
-        }
+        Settings.ApplyWeb = RestartWeb;
+        RestartWeb(_stationSettings);
 
         UpdateNetwork();
 

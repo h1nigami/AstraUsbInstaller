@@ -1,9 +1,11 @@
 using AstraUsb.ViewModels;
+using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
+using Avalonia.VisualTree;
 
 namespace AstraUsb.Views;
 
@@ -105,6 +107,20 @@ public partial class MainWindow : Window
         AddHandler(KeyDownEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
         AddHandler(PointerPressedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
         AddHandler(PointerWheelChangedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
+
+        // Колесо над закрытым списком не должно менять выбор: страница
+        // прокручивается, а значение остаётся. Открытый список в отдельном
+        // окне, ComboBox над ним не находится, и он листается как обычно.
+        AddHandler(PointerWheelChangedEvent, (_, e) =>
+        {
+            if (e.Source is not Visual source
+                || source.FindAncestorOfType<ComboBox>(true) is not { IsDropDownOpen: false })
+                return;
+
+            e.Handled = true;
+            if (source.FindAncestorOfType<ScrollViewer>() is { } scroll)
+                scroll.Offset = scroll.Offset.WithY(Math.Max(0, scroll.Offset.Y - e.Delta.Y * 48));
+        }, RoutingStrategies.Tunnel);
 
         var tabs = this.FindControl<TabControl>("Tabs")!;
         InitKeyboard(this.FindControl<Border>("Osk")!, this.FindControl<StackPanel>("OskKeys")!);

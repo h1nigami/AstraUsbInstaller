@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="clr-namespace:AstraUsb.ViewModels"
+        xmlns:views="clr-namespace:AstraUsb.Views"
         xmlns:svc="clr-namespace:AstraUsb.Services"
         xmlns:conv="using:Avalonia.Data.Converters"
         x:Class="AstraUsb.Views.MainWindow"
@@ -848,7 +849,7 @@
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="НОМЕР СТАНЦИИ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.StationNumber}" Tag="num" />
+                      <TextBox Classes="form" Text="{Binding Settings.StationNumber, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                       <TextBlock Classes="hint" Margin="0,4,0,0"
                                  Text="входит в номера, которые станция выдаёт камерам" />
                     </StackPanel>
@@ -864,9 +865,9 @@
                       <TextBlock Text="ОКОН: ВСЕГО И В СТРОКЕ" Classes="field" />
                       <Grid ColumnDefinitions="*,8,*,8,Auto">
                         <TextBox Grid.Column="0" Classes="form"
-                                 Text="{Binding Settings.BayCount}" Tag="num" />
+                                 Text="{Binding Settings.BayCount, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                         <TextBox Grid.Column="2" Classes="form"
-                                 Text="{Binding Settings.BaysPerRow}" Tag="num" />
+                                 Text="{Binding Settings.BaysPerRow, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                         <Button Grid.Column="4" Content="Применить"
                                 Command="{Binding Settings.SaveBayCountCommand}" />
                       </Grid>
@@ -885,7 +886,7 @@
                             ToolTip.Tip="{Binding Settings.BackupRoot}"
                             AutomationProperties.Name="Выбрать папку архива"
                             Click="ChooseBackupRoot_Click">
-                      <TextBlock Text="{Binding Settings.BackupRoot}" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding Settings.BackupRoot}" TextWrapping="Wrap" />
                     </Button>
                     <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}" Classes="hint"
                                Margin="0,4,0,0" Foreground="{StaticResource WarnBrush}"
@@ -895,12 +896,12 @@
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="ОСТАВЛЯТЬ СВОБОДНЫМИ, ГБ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.MinFreeGb}" Tag="num" />
+                      <TextBox Classes="form" Text="{Binding Settings.MinFreeGb, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                     </StackPanel>
 
                     <StackPanel>
                       <TextBlock Text="ХРАНИТЬ ЗАПИСИ, ДНЕЙ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.KeepDays}" Tag="num" />
+                      <TextBox Classes="form" Text="{Binding Settings.KeepDays, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                       <TextBlock Classes="hint" Margin="0,4,0,0" Text="0 хранит бессрочно" />
                     </StackPanel>
                   </UniformGrid>
@@ -976,7 +977,7 @@
                     <TextBlock Text="ЗАКРЫВАТЬ РАЗДЕЛЫ ЧЕРЕЗ, МИН ПРОСТОЯ" Classes="field" />
                     <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
                       <TextBox Grid.Column="0" Classes="form"
-                               Text="{Binding Settings.LockTimeoutMinutes}" Tag="num" />
+                               Text="{Binding Settings.LockTimeoutMinutes, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                       <Button Grid.Column="2" Content="Сохранить"
                               Command="{Binding Settings.SaveLockTimeoutCommand}" />
                     </Grid>
@@ -1005,7 +1006,7 @@
 
                     <StackPanel>
                       <TextBlock Text="ПОРТ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.FtpPort}" Tag="num" />
+                      <TextBox Classes="form" Text="{Binding Settings.FtpPort, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                     </StackPanel>
                   </UniformGrid>
 
@@ -1073,7 +1074,7 @@
 
                     <StackPanel>
                       <TextBlock Text="ПОРТ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.SqlPort}" Tag="num" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlPort, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                     </StackPanel>
                   </UniformGrid>
 
@@ -1146,7 +1147,7 @@
                     <TextBlock Text="ПОРТ" Classes="field" />
                     <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
                       <TextBox Grid.Column="0" Classes="form"
-                               Text="{Binding Settings.WebPort}" Tag="num" />
+                               Text="{Binding Settings.WebPort, Converter={x:Static views:IntTextConverter.Instance}}" Tag="num" />
                       <Button Grid.Column="2" Classes="primary" Content="Сохранить"
                               Command="{Binding Settings.SaveWebCommand}" />
                     </Grid>
