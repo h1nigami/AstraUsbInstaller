@@ -120,6 +120,26 @@
     </Setter>
   </Style>
 
+  <!-- Список появляется плавно: проявляется и опускается на несколько пикселей. -->
+  <Style Selector="ComboBox /template/ Popup#PART_Popup Border#PopupBorder">
+    <!-- Анимируется свойство самого TranslateTransform: для RenderTransform в целом аниматора нет. -->
+    <Setter Property="RenderTransform">
+      <TranslateTransform />
+    </Setter>
+    <Style.Animations>
+      <Animation Duration="0:0:0.18" Easing="CubicEaseOut">
+        <KeyFrame Cue="0%">
+          <Setter Property="Opacity" Value="0" />
+          <Setter Property="TranslateTransform.Y" Value="-10" />
+        </KeyFrame>
+        <KeyFrame Cue="100%">
+          <Setter Property="Opacity" Value="1" />
+          <Setter Property="TranslateTransform.Y" Value="0" />
+        </KeyFrame>
+      </Animation>
+    </Style.Animations>
+  </Style>
+
   <Style Selector="ComboBox /template/ Border#Background">
     <Setter Property="Transitions">
       <Transitions>

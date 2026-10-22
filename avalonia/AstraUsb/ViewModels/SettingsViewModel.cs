@@ -257,8 +257,14 @@ public sealed partial class SettingsViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Сохраняет параметры веб-панели. Порт нельзя переоткрыть на ходу,
-    /// поэтому включение вступает в силу после перезапуска программы.
+    /// Поднимает, перезапускает или гасит веб-панель по сохранённым настройкам и
+    /// говорит, работает ли она теперь. Задаёт главное окно, у которого панель.
+    /// </summary>
+    public Func<Settings, bool>? ApplyWeb { get; set; }
+
+    /// <summary>
+    /// Сохраняет параметры веб-панели и сразу применяет их: панель
+    /// перезапускается на новом порту без перезапуска программы.
     /// </summary>
     [RelayCommand]
     private void SaveWeb()
@@ -281,17 +287,20 @@ public sealed partial class SettingsViewModel : ObservableObject
 
         if (changed)
         {
-            RestartNeeded = true;
             _actions.Write(ActionLog.Settings, WebEnabled
                 ? $"веб-панель включена на порту {wanted}"
                 : "веб-панель выключена");
         }
 
+        // Панель перезапускается при каждом сохранении, не только при смене
+        // порта: сертификат и пароль она берёт при старте.
+        var running = ApplyWeb?.Invoke(_settings) ?? WebEnabled;
+
         ShowWebLinks();
 
-        WebState = WebEnabled
-            ? "после перезапуска панель откроется по адресам ниже"
-            : "панель выключена";
+        WebState = !WebEnabled ? "панель выключена"
+            : running ? "панель работает по адресам ниже"
+            : "панель не поднялась: возможно, порт занят другой программой";
 
         WebFingerprint = WebEnabled && WebSsl ? PanelCertificate.Fingerprint() : "";
 
