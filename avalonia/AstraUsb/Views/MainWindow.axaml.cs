@@ -91,6 +91,7 @@ public partial class MainWindow : Window
         AddHandler(PointerWheelChangedEvent, (_, _) => vm.NoteActivity(), RoutingStrategies.Tunnel);
 
         var tabs = this.FindControl<TabControl>("Tabs")!;
+        InitKeyboard(this.FindControl<Border>("Osk")!, this.FindControl<StackPanel>("OskKeys")!);
         var passwordBox = this.FindControl<TextBox>("PasswordBox")!;
         var accountBox = this.FindControl<TextBox>("AccountBox")!;
 

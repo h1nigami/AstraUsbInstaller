@@ -188,7 +188,8 @@
                  VerticalAlignment="Center" Foreground="{StaticResource FgMutedBrush}" />
     </Grid>
 
-    <TabControl x:Name="Tabs" Grid.Row="2" Padding="0" Background="Transparent">
+    <Grid Grid.Row="2" RowDefinitions="*,Auto">
+    <TabControl x:Name="Tabs" Padding="0" Background="Transparent">
       <TabControl.ItemsPanel>
         <ItemsPanelTemplate>
           <StackPanel Orientation="Horizontal" />
@@ -428,7 +429,7 @@
 
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ТАБЕЛЬНЫЙ НОМЕР" Classes="field" />
-                  <TextBox Classes="form" Text="{Binding Search.PersonnelNo}"
+                  <TextBox Classes="form" Text="{Binding Search.PersonnelNo}" Tag="num"
                            Watermark="например 10482" />
                 </StackPanel>
 
@@ -442,13 +443,13 @@
               <UniformGrid Classes="fade" Columns="3" IsVisible="{Binding Search.FiltersExpanded}">
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="НОМЕР УСТРОЙСТВА" Classes="field" />
-                  <TextBox Classes="form" Text="{Binding Search.Camera}"
+                  <TextBox Classes="form" Text="{Binding Search.Camera}" Tag="en"
                            Watermark="BCU-01-0001" />
                 </StackPanel>
 
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ИМЯ ФАЙЛА" Classes="field" />
-                  <TextBox Classes="form" Text="{Binding Search.FileName}"
+                  <TextBox Classes="form" Text="{Binding Search.FileName}" Tag="en"
                            Watermark="VID_" />
                 </StackPanel>
 
@@ -463,17 +464,17 @@
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ДАТА ИЗМЕНЕНИЯ ФАЙЛА" Classes="field" />
                   <Grid ColumnDefinitions="*,6,*">
-                    <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.From}" />
-                    <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.To}" />
+                    <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.From}" Tag="num" />
+                    <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.To}" Tag="num" />
                   </Grid>
                 </StackPanel>
 
                 <StackPanel Margin="0,0,10,0">
                   <TextBlock Text="ВРЕМЯ СЪЁМКИ" Classes="field" />
                   <Grid ColumnDefinitions="*,6,*">
-                    <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.ShotFrom}"
+                    <TextBox Grid.Column="0" Classes="form" Text="{Binding Search.ShotFrom}" Tag="num"
                              Watermark="любое" />
-                    <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.ShotTo}"
+                    <TextBox Grid.Column="2" Classes="form" Text="{Binding Search.ShotTo}" Tag="num"
                              Watermark="любое" />
                   </Grid>
                 </StackPanel>
@@ -722,7 +723,7 @@
             <Grid ColumnDefinitions="132,8,*,8,190">
               <StackPanel>
                 <TextBlock Text="НОМЕР" Classes="field" />
-                <TextBox Text="{Binding Staff.PersonnelNoInput}" Watermark="из регистратора"
+                <TextBox Text="{Binding Staff.PersonnelNoInput}" Tag="num" Watermark="из регистратора"
                          FontSize="13" Padding="10,0" />
               </StackPanel>
               <StackPanel Grid.Column="2">
@@ -732,7 +733,7 @@
               </StackPanel>
               <StackPanel Grid.Column="4">
                 <TextBlock Text="ТЕЛЕФОН" Classes="field" />
-                <TextBox Text="{Binding Staff.PhoneInput}" Watermark="+7 …"
+                <TextBox Text="{Binding Staff.PhoneInput}" Tag="num" Watermark="+7 …"
                          FontSize="13" Padding="10,0" />
               </StackPanel>
             </Grid>
@@ -755,10 +756,10 @@
           <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="8" Margin="0,0,0,8">
             <TextBlock Text="События с" VerticalAlignment="Center" FontSize="11"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Log.From}" Width="100" />
+            <TextBox Text="{Binding Log.From}" Tag="num" Width="100" />
             <TextBlock Text="по" VerticalAlignment="Center" FontSize="11"
                        Foreground="{StaticResource FgMutedBrush}" />
-            <TextBox Text="{Binding Log.To}" Width="100" />
+            <TextBox Text="{Binding Log.To}" Tag="num" Width="100" />
             <Button Classes="primary" Content="Показать" FontSize="12"
                     Command="{Binding Log.ReloadCommand}" />
             <Button Content="Сегодня" FontSize="12"
@@ -847,7 +848,7 @@
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="НОМЕР СТАНЦИИ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.StationNumber}" />
+                      <TextBox Classes="form" Text="{Binding Settings.StationNumber}" Tag="num" />
                       <TextBlock Classes="hint" Margin="0,4,0,0"
                                  Text="входит в номера, которые станция выдаёт камерам" />
                     </StackPanel>
@@ -863,9 +864,9 @@
                       <TextBlock Text="ОКОН: ВСЕГО И В СТРОКЕ" Classes="field" />
                       <Grid ColumnDefinitions="*,8,*,8,Auto">
                         <TextBox Grid.Column="0" Classes="form"
-                                 Text="{Binding Settings.BayCount}" />
+                                 Text="{Binding Settings.BayCount}" Tag="num" />
                         <TextBox Grid.Column="2" Classes="form"
-                                 Text="{Binding Settings.BaysPerRow}" />
+                                 Text="{Binding Settings.BaysPerRow}" Tag="num" />
                         <Button Grid.Column="4" Content="Применить"
                                 Command="{Binding Settings.SaveBayCountCommand}" />
                       </Grid>
@@ -880,7 +881,7 @@
 
                   <StackPanel>
                     <TextBlock Text="ПАПКА АРХИВА" Classes="field" />
-                    <TextBox Classes="form" Text="{Binding Settings.BackupRoot}" />
+                    <TextBox Classes="form" Text="{Binding Settings.BackupRoot}" Tag="en" />
                     <TextBlock IsVisible="{Binding Settings.ArchiveOnSystemDrive}" Classes="hint"
                                Margin="0,4,0,0" Foreground="{StaticResource WarnBrush}"
                                Text="Архив на системном разделе. Выберите отдельный диск: системный переполнится записями." />
@@ -889,12 +890,12 @@
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="ОСТАВЛЯТЬ СВОБОДНЫМИ, ГБ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.MinFreeGb}" />
+                      <TextBox Classes="form" Text="{Binding Settings.MinFreeGb}" Tag="num" />
                     </StackPanel>
 
                     <StackPanel>
                       <TextBlock Text="ХРАНИТЬ ЗАПИСИ, ДНЕЙ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.KeepDays}" />
+                      <TextBox Classes="form" Text="{Binding Settings.KeepDays}" Tag="num" />
                       <TextBlock Classes="hint" Margin="0,4,0,0" Text="0 хранит бессрочно" />
                     </StackPanel>
                   </UniformGrid>
@@ -936,7 +937,7 @@
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.AdminAccount}" />
+                      <TextBox Classes="form" Text="{Binding Settings.AdminAccount}" Tag="en" />
                     </StackPanel>
 
                     <StackPanel>
@@ -970,7 +971,7 @@
                     <TextBlock Text="ЗАКРЫВАТЬ РАЗДЕЛЫ ЧЕРЕЗ, МИН ПРОСТОЯ" Classes="field" />
                     <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
                       <TextBox Grid.Column="0" Classes="form"
-                               Text="{Binding Settings.LockTimeoutMinutes}" />
+                               Text="{Binding Settings.LockTimeoutMinutes}" Tag="num" />
                       <Button Grid.Column="2" Content="Сохранить"
                               Command="{Binding Settings.SaveLockTimeoutCommand}" />
                     </Grid>
@@ -993,20 +994,20 @@
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="АДРЕС СЕРВЕРА" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.FtpHost}"
+                      <TextBox Classes="form" Text="{Binding Settings.FtpHost}" Tag="en"
                                Watermark="192.168.0.10" />
                     </StackPanel>
 
                     <StackPanel>
                       <TextBlock Text="ПОРТ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.FtpPort}" />
+                      <TextBox Classes="form" Text="{Binding Settings.FtpPort}" Tag="num" />
                     </StackPanel>
                   </UniformGrid>
 
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.FtpUser}" />
+                      <TextBox Classes="form" Text="{Binding Settings.FtpUser}" Tag="en" />
                     </StackPanel>
 
                     <StackPanel>
@@ -1018,7 +1019,7 @@
 
                   <StackPanel>
                     <TextBlock Text="ПАПКА НА СЕРВЕРЕ" Classes="field" />
-                    <TextBox Classes="form" Text="{Binding Settings.FtpFolder}"
+                    <TextBox Classes="form" Text="{Binding Settings.FtpFolder}" Tag="en"
                              Watermark="можно оставить пустой" />
                   </StackPanel>
 
@@ -1067,27 +1068,27 @@
 
                     <StackPanel>
                       <TextBlock Text="ПОРТ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.SqlPort}" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlPort}" Tag="num" />
                     </StackPanel>
                   </UniformGrid>
 
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="АДРЕС" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.SqlHost}"
+                      <TextBox Classes="form" Text="{Binding Settings.SqlHost}" Tag="en"
                                Watermark="192.168.0.20" />
                     </StackPanel>
 
                     <StackPanel>
                       <TextBlock Text="ИМЯ БАЗЫ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.SqlDatabase}" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlDatabase}" Tag="en" />
                     </StackPanel>
                   </UniformGrid>
 
                   <UniformGrid Columns="2">
                     <StackPanel Margin="0,0,12,0">
                       <TextBlock Text="УЧЁТНАЯ ЗАПИСЬ" Classes="field" />
-                      <TextBox Classes="form" Text="{Binding Settings.SqlUser}" />
+                      <TextBox Classes="form" Text="{Binding Settings.SqlUser}" Tag="en" />
                     </StackPanel>
 
                     <StackPanel>
@@ -1140,7 +1141,7 @@
                     <TextBlock Text="ПОРТ" Classes="field" />
                     <Grid ColumnDefinitions="*,8,Auto" Width="360" HorizontalAlignment="Left">
                       <TextBox Grid.Column="0" Classes="form"
-                               Text="{Binding Settings.WebPort}" />
+                               Text="{Binding Settings.WebPort}" Tag="num" />
                       <Button Grid.Column="2" Classes="primary" Content="Сохранить"
                               Command="{Binding Settings.SaveWebCommand}" />
                     </Grid>
@@ -1221,6 +1222,24 @@
       </TabItem>
 
     </TabControl>
+
+    <!-- Экранная клавиатура для полей разделов. Стоит в своей строке, а не
+         поверх: на экране 800x600 перекрытое поле не видно. Строится и
+         показывается из кода окна. -->
+    <Border x:Name="Osk" Grid.Row="1" IsVisible="False" Padding="4"
+            Opacity="0" Height="0" ClipToBounds="True" RenderTransform="translateY(36px)"
+            Background="{StaticResource BgPanelBrush}"
+            BorderBrush="{StaticResource Accent700Brush}" BorderThickness="0,1,0,0">
+      <Border.Transitions>
+        <Transitions>
+          <DoubleTransition Property="Opacity" Duration="0:0:0.2" Easing="CubicEaseOut" />
+          <DoubleTransition Property="Height" Duration="0:0:0.2" Easing="CubicEaseOut" />
+          <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.2" Easing="CubicEaseOut" />
+        </Transitions>
+      </Border.Transitions>
+      <StackPanel x:Name="OskKeys" HorizontalAlignment="Center" />
+    </Border>
+    </Grid>
 
     <!-- Нижняя строка: слева марка, по центру заполнение хранилища, справа состояние -->
     <Grid Grid.Row="3" Background="{StaticResource BgPanelBrush}"
