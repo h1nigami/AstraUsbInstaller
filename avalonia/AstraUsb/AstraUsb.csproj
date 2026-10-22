@@ -12,7 +12,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- Версия видна в разделе «О программе» и тогда, когда файла VERSION
          рядом нет: на объекте сети может не быть неделями. -->
-    <Version>2.0.12</Version>
+    <Version>2.0.13</Version>
   </PropertyGroup>
 
   <ItemGroup>
