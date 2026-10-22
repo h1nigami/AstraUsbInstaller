@@ -1,0 +1,11 @@
+{
+  "name": "astra-web-panel-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test --experimental-test-coverage --test-coverage-include=../../AstraUsb/Assets/web/js/*.js --test-coverage-lines=90 tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

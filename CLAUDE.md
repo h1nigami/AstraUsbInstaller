@@ -19,6 +19,12 @@ python3 -m unittest discover -s tests -v
 
 # Windows launcher
 run_gui.bat
+
+# Веб-панель C#: сервер и API (живая панель во временном каталоге, нужен Windows)
+dotnet test avalonia/AstraUsb.Tests --filter "FullyQualifiedName~WebPanelTests|FullyQualifiedName~WebApiEndpointTests"
+
+# Веб-панель C#: страница (jsdom, порог покрытия строк 90%)
+cd avalonia/AstraUsb.Tests/web && npm ci && npm test
 ```
 
 Run `py_compile` and the unittest suite before committing Python changes. The

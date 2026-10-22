@@ -31,3 +31,19 @@ jobs:
           for script in install_native.sh start_native.sh update.sh diagnose.sh; do
             bash -n "$script"
           done
+
+  web-panel:
+    name: Страница веб-панели
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: avalonia/AstraUsb.Tests/web/package-lock.json
+      - name: Проверить модули страницы (порог покрытия строк 90%)
+        working-directory: avalonia/AstraUsb.Tests/web
+        run: |
+          npm ci
+          npm test

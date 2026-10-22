@@ -68,9 +68,9 @@ export const settings = {
         ${field('Повтор нового пароля', 'repeat', '', 'type="password" autocomplete="new-password"')}
         ${save('savePassword', 'Сменить пароль')}
         <hr style="border:0;border-top:1px solid var(--line);width:100%">
-        ${field('Блокировать разделы на станции через, мин', 'minutes', c.lockMinutes, 'type="number" inputmode="numeric" min="0" max="240"')}
+        <div class="fields" data-form="lock">${field('Блокировать разделы на станции через, мин', 'minutes', c.lockMinutes, 'type="number" inputmode="numeric" min="0" max="240"')}
         <p class="hint">0: разделы станции не закрываются по простою.</p>
-        <button class="btn block" data-act="saveLock">Сохранить время</button>`),
+        <button class="btn block" data-act="saveLock">Сохранить время</button></div>`),
       acc('about', 'info', 'О станции', esc(c.version || 'версия неизвестна'), `
         <div class="service"><span class="k">Версия</span><span class="v">${esc(c.version || 'неизвестна')}</span></div>
         <div class="service"><span class="k">Веб-панель</span><span class="v">порт ${c.web.port}${c.web.ssl ? ', SSL' : ''}</span></div>
