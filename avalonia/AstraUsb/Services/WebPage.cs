@@ -14,7 +14,11 @@ public static class WebPage
 {
     public static string Html => Text("index.html");
     public static string Css => Text("app.css");
-    public static string Script => Text("app.js");
+    /// <summary>Модуль страницы по имени файла; null, если такого нет.</summary>
+    public static string? Script(string name) =>
+        name.EndsWith(".js", StringComparison.Ordinal) && name.IndexOfAny(['/', '\\']) < 0
+            ? Read($"avares://AstraUsb/Assets/web/js/{name}") is { } bytes ? Encoding.UTF8.GetString(bytes) : null
+            : null;
 
     /// <summary>Шрифт из ресурсов киоска; null, если такого нет.</summary>
     public static byte[]? Font(string name) =>

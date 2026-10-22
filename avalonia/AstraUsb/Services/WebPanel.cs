@@ -104,7 +104,8 @@ public sealed class WebPanel : IDisposable
 
         app.MapGet("/", () => Results.Content(WebPage.Html, "text/html; charset=utf-8"));
         app.MapGet("/app.css", () => Results.Content(WebPage.Css, "text/css; charset=utf-8"));
-        app.MapGet("/app.js", () => Results.Content(WebPage.Script, "text/javascript; charset=utf-8"));
+        app.MapGet("/js/{name}", (string name) => WebPage.Script(name) is { } code
+            ? Results.Content(code, "text/javascript; charset=utf-8") : Results.NotFound());
 
         // Шрифты те же, что в киоске: на телефоне их нет, а сети на объекте может не быть.
         app.MapGet("/fonts/{name}", (string name) => WebPage.Font(name) is { } bytes
