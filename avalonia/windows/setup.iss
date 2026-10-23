@@ -65,6 +65,9 @@ Filename: "{app}\AstraUsb.exe"; Description: "Запустить програм�
     Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+; Запущенная программа держит файлы, и папка остаётся после удаления.
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AstraUsb.exe"; \
+    Flags: runhidden; RunOnceId: "KillApp"
 ; Прежние значения не сохранялись, возвращаем типовые для Windows.
 Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-ac 30"; \
     Flags: runhidden
@@ -74,3 +77,13 @@ Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-dc 15"; \
 [UninstallDelete]
 ; База станции и собранные записи остаются: их удаляет только человек.
 Type: filesandordirs; Name: "{app}\logs"
+
+[Code]
+; Папка программы с базой и записями удаляется целиком только с согласия.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and not UninstallSilent and
+     (MsgBox('Удалить также базу станции и собранные записи (папки data и USB_Backups)?',
+             mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
+    DelTree(ExpandConstant('{app}'), True, True, True);
+end;
