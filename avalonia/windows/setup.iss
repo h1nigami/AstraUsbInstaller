@@ -23,6 +23,7 @@ OutputBaseFilename=BestCamStationSetup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; Установка в Program Files требует администратора, но сама программа
@@ -79,6 +80,17 @@ Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-dc 15"; \
 Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
+// Запущенная станция держит файлы, а Restart Manager её не закрывает:
+// завершаем процесс сами до копирования.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM AstraUsb.exe', '',
+       SW_HIDE, ewWaitUntilTerminated, Code);
+  Result := '';
+end;
+
 // Папка программы с базой и записями удаляется целиком только с согласия.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
