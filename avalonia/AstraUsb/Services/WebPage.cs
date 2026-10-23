@@ -728,7 +728,7 @@ public static class WebPage
         // забираем её запросом и показываем уже полученный файл.
         async function fetchFile(path) {
           const res = await fetch('/api/file?p=' + encodeURIComponent(path),
-            { headers: { 'X-Token': token } });
+            { headers: { 'X-Token': token }, cache: 'no-store' });
           return res.ok ? res.blob() : null;
         }
 
