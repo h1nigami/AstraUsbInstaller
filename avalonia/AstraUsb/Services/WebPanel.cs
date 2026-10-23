@@ -84,7 +84,32 @@ public sealed class WebPanel : IDisposable
 
     private void Map(WebApplication app, Settings settings)
     {
-        app.MapGet("/", () => Results.Content(Page(), "text/html; charset=utf-8"));
+        // Сбой одного запроса не должен ронять панель и не должен отдавать наружу
+        // разбор стека: оператору нужна фраза, а подробности уходят в журнал падений.
+        app.Use(async (context, next) =>
+        {
+            try
+            {
+                await next(context);
+            }
+            catch (Exception e) when (!context.Response.HasStarted)
+            {
+                context.Response.StatusCode = 500;
+                await context.Response.WriteAsJsonAsync(new
+                {
+                    error = UserError.Report("Веб-панель не смогла выполнить запрос " + context.Request.Path, e),
+                });
+            }
+        });
+
+        app.MapGet("/", () => Results.Content(WebPage.Html, "text/html; charset=utf-8"));
+        app.MapGet("/app.css", () => Results.Content(WebPage.Css, "text/css; charset=utf-8"));
+        app.MapGet("/js/{name}", (string name) => WebPage.Script(name) is { } code
+            ? Results.Content(code, "text/javascript; charset=utf-8") : Results.NotFound());
+
+        // Шрифты те же, что в киоске: на телефоне их нет, а сети на объекте может не быть.
+        app.MapGet("/fonts/{name}", (string name) => WebPage.Font(name) is { } bytes
+            ? Results.File(bytes, "font/ttf") : Results.NotFound());
 
         // Логотип берётся из ресурсов программы, тот же, что в киоске: на
         // станции нет каталога со статикой, а панель должна выглядеть своей.
@@ -139,57 +164,16 @@ public sealed class WebPanel : IDisposable
         app.MapGet("/api/state", (HttpContext context) =>
             Authorized(context) ? Results.Json(StationSnapshot.Current) : Results.Unauthorized());
 
-        app.MapGet("/api/log", (HttpContext context) =>
-        {
-            if (!Authorized(context))
-                return Results.Unauthorized();
-
-            var events = new ActionLog(_dbPath)
-                .Between(DateTime.Now.AddDays(-1), DateTime.Now, 100)
-                .Select(e => new { at = e.At, kind = e.Kind, text = e.Message });
-
-            return Results.Json(events);
-        });
-
-        app.MapGet("/api/archive", (HttpContext context, string? name, string? kind) =>
-        {
-            if (!Authorized(context))
-                return Results.Unauthorized();
-
-            var filter = new ArchiveFilter
-            {
-                CollectedFrom = DateTime.Now.AddDays(-30),
-                CollectedTo = DateTime.Now,
-                FileName = name ?? "",
-                Kind = Enum.TryParse<MediaKind>(kind, true, out var parsed) ? parsed : MediaKind.Any,
-            };
-
-            var root = Path.GetFullPath(Settings.Load().BackupRoot);
-            var rows = new ArchiveSearch(_dbPath).Find(filter, 100).Select(r => new
-            {
-                file = Path.GetFileName(r.File.DestPath),
-                path = RelativeTo(root, r.File.DestPath),
-                kind = MediaKinds.Name(r.Kind),
-                camera = r.CameraName,
-                employee = r.EmployeeName,
-                size = r.File.SizeBytes,
-                collected = r.File.CollectedAt,
-                shielded = r.File.Important,
-            });
-
-            return Results.Json(rows);
-        });
-
         app.MapGet("/api/file", (HttpContext context, string p) =>
         {
-            if (!Authorized(context))
+            if (!Authorized(context) && !Ticketed(context))
                 return Results.Unauthorized();
 
             // Путь приходит относительным и складывается с корнем архива, а
             // потом проверяется, что не вышел из него: иначе панель отдавала
             // бы любой файл станции по «..» в запросе.
-            var root = Path.GetFullPath(Settings.Load().BackupRoot);
-            var full = Path.GetFullPath(Path.Combine(root, p));
+            var root = Path.GetFullPath(Settings.Load().ResolveBackupRoot());
+            var full =Path.GetFullPath(Path.Combine(root, p));
 
             if (!full.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                 && !full.Equals(root, StringComparison.OrdinalIgnoreCase))
@@ -245,6 +229,31 @@ public sealed class WebPanel : IDisposable
             new ActionLog(_dbPath).Write(ActionLog.Settings, "веб-панель: перезапуск станции");
             return Results.Ok(new { queued = true });
         });
+
+        WebApi.Map(app, Authorized, Ticketed, IssueTicket, _dbPath);
+    }
+
+    private readonly Dictionary<string, DateTime> _tickets = new(StringComparer.Ordinal);
+
+    /// <summary>Билет на чтение записей: живёт недолго и ничего другого не открывает.</summary>
+    private string IssueTicket()
+    {
+        var ticket = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+        lock (_lock)
+        {
+            var now = DateTime.Now;
+            foreach (var old in _tickets.Where(t => t.Value < now).Select(t => t.Key).ToList())
+                _tickets.Remove(old);
+            _tickets[ticket] = now.AddMinutes(30);
+        }
+        return ticket;
+    }
+
+    private bool Ticketed(HttpContext context)
+    {
+        lock (_lock)
+            return _tickets.TryGetValue(context.Request.Query["t"].ToString(), out var until)
+                   && until > DateTime.Now;
     }
 
     private static byte[]? _logo;
@@ -294,21 +303,6 @@ public sealed class WebPanel : IDisposable
         }
     }
 
-    /// <summary>Путь записи внутри архива: наружу абсолютные пути не отдаём.</summary>
-    private static string RelativeTo(string root, string path)
-    {
-        try
-        {
-            return Path.GetRelativePath(root, path).Replace('\\', '/');
-        }
-        catch (Exception)
-        {
-            return Path.GetFileName(path);
-        }
-    }
-
-    /// <summary>Страница панели. Лежит рядом с кодом, чтобы не требовать сборщика.</summary>
-    private static string Page() => WebPage.Html;
 
     public void Dispose()
     {
