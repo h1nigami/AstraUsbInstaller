@@ -1836,10 +1836,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             {
                 _actions.Write(ActionLog.Settings, "перезапуск по просьбе панели");
 
-                // Ненулевой код завершения службе виден как сбой, и она
-                // поднимает станцию заново; парольный выход даёт ноль и
-                // останавливает её намеренно.
-                Environment.Exit(3);
+                // Под systemd ненулевой код поднимает станцию заново, без
+                // службы (Windows) программа запускает себя сама.
+                AppRestart.Now();
                 return;
             }
 
