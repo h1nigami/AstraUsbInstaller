@@ -79,7 +79,7 @@ Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-dc 15"; \
 Type: filesandordirs; Name: "{app}\logs"
 
 [Code]
-; Папка программы с базой и записями удаляется целиком только с согласия.
+// Папка программы с базой и записями удаляется целиком только с согласия.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent and
