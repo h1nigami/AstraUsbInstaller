@@ -2,6 +2,7 @@
 ; для проверки и показа, поэтому здесь обычная установка в папку пользователя
 ; и ярлыки, без служб. Автозапуск это ярлык в общей папке «Автозагрузка»:
 ; программа стартует при входе любого пользователя.
+; Сон и гибернация отключаются при установке.
 
 #define AppName "BestCam Station"
 #define AppPublisher "Best Electronics"
@@ -51,9 +52,38 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\AstraUsb.exe"; Tasks: desktop
 Name: "{commonstartup}\{#AppName}"; Filename: "{app}\AstraUsb.exe"; Tasks: autostart
 
 [Run]
+; Станция должна работать без перерыва: сон и гибернация отключаются сразу.
+Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-ac 0"; \
+    Flags: runhidden
+Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-dc 0"; \
+    Flags: runhidden
+Filename: "{sys}\powercfg.exe"; Parameters: "/change hibernate-timeout-ac 0"; \
+    Flags: runhidden
+Filename: "{sys}\powercfg.exe"; Parameters: "/change hibernate-timeout-dc 0"; \
+    Flags: runhidden
 Filename: "{app}\AstraUsb.exe"; Description: "Запустить программу"; \
     Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; Запущенная программа держит файлы, и папка остаётся после удаления.
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM AstraUsb.exe"; \
+    Flags: runhidden; RunOnceId: "KillApp"
+; Прежние значения не сохранялись, возвращаем типовые для Windows.
+Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-ac 30"; \
+    Flags: runhidden
+Filename: "{sys}\powercfg.exe"; Parameters: "/change standby-timeout-dc 15"; \
+    Flags: runhidden
 
 [UninstallDelete]
 ; База станции и собранные записи остаются: их удаляет только человек.
 Type: filesandordirs; Name: "{app}\logs"
+
+[Code]
+// Папка программы с базой и записями удаляется целиком только с согласия.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if (CurUninstallStep = usPostUninstall) and not UninstallSilent and
+     (MsgBox('Удалить также базу станции и собранные записи (папки data и USB_Backups)?',
+             mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES) then
+    DelTree(ExpandConstant('{app}'), True, True, True);
+end;
