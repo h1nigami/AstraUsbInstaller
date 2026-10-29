@@ -56,14 +56,28 @@ class NeedsUpdateTest(unittest.TestCase):
     def test_same_tag_skips(self):
         self.assertFalse(updater.needs_update("v1.1", "v1.1"))
 
-    def test_different_tag_updates(self):
+    def test_newer_tag_updates(self):
         self.assertTrue(updater.needs_update("v1.1", "v1.2"))
+
+    def test_older_tag_does_not_downgrade(self):
+        """Главная причина фикса: latest старше текущей не должен откатывать."""
+        self.assertFalse(updater.needs_update("v1.20", "v1.11"))
+
+    def test_multi_segment_comparison(self):
+        self.assertTrue(updater.needs_update("v1.9", "v1.10"))
+        self.assertFalse(updater.needs_update("v1.10", "v1.9"))
 
     def test_unknown_local_version_updates(self):
         self.assertTrue(updater.needs_update(None, "v1.2"))
 
     def test_missing_latest_never_updates(self):
         self.assertFalse(updater.needs_update("v1.1", None))
+
+    def test_both_missing_skips(self):
+        self.assertFalse(updater.needs_update(None, None))
+
+    def test_malformed_tag_skips(self):
+        self.assertFalse(updater.needs_update("v1.1", "bad-tag"))
 
 
 class Sha256Test(unittest.TestCase):
