@@ -620,6 +620,30 @@ public sealed class MainWindowViewModelTests : IDisposable
         Assert.False(Field<Dictionary<string, BackupStage>>(model, "_finished").ContainsKey(mount));
     }
 
+    [AvaloniaFact]
+    public void Simultaneously_connected_windows_drives_with_same_volume_uuid_occupy_separate_ports()
+    {
+        using var model = new MainWindowViewModel(() => []);
+        var mountD = Path.Combine(_dir, "cardD");
+        var mountF = Path.Combine(_dir, "cardF");
+        Directory.CreateDirectory(mountD);
+        Directory.CreateDirectory(mountF);
+        CacheCard(model, mountD, 1);
+        CacheCard(model, mountF, 2);
+
+        var deviceD = UuidDevice("D:", mountD, "SAME_VOLUME_SERIAL");
+        var deviceF = UuidDevice("F:", mountF, "SAME_VOLUME_SERIAL");
+
+        ApplyDevices(model, deviceD, deviceF);
+
+        Assert.Equal("D:", model.Ports[0].DeviceKey);
+        Assert.Equal("F:", model.Ports[1].DeviceKey);
+        Assert.Equal("1", model.Ports[0].CameraId);
+        Assert.Equal("2", model.Ports[1].CameraId);
+        Assert.Equal(mountD, model.Ports[0].MountPoint);
+        Assert.Equal(mountF, model.Ports[1].MountPoint);
+    }
+
     private static UsbDevice UuidDevice(string name, string mount, string uuid)
     {
         var constructor = typeof(UsbDevice).GetConstructors().SingleOrDefault(c => c.GetParameters().Length == 4);
