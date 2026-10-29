@@ -1188,8 +1188,12 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         ApplyRemoteCommands();
     }
 
-    private static string DeviceKey(UsbDevice device) => string.IsNullOrEmpty(device.FileSystemUuid)
-        ? device.Name : "uuid:" + device.FileSystemUuid;
+    private static bool IsWindowsDrive(string name) =>
+        name.Length == 2 && char.IsLetter(name[0]) && name[1] == ':';
+
+    private static string DeviceKey(UsbDevice device) =>
+        IsWindowsDrive(device.Name) || string.IsNullOrEmpty(device.FileSystemUuid)
+            ? device.Name : "uuid:" + device.FileSystemUuid;
 
     private void UpdateRemovalStatus(bool operationHeld = false)
     {
@@ -1288,7 +1292,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (mount is null) return;
         if (ArchiveGuard.IsArchiveMedia(mount, _resolvedArchiveRoot)) return;
         Cancel(mount);
-        if (string.IsNullOrEmpty(device.FileSystemUuid)
+        if ((!IsWindowsDrive(device.Name) && string.IsNullOrEmpty(device.FileSystemUuid))
             || !_identified.TryGetValue(mount, out var info) || info.DeviceId <= 0) return;
         _recoveries[key] = new CardRecovery(info.DeviceId, mount, until);
         _returnAttempts[key] = _returnAttempts.GetValueOrDefault(key) + 1;
