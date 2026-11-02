@@ -68,6 +68,37 @@ class UpdateGuardTest(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "Нужен flock Linux")
 class InstallerGuardTest(unittest.TestCase):
+    def test_installer_accepts_clean_exit_during_initial_startup_check(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        installer = (root / "install_native.sh").read_text(encoding="utf-8")
+        check = installer[installer.index('# Не рапортуем'):installer.index('echo "=== Готово ==="')]
+        with tempfile.TemporaryDirectory() as temporary:
+            work = pathlib.Path(temporary)
+            app, binaries = work / "app", work / "bin"
+            app.mkdir()
+            binaries.mkdir()
+            for name in ("updater.py", "usb_monitor.py"):
+                (app / name).write_bytes((root / name).read_bytes())
+            systemctl = binaries / "systemctl"
+            systemctl.write_text('''#!/bin/sh
+if [ "$1" = show ]; then
+    printf '%s\n' ActiveState=inactive SubState=dead "Result=$SERVICE_RESULT" NRestarts=0 ExecMainCode=1 "ExecMainStatus=$EXIT_STATUS" ExecMainStartTimestampMonotonic=100 ExecMainExitTimestampMonotonic=200
+    exit 0
+fi
+exit 3
+''')
+            systemctl.chmod(0o755)
+            script = 'set -e\nsleep() { :; };\n' + check + '\nprintf accepted\n'
+            env = {**os.environ, "PATH": str(binaries) + os.pathsep + os.environ["PATH"],
+                   "APP_DIR": str(app), "SERVICE_NAME": "astra-usb-monitor", "SUDO": ""}
+            for status, service_result in ((0, "success"), (1, "exit-code")):
+                with self.subTest(status=status):
+                    result = subprocess.run(["bash", "-c", script],
+                        env={**env, "EXIT_STATUS": str(status), "SERVICE_RESULT": service_result},
+                        capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                    self.assertEqual("accepted" in result.stdout, status == 0)
+
     def test_installer_refuses_busy_database_before_packages(self):
         import fcntl
         installer = pathlib.Path(__file__).resolve().parents[1] / "install_native.sh"
