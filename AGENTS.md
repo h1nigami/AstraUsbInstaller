@@ -52,6 +52,7 @@ Four top-level modules:
 - На Linux обе службы рекурсивно передают прямые папки с положительным числовым именем `DeviceN` владельцу и группе корня архива. При запуске исправляются существующие папки, после копирования текущая папка устройства. Содержимое выбранных `DeviceN` также меняет владельца, а каталоги вне них не затрагиваются.
 
 **`gui.py`** — Tkinter fullscreen GUI
+- Раздел «О программе» через `updater.read_update_status()` читает состояние отдельной службы и её journal в фоновом потоке. Результат передаётся в Tk через `root.after`; поколение запроса защищает от старого ответа. Время запуска службы отличает новую попытку от прежнего результата. При старте GUI также восстанавливается последняя попытка, включая работающую службу. Команды чтения имеют таймауты и не меняют установку.
 - `App` class owns the notebook (4 tabs: Загрузка, Поиск, Устройства, Настройки)
 - Runs `monitor_usb` in a daemon thread; polls `progress_queue` every 200ms via `root.after`; `_poll_queue` also stamps `touch_copying_marker()` on every tick (via the pure `_is_busy(workers_data)` helper, keyed off the raw `scanning`/`copying` state, not the localized label) — this runs regardless of queue traffic, since a single large file can copy for minutes with no progress message in between.
 - Tab access protection: tabs at indices 1–3 require a password; `_prompt_unlock()` is modal, sized to 1/4 screen. Unlocked tabs re-lock after `lock_timeout_minutes` of inactivity (`_check_lock_timeout`).

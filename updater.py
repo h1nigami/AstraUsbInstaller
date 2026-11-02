@@ -116,6 +116,63 @@ def _log(msg):
     print(f"Обновление: {msg}", flush=True)
 
 
+def read_update_status(runner=None):
+    """Состояние отдельной службы и сообщения её текущей попытки для GUI."""
+    runner = runner or subprocess.run
+    status = {"active": False, "started": None, "message": "", "available": False}
+    try:
+        shown = runner(["systemctl", "show", "astra-usb-update.service",
+                        "--property=ActiveState,Result,ExecMainStartTimestampMonotonic"],
+                       capture_output=True, text=True, timeout=5)
+        if shown.returncode:
+            raise OSError((shown.stderr or shown.stdout).strip() or "служба обновления не найдена")
+        state = dict(line.split("=", 1) for line in shown.stdout.splitlines() if "=" in line)
+        started = int(state["ExecMainStartTimestampMonotonic"])
+        active = state["ActiveState"] in ("activating", "active", "reloading", "deactivating")
+        status.update(active=active, started=str(started), available=True)
+        journal = runner(["journalctl", "-b", "-u", "astra-usb-update.service",
+                          "-n", "60", "--no-pager", "-o", "json"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
+        if journal.returncode:
+            status["message"] = "Не удалось прочитать результат обновления: " + journal.stderr.strip()
+            return status
+        messages, raw, stamp = [], [], ""
+        for line in journal.stdout.splitlines():
+            try:
+                record = json.loads(line)
+                if not isinstance(record, dict):
+                    continue
+                if int(record.get("__MONOTONIC_TIMESTAMP", 0)) < started:
+                    continue
+                message = record.get("MESSAGE", "")
+                if not isinstance(message, str) or not message.strip():
+                    continue
+                match = re.match(r"(?:Обновление:|\[updater\])\s*(.*)", message)
+                if match:
+                    text = match.group(1)
+                    if text.startswith(("запуск команды:", "команда ")):
+                        continue
+                    messages.append(text[:400])
+                elif record.get("_PID") != "1":
+                    raw.append(message[:400])
+                if record.get("__REALTIME_TIMESTAMP"):
+                    stamp = time.strftime("%d.%m %H:%M:%S", time.localtime(int(record["__REALTIME_TIMESTAMP"]) / 1_000_000))
+            except (ValueError, TypeError, OverflowError):
+                continue
+        failed = state["ActiveState"] == "failed" or state.get("Result") not in (None, "success")
+        title = "Обновление выполняется" if active else ("Проверка завершилась с ошибкой" if failed else "Результат последней проверки")
+        details = messages[-2:] or raw[-2:]
+        if failed and raw:
+            details = messages[-1:] + raw[-1:]
+        if not details:
+            details = ["Ожидание сообщений установщика" if active else
+                       ("Обновления ещё не проверялись" if not started else "Служба не передала подробности. Они доступны в журнале.")]
+        status["message"] = title + (f" ({stamp})" if stamp else "") + ":\n" + "\n".join(details)
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
+        status.update(active=False, available=False, message=f"Не удалось получить состояние обновления: {error}")
+    return status
+
+
 def _run_logged(command, **kwargs):
     """Дочерняя команда пишет сразу в общий журнал, даже если затем зависнет."""
     _log(f"запуск команды: {' '.join(command)}")
@@ -370,6 +427,7 @@ def _apply_locked(src_dir, tag, lock_fd):
     _backup_app_dir(APP_DIR, PREV_DIR)
 
     try:
+        _log(f"устанавливаем {tag}; программа перезапустится")
         _run_logged(["systemctl", "reset-failed", SERVICE], timeout=30)
         installer = os.path.join(src_dir, "install_native.sh")
         env = dict(os.environ, USB_DB_PATH=os.path.abspath(usb_monitor.DB_PATH))
@@ -387,6 +445,7 @@ def _apply_locked(src_dir, tag, lock_fd):
         if probe.returncode != 0:
             raise RuntimeError("новая версия не импортируется")
 
+        _log(f"проверяем запуск {tag}; проверка займёт около минуты")
         time.sleep(60)
         if not _service_healthy():
             raise RuntimeError("сервис не поднялся после обновления")
@@ -405,7 +464,7 @@ def _apply_locked(src_dir, tag, lock_fd):
 
     _clear_failed_tag()
 
-    _log("обновление установлено")
+    _log(f"обновление {tag} установлено")
     return 0
 
 
@@ -448,6 +507,7 @@ def main(spool_dir=None):
                 _clear_offline_spool(spool_dir)
             return rc
 
+    _log("проверяем доступную версию на GitHub")
     try:
         release = json.loads(_fetch(LATEST_URL))
     except (OSError, ValueError, http.client.HTTPException) as e:
@@ -456,7 +516,7 @@ def main(spool_dir=None):
 
     latest_tag = release.get("tag_name")
     if not needs_update(current_tag, latest_tag):
-        _log(f"актуальная версия: {current_tag}")
+        _log(f"обновление не требуется: установлена {current_tag}, доступна {latest_tag}")
         return 0
 
     if latest_tag == _read_failed_tag():
@@ -472,10 +532,12 @@ def main(spool_dir=None):
         _log(f"у релиза {latest_tag} нет архива с контрольной суммой")
         return 0
     tarball_url, checksum_url = urls
+    _log(f"найдена версия {latest_tag}; установлена {current_tag or 'неизвестная версия'}")
 
     with tempfile.TemporaryDirectory() as tmp:
         archive = os.path.join(tmp, "release.tar.gz")
         try:
+            _log(f"загружаем архив {latest_tag}")
             with open(archive, "wb") as f:
                 f.write(_fetch(tarball_url, timeout=300))
             expected = parse_sha256(_fetch(checksum_url).decode())
@@ -483,6 +545,7 @@ def main(spool_dir=None):
             _log(f"загрузка не удалась ({e})")
             return 0
 
+        _log(f"проверяем контрольную сумму {latest_tag}")
         if sha256_of(archive) != expected:
             _log("контрольная сумма не сошлась — архив не установлен")
             return 0
