@@ -233,10 +233,14 @@ class GuiConfigTest(unittest.TestCase):
              mock.patch.object(um, "DEST_BASE", os.path.join(self.tmpdir.name, "archive")), \
              mock.patch.object(gui_mod.App, "_start_monitor"), \
              mock.patch.object(gui_mod.App, "_poll_queue"), \
-             mock.patch.object(gui_mod.App, "_check_lock_timeout"):
+             mock.patch.object(gui_mod.App, "_check_lock_timeout"), \
+             mock.patch.object(gui_mod.App, "_start_update_status_watch"):
             app = gui_mod.App()
         root.attributes("-fullscreen", False)
         root.geometry("1024x600")
+        app._about_status_var.set("Проверка завершилась с ошибкой:\n"
+            "Не удалось загрузить v1.29: ошибка проверки сертификата HTTPS. "
+            "Подробности доступны в едином журнале станции.")
         app.tabs_unlocked = True
         app.nb.select(3)
         root.deiconify()

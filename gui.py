@@ -190,6 +190,7 @@ class App:
         self.port_assignment = {}
         self._offline_wait = False
         self._offline_dlg = None
+        self._update_watch_generation = 0
         self._search_results = []
         self._search_gen = 0
 
@@ -201,6 +202,7 @@ class App:
         self.root.bind_all("<Key>", self._touch_activity, add=True)
         self._poll_queue()
         self._start_monitor()
+        self._start_update_status_watch()
         self._check_lock_timeout()
         if self._cleanup_enabled:
             threading.Thread(target=self._run_startup_cleanup, daemon=True).start()
@@ -813,26 +815,68 @@ class App:
         ttk.Label(about, text="BestCam USB Backup Manager", style="Panel.TLabel").pack(anchor="w")
         self._about_status_var = tk.StringVar(value="")
         ttk.Label(about, textvariable=self._about_status_var,
-                  foreground=self.C["fg_muted"], style="Panel.TLabel").pack(anchor="w", pady=(6, 0))
+                  foreground=self.C["fg_muted"], style="Panel.TLabel", wraplength=360,
+                  justify="left").pack(anchor="w", fill="x", pady=(6, 0))
         update_btns = ttk.Frame(about, style="Panel.TFrame")
         update_btns.pack(anchor="w", pady=(4, 0))
         ttk.Button(update_btns, text="Проверить обновления", command=self._force_update_check).pack(side="left")
         ttk.Button(update_btns, text="С флешки", command=self._start_offline_update).pack(side="left", padx=(8, 0))
 
-    def _force_update_check(self):
-        if _is_busy(self.workers_data):
-            self._about_status_var.set("Дождитесь конца сканирования или копирования")
-            return
-        self._about_status_var.set("Запуск проверки...")
+    def _apply_update_status(self, generation, message):
+        if generation == self._update_watch_generation:
+            self._about_status_var.set(message)
 
-        def _do():
-            msg = _start_update_service()
+    def _start_update_status_watch(self, start=False, require_network=True):
+        self._update_watch_generation += 1
+        threading.Thread(target=self._update_status_worker,
+                         args=(self._update_watch_generation, start, require_network), daemon=True).start()
+
+    def _update_status_worker(self, generation, start=False, require_network=True):
+        def show(message):
+            if self.stop_event.is_set() or generation != self._update_watch_generation:
+                return
             try:
-                self._about_status_var.set(msg)
+                self.root.after(0, self._apply_update_status, generation, message)
             except (tk.TclError, RuntimeError):
                 pass
 
-        threading.Thread(target=_do, daemon=True).start()
+        previous = updater.read_update_status() if start else {}
+        if self.stop_event.is_set() or generation != self._update_watch_generation:
+            return
+        if start:
+            message = _start_update_service(require_network=require_network)
+            if message != UPDATE_STARTED:
+                if not require_network:
+                    updater._clear_offline_spool()
+                show(message)
+                return
+        deadline = time.monotonic() + 15
+        observed = not start or previous.get("active", False)
+        while not self.stop_event.is_set() and generation == self._update_watch_generation:
+            status = updater.read_update_status()
+            observed = (observed or status["active"] or
+                        (status["started"] not in (None, "0") and status["started"] != previous.get("started")))
+            if not status.get("available", True):
+                show(status["message"])
+                return
+            if observed:
+                show(status["message"])
+                if not status["active"]:
+                    return
+            elif time.monotonic() >= deadline:
+                show("Служба не начала новую проверку. " + status["message"])
+                return
+            else:
+                show("Ожидание ответа службы обновления...")
+            self.stop_event.wait(1)
+
+    def _force_update_check(self):
+        if _is_busy(self.workers_data):
+            self._update_watch_generation += 1
+            self._about_status_var.set("Дождитесь конца сканирования или копирования")
+            return
+        self._about_status_var.set("Запуск проверки...")
+        self._start_update_status_watch(start=True)
 
     def _start_offline_update(self):
         # Режим обновления без интернета: блокируем программу и ждём флешку
@@ -978,13 +1022,8 @@ class App:
                 dlg.destroy()
             except tk.TclError:
                 pass
-        msg = _start_update_service(require_network=False)
-        if msg == UPDATE_STARTED:
-            self._about_status_var.set(
-                f"Обновление {tag} передано установщику — программа скоро перезапустится")
-        else:
-            updater._clear_offline_spool()
-            self._about_status_var.set(msg)
+        self._about_status_var.set(f"Запуск установки {tag} с флешки...")
+        self._start_update_status_watch(start=True, require_network=False)
 
     def _version_text(self):
         v = read_version()
