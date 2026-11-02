@@ -10,6 +10,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import subprocess
 from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -27,6 +28,67 @@ RELEASE = {
          "browser_download_url": "https://example/app.sha256"},
     ],
 }
+
+
+class UnifiedUpdateLogTest(unittest.TestCase):
+    def tearDown(self):
+        updater.usb_monitor.restore_stdout()
+
+    def test_online_failed_release_skip_is_written_to_archive_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fallback = os.path.join(tmp, "data", "app.log")
+            failed = os.path.join(tmp, "app.failed")
+            updater._write_failed_tag("v1.26", failed)
+            release = dict(RELEASE, tag_name="v1.26")
+            with mock.patch.object(updater, "FAILED_TAG_FILE", failed), \
+                 mock.patch.object(updater, "_fetch", return_value=json.dumps(release).encode()), \
+                 mock.patch.object(updater.usb_monitor, "LOG_PATH", fallback), \
+                 mock.patch.object(updater.usb_monitor, "get_dest_base", return_value=tmp), \
+                 mock.patch.object(updater.usb_monitor, "dest_available", return_value=True), \
+                 mock.patch.object(updater.usb_monitor, "read_version", return_value=("v1.13", "2026-09-14")), \
+                 mock.patch.object(updater.usb_monitor.platform, "system", return_value="Windows"):
+                self.assertEqual(updater.run(), 0)
+            updater.usb_monitor.restore_stdout()
+            with open(os.path.join(tmp, "astra-usb-monitor.log"), encoding="utf-8") as stream:
+                text = stream.read()
+            self.assertIn("v1.26", text)
+            self.assertIn("v1.13", text)
+            self.assertIn("уже откатывали", text)
+
+    def test_child_stdout_and_stderr_are_saved_in_same_log(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
+            cleanup.callback(updater.usb_monitor.restore_stdout)
+            path = os.path.join(tmp, "astra-usb-monitor.log")
+            updater.usb_monitor.setup_file_logging(path)
+            result = updater._run_logged([sys.executable, "-c",
+                "import sys; print('installer-output'); print('installer-error', file=sys.stderr); sys.exit(7)"], timeout=10)
+            updater.usb_monitor.restore_stdout()
+            self.assertEqual(result.returncode, 7)
+            with open(path, encoding="utf-8") as stream:
+                text = stream.read()
+            self.assertIn("installer-output", text)
+            self.assertIn("installer-error", text)
+
+    def test_child_output_survives_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
+            cleanup.callback(updater.usb_monitor.restore_stdout)
+            path = os.path.join(tmp, "astra-usb-monitor.log")
+            updater.usb_monitor.setup_file_logging(path)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                updater._run_logged([sys.executable, "-c",
+                    "import time; print('before-timeout', flush=True); time.sleep(30)"], timeout=2)
+            updater.usb_monitor.restore_stdout()
+            with open(path, encoding="utf-8") as stream:
+                self.assertIn("before-timeout", stream.read())
+
+    def test_closed_log_does_not_block_installer_command(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.ExitStack() as cleanup:
+            cleanup.callback(updater.usb_monitor.restore_stdout)
+            path = os.path.join(tmp, "astra-usb-monitor.log")
+            updater.usb_monitor.setup_file_logging(path)
+            updater.usb_monitor._log_fh.close()
+            result = updater._run_logged([sys.executable, "-c", "pass"], timeout=10)
+            self.assertEqual(result.returncode, 0)
 
 
 class PickAssetTest(unittest.TestCase):

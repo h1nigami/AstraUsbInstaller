@@ -265,7 +265,7 @@ def is_copying(path=None, max_age=60):
 
 
 LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "app.log")
-LOG_MAX_BYTES = 1024 * 1024
+LOG_MAX_BYTES = 10 * 1024 * 1024
 ARCHIVE_LOG_NAME = "astra-usb-monitor.log"
 
 _log_once_last = {}
@@ -398,7 +398,87 @@ def update_log_location(start=False):
         target = os.path.join(get_dest_base(), ARCHIVE_LOG_NAME) if dest_available() else LOG_PATH
     except (OSError, KeyError, ValueError):
         target = LOG_PATH
-    return setup_file_logging(target)
+    previous = _log_path
+    if not setup_file_logging(target):
+        return setup_file_logging(LOG_PATH) if target != LOG_PATH else False
+    if previous != target and target != LOG_PATH:
+        try:
+            _append_saved_log(LOG_PATH, target)
+        except OSError as error:
+            _log_once("saved_log", f"Не удалось добавить сохранённый журнал {LOG_PATH}: {error}")
+    return True
+
+
+def _append_saved_log(source, target):
+    """Добавить запасные записи, не удаляя файл другого работающего процесса."""
+    if os.path.normcase(os.path.abspath(source)) == os.path.normcase(os.path.abspath(target)):
+        return
+    try:
+        with open(source, "rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            if stream.tell() > LOG_MAX_BYTES:
+                stream.seek(-LOG_MAX_BYTES, os.SEEK_END)
+                stream.readline()
+            else:
+                stream.seek(0)
+            text = stream.read().decode("utf-8", errors="replace")
+    except FileNotFoundError:
+        return
+    if text:
+        with _log_write_lock, open(target, "a", encoding="utf-8") as stream:
+            stream.write(f"\n=== Сохранённый журнал: {source} ===\n{text}\n")
+
+
+def append_system_diagnostics(path=None):
+    """Записать диагностику станции в тот же файл, без команд от оператора."""
+    target = path or _log_path or LOG_PATH
+    version = read_version()
+    failed_path = os.path.dirname(VERSION_FILE) + ".failed"
+    try:
+        with open(failed_path, encoding="utf-8", errors="replace") as stream:
+            failed = stream.read(256).strip() or "нет"
+    except FileNotFoundError:
+        failed = "нет"
+    except OSError as error:
+        failed = f"не удалось прочитать: {error}"
+    lines = [
+        f"\n=== Диагностика {datetime.now():%d.%m.%Y %H:%M:%S}, PID {os.getpid()} ===",
+        f"Версия: {' '.join(version) if version else 'неизвестна'}; Python {sys.version.split()[0]}; ОС {platform.system()}",
+        f"Сбойный релиз (повторная установка пропускается): {failed}",
+    ]
+    if platform.system() == "Linux":
+        services = ["astra-usb-monitor.service", "astra-usb-update.service"]
+        commands = [
+            ("Состояние служб", ["systemctl", "show", *services, "--no-pager",
+             "--property=Id,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus,NRestarts"]),
+            ("Журнал служб", ["journalctl", "-u", services[0], "-u", services[1],
+             "-n", "200", "--no-pager", "-o", "short-iso-precise"]),
+            ("USB, диски и завершение процессов", ["journalctl", "-k", "-n", "200",
+             "--no-pager", "-o", "short-iso-precise"]),
+        ]
+        for title, command in commands:
+            lines.append(f"--- {title} ---")
+            try:
+                result = subprocess.run(command, capture_output=True, text=True,
+                                        encoding="utf-8", errors="replace", timeout=5)
+                output = result.stdout or ""
+                if "-k" in command:
+                    output = "\n".join(line for line in output.splitlines() if re.search(
+                        r"usb|xhci|ehci|uas|scsi|sd[a-z]|I/O error|out of memory|killed process|oom", line, re.I))
+                lines.extend((output.rstrip(), (result.stderr or "").rstrip()))
+                if result.returncode:
+                    lines.append(f"Команда завершилась с кодом {result.returncode}")
+            except (OSError, subprocess.SubprocessError) as error:
+                lines.append(f"Диагностика недоступна: {error}")
+    # Эти выдержки уже есть в journald: повторная отправка туда раздувает следующий снимок.
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+        with _log_write_lock, open(target, "a", encoding="utf-8", errors="replace") as stream:
+            stream.write("\n".join(lines) + "\n=== Конец диагностики ===\n")
+        return True
+    except OSError as error:
+        _log_once("diagnostics", f"Не удалось записать диагностику в {target}: {error}")
+        return False
 
 
 def restore_stdout():
@@ -460,41 +540,23 @@ def collect_diagnostics(db_path=None):
 
 
 def export_logs(dest_dir, db_path=None, log_path=None):
-    """Собрать app.log + version.txt + summary.txt в подпапку dest_dir.
-
-    Возвращает путь пакета. Персональных данных (имена, люди, серийники)
-    в пакете нет — только счётчики.
-    """
+    """Сохранить один журнал со сводкой и диагностикой прямо в dest_dir."""
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    bundle = os.path.join(dest_dir, f"bestcam-logs-{stamp}")
-    os.makedirs(bundle, exist_ok=False)
-    src_log = log_path or _log_path or LOG_PATH
+    os.makedirs(dest_dir, exist_ok=True)
+    fd, exported = tempfile.mkstemp(prefix=f"astra-usb-monitor-{stamp}-", suffix=".log", dir=dest_dir)
     try:
-        if os.path.isfile(src_log):
-            shutil.copy2(src_log, os.path.join(bundle, "app.log"))
-        else:
-            with open(os.path.join(bundle, "app.log"), "w") as f:
-                f.write("Журнал пуст: станция перезапускалась до включения записи в файл.\n")
-    except OSError as e:
-        raise OSError(f"Не удалось скопировать журнал: {e}") from e
-    ver = read_version()
-    try:
-        with open(os.path.join(bundle, "version.txt"), "w") as f:
-            f.write(f"{ver[0]} {ver[1]}\n" if ver else "unknown\n")
-        d = collect_diagnostics(db_path)
-        with open(os.path.join(bundle, "summary.txt"), "w") as f:
-            f.write(
-                "BestCam USB Backup Manager — диагностика\n"
-                f"version: {d['version']}\n"
-                f"platform: {d['platform']}\n"
-                f"devices: {d['devices']}\n"
-                f"backups: {d['backups']}\n"
-                f"archive: {d['archive']}\n"
-                f"archive_bytes: {d['archive_bytes']}\n"
-            )
-    except OSError as e:
-        raise OSError(f"Не удалось записать сводку: {e}") from e
-    return bundle
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write("BestCam USB Backup Manager: сводка\n")
+            for key, value in collect_diagnostics(db_path).items():
+                stream.write(f"{key}: {value}\n")
+        os.chmod(exported, 0o644)
+        for source in dict.fromkeys((log_path or _log_path or LOG_PATH, LOG_PATH)):
+            _append_saved_log(source, exported)
+        append_system_diagnostics(exported)
+    except Exception:
+        os.remove(exported)
+        raise
+    return exported
 
 
 _operations_lock = threading.RLock()

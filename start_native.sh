@@ -101,7 +101,7 @@ while true; do
         # Запускаем GUI напрямую (минуя fallback в main.py), чтобы ошибка
         # подключения к X дала ненулевой код, а не тихий headless-режим.
         # systemd видит код выхода GUI и перезапускает его только при ошибке.
-        exec python3 -c "from gui import launch; launch()"
+        exec python3 -c "from usb_monitor import update_log_location; update_log_location(start=True); from gui import launch; launch()"
     fi
     sleep 5
 done
