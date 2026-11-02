@@ -1,10 +1,11 @@
 """Тесты выгрузки логов для диагностики (кнопка в Настройках).
 
-Проверяют чистые функции usb_monitor: запись stdout в файл и сборку
-пакета app.log + version.txt + summary.txt без персональных данных.
+Проверяют запись stdout, обновлений и диагностики в один файл,
+перенос запасных записей и экспорт без подпапок.
 """
 
 import os
+import io
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ import usb_monitor as um
 
 
 class LogExportTest(unittest.TestCase):
-    def test_export_creates_bundle_with_log_version_summary(self):
+    def test_export_creates_one_file_with_log_version_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = os.path.join(tmp, "d.db")
             log_path = os.path.join(tmp, "app.log")
@@ -39,14 +40,14 @@ class LogExportTest(unittest.TestCase):
                     conn.close()
                 out = os.path.join(tmp, "out")
                 os.mkdir(out)
-                bundle = um.export_logs(out)
+                exported = um.export_logs(out)
 
-            files = sorted(os.listdir(bundle))
-            self.assertEqual(files, ["app.log", "summary.txt", "version.txt"])
-            with open(os.path.join(bundle, "app.log")) as f:
-                self.assertIn("USB Monitor", f.read())
-            with open(os.path.join(bundle, "summary.txt")) as f:
+            self.assertEqual(os.listdir(out), [os.path.basename(exported)])
+            self.assertTrue(os.path.isfile(exported))
+            with open(exported, encoding="utf-8") as f:
                 summary = f.read()
+            self.assertIn("USB Monitor", summary)
+            self.assertIn("version:", summary)
             self.assertIn("devices: 1", summary)
             self.assertIn("backups: 1", summary)
             for secret in ("Ivan", "Petr", "SECRET"):
@@ -58,8 +59,125 @@ class LogExportTest(unittest.TestCase):
                  mock.patch.object(um, "LOG_PATH", os.path.join(tmp, "no-such.log")), \
                  mock.patch.object(um, "_CONFIG_PATH", os.path.join(tmp, "config.json")):
                 um._init_db().close()
-                bundle = um.export_logs(tmp)
-            self.assertTrue(os.path.isfile(os.path.join(bundle, "summary.txt")))
+                exported = um.export_logs(tmp)
+            self.assertTrue(os.path.isfile(exported))
+
+    def test_repeated_exports_do_not_overwrite_each_other_or_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "astra-usb-monitor.log")
+            with open(source, "w", encoding="utf-8") as stream:
+                stream.write("исходная запись\n")
+            with mock.patch.object(um, "collect_diagnostics", return_value={"version": "v1.26"}):
+                first = um.export_logs(tmp, log_path=source)
+                second = um.export_logs(tmp, log_path=source)
+            self.assertNotEqual(first, second)
+            with open(source, encoding="utf-8") as stream:
+                self.assertEqual(stream.read(), "исходная запись\n")
+            for path in (first, second):
+                with open(path, encoding="utf-8") as stream:
+                    self.assertIn("исходная запись", stream.read())
+
+    def test_export_reports_unreadable_log_instead_of_false_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = os.path.join(tmp, "source.log")
+            out = os.path.join(tmp, "out")
+            real_open = open
+
+            def open_file(path, *args, **kwargs):
+                if path == source:
+                    raise PermissionError("журнал недоступен")
+                return real_open(path, *args, **kwargs)
+
+            with mock.patch("builtins.open", side_effect=open_file), \
+                 mock.patch.object(um, "collect_diagnostics", return_value={}):
+                with self.assertRaisesRegex(PermissionError, "журнал недоступен"):
+                    um.export_logs(out, log_path=source)
+            self.assertEqual(os.listdir(out), [])
+
+    def test_unwritable_archive_falls_back_without_disabling_logging(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fallback = os.path.join(tmp, "app.log")
+            archive = os.path.join(tmp, "archive")
+            real_open = open
+
+            def open_file(path, *args, **kwargs):
+                if os.path.dirname(path) == archive:
+                    raise PermissionError("архив только для чтения")
+                return real_open(path, *args, **kwargs)
+
+            try:
+                with mock.patch("builtins.open", side_effect=open_file), \
+                     mock.patch.object(um, "LOG_PATH", fallback), \
+                     mock.patch.object(um, "get_dest_base", return_value=archive), \
+                     mock.patch.object(um, "dest_available", return_value=True):
+                    self.assertTrue(um.update_log_location(start=True))
+                    print("запись при отказе диска")
+            finally:
+                um.restore_stdout()
+            with open(fallback, encoding="utf-8") as stream:
+                self.assertIn("запись при отказе диска", stream.read())
+
+    def test_system_diagnostics_include_failed_release_services_and_usb_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "astra-usb-monitor.log")
+            version_path = os.path.join(tmp, "app", "VERSION")
+            with open(os.path.join(tmp, "app.failed"), "w") as stream:
+                stream.write("v1.26")
+
+            def run(command, **kwargs):
+                self.assertLessEqual(kwargs["timeout"], 10)
+                if command[0] == "systemctl":
+                    self.assertIn("astra-usb-update.service", command)
+                    self.assertIn("astra-usb-monitor.service", command)
+                    output = "Result=exit-code\nExecMainStatus=1\n"
+                elif "-k" in command:
+                    output = "usb 1-2: reset high-speed USB device\nnoise unrelated to station\nOut of memory: Killed process 42 (python3)\n"
+                else:
+                    self.assertIn("astra-usb-update.service", command)
+                    output = "установка не удалась (сервис не поднялся)\nновая версия не поднялась: откат\n"
+                return mock.Mock(returncode=0, stdout=output, stderr="")
+
+            with mock.patch.object(um.platform, "system", return_value="Linux"), \
+                 mock.patch.object(um, "VERSION_FILE", version_path), \
+                 mock.patch.object(um, "read_version", return_value=("v1.13", "2026-09-14")), \
+                 mock.patch.object(um.subprocess, "run", side_effect=run):
+                self.assertTrue(um.append_system_diagnostics(path))
+            with open(path, encoding="utf-8") as stream:
+                content = stream.read()
+            for expected in ("v1.13", "v1.26", "ExecMainStatus=1", "установка не удалась", "откат", "usb 1-2", "Killed process 42"):
+                self.assertIn(expected, content)
+            self.assertNotIn("noise unrelated", content)
+
+    def test_diagnostics_survive_missing_system_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "astra-usb-monitor.log")
+            with mock.patch.object(um.platform, "system", return_value="Linux"), \
+                 mock.patch.object(um.subprocess, "run", side_effect=FileNotFoundError("no journalctl")):
+                self.assertTrue(um.append_system_diagnostics(path))
+            with open(path, encoding="utf-8") as stream:
+                self.assertIn("no journalctl", stream.read())
+
+    def test_fallback_log_rejoins_archive_when_disk_returns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fallback = os.path.join(tmp, "data", "app.log")
+            archive = os.path.join(tmp, "archive")
+            os.mkdir(archive)
+            available = {"value": False}
+            try:
+                with mock.patch.object(um, "LOG_PATH", fallback), \
+                     mock.patch.object(um, "get_dest_base", return_value=archive), \
+                     mock.patch.object(um, "dest_available", side_effect=lambda: available["value"]):
+                    um.update_log_location(start=True)
+                    print("обновление не удалось без диска")
+                    available["value"] = True
+                    um.update_log_location()
+                    print("диск вернулся")
+            finally:
+                um.restore_stdout()
+            with open(os.path.join(archive, "astra-usb-monitor.log"), encoding="utf-8") as stream:
+                content = stream.read()
+            self.assertIn("обновление не удалось без диска", content)
+            self.assertIn("диск вернулся", content)
 
     def test_file_logging_captures_prints_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -83,7 +201,7 @@ class LogExportTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             log_path = os.path.join(tmp, "app.log")
             with open(log_path, "w", encoding="utf-8") as fh:
-                tee = um._LogTee(open(os.devnull, "w"), fh)
+                tee = um._LogTee(io.StringIO(), fh)
                 tee.write("первая ")
                 tee.write("строка\nвторая\n")
                 tee.write("\n")
@@ -120,7 +238,7 @@ class LogExportTest(unittest.TestCase):
                     print("line-in-fallback")
                     out = os.path.join(tmp, "out")
                     os.mkdir(out)
-                    bundle = um.export_logs(out, db_path=os.path.join(tmp, "d.db"))
+                    exported = um.export_logs(out, db_path=os.path.join(tmp, "d.db"))
             finally:
                 um.restore_stdout()
                 sys.stdout, sys.stderr = real_stdout, real_stderr
@@ -133,7 +251,7 @@ class LogExportTest(unittest.TestCase):
             self.assertTrue(read(os.path.join(second, name)).strip().endswith("  line-in-second"))
             self.assertTrue(read(fallback).strip().endswith("  line-in-fallback"))
             # Выгрузка берёт тот журнал, в который пишется сейчас.
-            self.assertIn("line-in-fallback", read(os.path.join(bundle, "app.log")))
+            self.assertIn("line-in-fallback", read(exported))
 
 
 if __name__ == "__main__":

@@ -1107,8 +1107,8 @@ class App:
 
         def _do():
             try:
-                bundle = export_logs(dest)
-                msg = f"Готово: {os.path.basename(bundle)}"
+                exported = export_logs(dest)
+                msg = f"Готово: {os.path.basename(exported)}"
             except OSError as e:
                 msg = f"Ошибка: {e}"
             try:
@@ -1990,6 +1990,7 @@ class App:
 def launch():
     # Служба запускает GUI напрямую, минуя main.py.
     update_log_location(start=True)
+    threading.Thread(target=usb_monitor.append_system_diagnostics, daemon=True).start()
     App().run()
 
 

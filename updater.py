@@ -19,6 +19,7 @@ import sys
 import tarfile
 import tempfile
 import time
+import traceback
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -113,6 +114,22 @@ def has_network(timeout=5):
 
 def _log(msg):
     print(f"Обновление: {msg}", flush=True)
+
+
+def _run_logged(command, **kwargs):
+    """Дочерняя команда пишет сразу в общий журнал, даже если затем зависнет."""
+    _log(f"запуск команды: {' '.join(command)}")
+    if usb_monitor._log_fh is not None:
+        try:
+            usb_monitor._log_fh.flush()
+            usb_monitor._log_fh.fileno()
+        except (OSError, ValueError) as error:
+            _log(f"файл журнала недоступен ({error}), вывод команды остаётся в системном журнале")
+        else:
+            kwargs.update(stdout=usb_monitor._log_fh, stderr=subprocess.STDOUT)
+    result = subprocess.run(command, **kwargs)
+    _log(f"команда {command[0]} завершилась с кодом {result.returncode}")
+    return result
 
 
 def _service_healthy():
@@ -310,7 +327,7 @@ def _rollback():
     """
     _log("новая версия не поднялась — откат на предыдущую")
     _restore_app_dir(PREV_DIR, APP_DIR)
-    subprocess.run(["systemctl", "restart", SERVICE], timeout=120)
+    _run_logged(["systemctl", "restart", SERVICE], timeout=120)
 
 
 def _apply(src_dir, tag):
@@ -341,19 +358,19 @@ def _apply_locked(src_dir, tag, lock_fd):
     _backup_app_dir(APP_DIR, PREV_DIR)
 
     try:
-        subprocess.run(["systemctl", "reset-failed", SERVICE], timeout=30)
+        _run_logged(["systemctl", "reset-failed", SERVICE], timeout=30)
         installer = os.path.join(src_dir, "install_native.sh")
         env = dict(os.environ, USB_DB_PATH=os.path.abspath(usb_monitor.DB_PATH))
         env.pop("ASTRA_OPERATIONS_LOCK_FD", None)
         if lock_fd is not None:
             env["ASTRA_OPERATIONS_LOCK_FD"] = str(lock_fd)
-        result = subprocess.run(["bash", installer], cwd=src_dir, timeout=1800,
+        result = _run_logged(["bash", installer], cwd=src_dir, timeout=1800,
                                 env=env, pass_fds=(() if lock_fd is None else (lock_fd,)))
         if result.returncode != 0:
             raise RuntimeError(f"установщик вернул {result.returncode}")
 
         # Проверяем импорт до ожидания здоровья службы.
-        probe = subprocess.run([sys.executable, "-c", "import gui, usb_monitor, main"],
+        probe = _run_logged([sys.executable, "-c", "import gui, usb_monitor, main"],
                                cwd=APP_DIR, timeout=60)
         if probe.returncode != 0:
             raise RuntimeError("новая версия не импортируется")
@@ -471,5 +488,19 @@ def main(spool_dir=None):
         return _apply(src_dir, latest_tag)
 
 
+def run():
+    usb_monitor.update_log_location(start=True)
+    current = usb_monitor.read_version()
+    _log(f"проверка запущена, PID {os.getpid()}, версия {current[0] if current else 'неизвестна'}")
+    try:
+        return main()
+    except Exception:
+        traceback.print_exc()
+        return 1
+    finally:
+        usb_monitor.update_log_location()
+        usb_monitor.append_system_diagnostics()
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run())
