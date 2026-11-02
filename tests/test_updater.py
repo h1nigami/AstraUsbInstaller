@@ -415,18 +415,84 @@ class MixedAssetsTest(unittest.TestCase):
 
 
 class ServiceHealthTest(unittest.TestCase):
+    @staticmethod
+    def state(**changes):
+        values = dict(ActiveState="active", SubState="running", Result="success", NRestarts="0",
+                      ExecMainCode="0", ExecMainStatus="0", ExecMainStartTimestampMonotonic="100",
+                      ExecMainExitTimestampMonotonic="0")
+        values.update(changes)
+        return "".join(f"{key}={value}\n" for key, value in values.items())
+
+    def test_clean_exit_is_healthy_but_crashes_and_never_started_services_are_not(self):
+        clean = dict(ActiveState="inactive", SubState="dead", ExecMainCode="1",
+                     ExecMainExitTimestampMonotonic="200")
+        cases = [
+            ({}, True), (clean, True),
+            ({**clean, "Result": "exit-code", "ExecMainStatus": "1"}, False),
+            ({**clean, "ExecMainCode": "2", "ExecMainStatus": "15"}, False),
+            ({**clean, "Result": "oom-kill", "ExecMainCode": "2", "ExecMainStatus": "9"}, False),
+            ({**clean, "NRestarts": "1"}, False),
+            ({**clean, "ExecMainStartTimestampMonotonic": "0"}, False),
+            ({**clean, "ExecMainExitTimestampMonotonic": "0"}, False),
+            ({**clean, "ExecMainExitTimestampMonotonic": "50"}, False),
+            ({**clean, "ActiveState": "failed"}, False),
+        ]
+        for changes, expected in cases:
+            with self.subTest(changes=changes), mock.patch.object(updater.subprocess, "run",
+                    return_value=mock.Mock(returncode=0, stdout=self.state(**changes))):
+                self.assertEqual(updater._service_healthy(), expected)
+
     def test_requires_successful_restart_count_query(self):
         for code, count, healthy in ((0, "0\n", True), (0, "1\n", False),
                                      (1, "", False), (0, "", False),
                                      (1, "0\n", False)):
             with self.subTest(code=code, count=count), \
-                 mock.patch.object(updater.subprocess, "run", side_effect=[
-                     mock.Mock(returncode=0),
-                     mock.Mock(returncode=code, stdout=count)]):
+                 mock.patch.object(updater.subprocess, "run", return_value=
+                     mock.Mock(returncode=code, stdout=self.state(NRestarts=count.strip()))):
                 self.assertEqual(updater._service_healthy(), healthy)
+
+    def test_incomplete_service_state_is_not_accepted(self):
+        for text in ("", "NRestarts=0\n", self.state(NRestarts="unknown")):
+            with self.subTest(text=text), mock.patch.object(updater.subprocess, "run",
+                    return_value=mock.Mock(returncode=0, stdout=text)):
+                self.assertFalse(updater._service_healthy())
 
 
 class ApplyTest(unittest.TestCase):
+    def test_clean_exit_keeps_new_version_without_marking_failed_or_restarting_gui(self):
+        with tempfile.TemporaryDirectory() as root:
+            app = os.path.join(root, "app")
+            os.makedirs(os.path.join(app, "data"))
+            code = os.path.join(app, "main.py")
+            version = os.path.join(app, "VERSION")
+            with open(code, "w") as stream:
+                stream.write("old")
+            with open(version, "w") as stream:
+                stream.write("v1.27 2026-11-02\n")
+            calls = []
+
+            def run(command, **kwargs):
+                calls.append(command)
+                if command[0] == "bash":
+                    with open(code, "w") as stream:
+                        stream.write("new")
+                    with open(version, "w") as stream:
+                        stream.write("v1.28 2026-11-02\n")
+                state = ServiceHealthTest.state(ActiveState="inactive", SubState="dead",
+                    ExecMainCode="1", ExecMainExitTimestampMonotonic="200")
+                return mock.Mock(returncode=3 if "is-active" in command else 0, stdout=state)
+
+            with mock.patch.multiple(updater, APP_DIR=app, PREV_DIR=app + ".prev", FAILED_TAG_FILE=app + ".failed"), \
+                 mock.patch.multiple(updater.usb_monitor, DB_PATH=os.path.join(app, "data", "devices.db"), VERSION_FILE=version), \
+                 mock.patch.object(updater.subprocess, "run", side_effect=run), \
+                 mock.patch.object(updater.time, "sleep"):
+                self.assertEqual(updater._apply(root, "v1.28"), 0)
+            with open(code) as stream:
+                self.assertEqual(stream.read(), "new")
+            self.assertFalse(os.path.exists(app + ".failed"))
+            self.assertFalse(os.path.exists(app + ".prev"))
+            self.assertFalse(any(command[:2] == ["systemctl", "restart"] for command in calls))
+
     def test_wrong_installed_version_restores_previous_code_and_preserves_data(self):
         with tempfile.TemporaryDirectory() as root:
             app = os.path.join(root, "app")

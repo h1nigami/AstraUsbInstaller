@@ -133,19 +133,31 @@ def _run_logged(command, **kwargs):
 
 
 def _service_healthy():
-    """Сервис активен и не циклится в перезапусках."""
+    """Служба работает либо штатно завершилась, без аварийных перезапусков."""
     try:
-        active = subprocess.run(["systemctl", "is-active", "--quiet", SERVICE],
-                                 timeout=10).returncode == 0
-        shown = subprocess.run(["systemctl", "show", "-p", "NRestarts", "--value", SERVICE],
-                                capture_output=True, text=True, timeout=10)
+        properties = ("ActiveState", "SubState", "Result", "NRestarts", "ExecMainCode",
+                      "ExecMainStatus", "ExecMainStartTimestampMonotonic", "ExecMainExitTimestampMonotonic")
+        shown = subprocess.run(["systemctl", "show", SERVICE, "--property=" + ",".join(properties)],
+                               capture_output=True, text=True, timeout=10)
         if shown.returncode != 0:
             return False
-        restarts = int(shown.stdout.strip())
-    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        state = dict(line.split("=", 1) for line in shown.stdout.splitlines() if "=" in line)
+        if int(state["NRestarts"]) != 0:
+            return False
+        if state["ActiveState"] == "active" and state["SubState"] == "running":
+            return True
+        # CLD_EXITED=1 отличает выход с кодом 0 от завершения сигналом.
+        clean_exit = (state["ActiveState"] == "inactive" and state["SubState"] == "dead"
+                      and state["Result"] == "success" and state["ExecMainCode"] == "1"
+                      and state["ExecMainStatus"] == "0"
+                      and 0 < int(state["ExecMainStartTimestampMonotonic"])
+                      <= int(state["ExecMainExitTimestampMonotonic"]))
+        if clean_exit:
+            _log("служба штатно завершилась с кодом 0")
+        return clean_exit
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
         _log(f"не удалось проверить службу: {error}")
         return False
-    return active and restarts == 0
 
 
 def _backup_app_dir(app_dir, prev_dir):

@@ -302,9 +302,9 @@ $SUDO systemctl enable --now astra-usb-update.timer
 echo "--- Ярлык на рабочем столе..."
 install_desktop_shortcut
 
-# Не рапортуем «Готово», не убедившись, что сервис действительно жив.
+# Не рапортуем «Готово», пока служба не запустилась или не завершилась штатно.
 sleep 3
-if ! $SUDO systemctl is-active --quiet "$SERVICE_NAME.service"; then
+if ! (cd "$APP_DIR" && $SUDO python3 -c 'import updater; raise SystemExit(0 if updater._service_healthy() else 1)'); then
     echo ""
     echo "ОШИБКА: сервис не запустился. Последние строки лога:"
     $SUDO journalctl -u "$SERVICE_NAME" -n 20 --no-pager 2>/dev/null || true
@@ -315,9 +315,9 @@ fi
 
 echo ""
 echo "=== Готово ==="
-echo "Сервис запущен. GUI появится сам, как только будет доступна графическая"
-echo "сессия — т.е. после входа пользователя в систему (и после перезагрузки"
-echo "тоже). Мониторинг USB работает внутри GUI."
+echo "Служба настроена. Интерфейс запускается в графической сессии."
+echo "После штатного выхода откройте программу ярлыком BestCam USB."
+echo "Мониторинг USB работает внутри GUI."
 echo ""
 echo "Статус:  systemctl status $SERVICE_NAME"
 echo "Логи:    journalctl -u $SERVICE_NAME -f"
