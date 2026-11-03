@@ -68,7 +68,7 @@ Four top-level modules:
 
 **`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`.
 
-**`updater.py`** — auto-update, run by a systemd timer (`astra-usb-update.timer`), not from inside the GUI service (so the installer's final `systemctl restart` of the GUI service can't kill an update mid-file-swap)
+**`updater.py`**: обновление вручную или с флешки через отдельную службу `astra-usb-update.service`. Автоматический запуск отключён. Отдельная служба позволяет завершить установку при перезапуске GUI.
 - `_service_healthy()` используется апдейтером и установщиком: принимает `active/running` без перезапусков либо `inactive/dead` с успешным обычным выходом 0, без перезапусков и с ненулевыми временами запуска и выхода. Выход по паролю во время проверки сохраняет обновление и оставляет GUI закрытым; авария и неверный VERSION по-прежнему вызывают откат.
 - `run()` включает общий `astra-usb-monitor.log` до проверки релиза. Вывод установщика, проверки импорта и отката записывается туда напрямую. После попытки добавляется диагностический снимок. При запуске GUI и экспорте также собираются версии, сбойный тег, состояния и последние сообщения служб и относящиеся к станции сообщения ядра. `export_logs()` возвращает один `.log` прямо в выбранном каталоге, без подпапки. Запасные записи при возвращении диска добавляются в основной журнал без удаления исходника.
 - `main()`: reads `VERSION`, polls `releases/latest` of the public `h1nigami/AstraUsbInstaller` repo, compares tags for inequality (not ordering — the point is always brought to whatever GitHub marks latest), skips while `usb_monitor.is_copying()` or while the latest tag is the one already recorded as failed, downloads the release asset + `.sha256` and refuses to install on a mismatch, then hands off to `_apply()`.
@@ -108,17 +108,16 @@ Python устанавливается через `install_native.sh`, C# чер�
   `VERSION` file (best-effort — a tagless clone installs with no version, not
   an error). Shown in Настройки via `usb_monitor.read_version()`; the GUI
   never fails over a missing/malformed version.
-- `install_native.sh` also installs `astra-usb-update.{service,timer}`, a
-  systemd timer that runs `updater.py` 10 minutes after boot and every 6h
-  after that, `enable --now`. Installing from a git clone with no tags means
-  no `VERSION`, so the very first tick treats the point as needing an update
-  and replaces the local build with whatever is latest on GitHub — the
-  installer prints a warning about this when it detects a non-release install.
-- A bad release cannot be fixed by re-publishing the same tag: the failed tag
-  is remembered (`APP_DIR.failed`) and skipped on every later tick. Publish a
-  new tag instead. See `README.md`'s "Обновления" section and
-  `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md` for
-  the full design.
+- `install_native.sh` устанавливает `astra-usb-update.service` для ручного
+  обновления и обновления с флешки. Старый `astra-usb-update.timer`
+  останавливается, отключается и удаляется; новый таймер не создаётся.
+  Если git-клон не содержит тегов, `VERSION` отсутствует. Ручная проверка
+  обновления может заменить такую сборку последним стабильным Python-релизом.
+- Сбойный релиз нельзя исправить повторной публикацией того же тега:
+  он сохраняется в `APP_DIR.failed` и пропускается при следующих попытках.
+  Для исправления выпустите новый тег. Подробнее в разделе «Обновления»
+  файла `README.md` и в
+  `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md`.
 
 ## Разделение релизов и автообновлений Python и C#
 

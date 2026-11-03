@@ -270,8 +270,8 @@ EOF
     echo "  ярлык на рабочем столе: $shortcut"
 }
 
-# --- 6. Автообновление --------------------------------------------------------
-echo "--- Настройка автообновления с GitHub..."
+# --- 6. Ручное обновление -----------------------------------------------------
+echo "--- Настройка обновления вручную и с флешки..."
 $SUDO tee "/etc/systemd/system/astra-usb-update.service" > /dev/null << EOF
 [Unit]
 Description=Astra USB Monitor — проверка и установка обновлений с GitHub
@@ -284,19 +284,11 @@ ExecStart=/usr/bin/python3 $APP_DIR/updater.py
 Environment=PYTHONUNBUFFERED=1
 EOF
 
-$SUDO tee "/etc/systemd/system/astra-usb-update.timer" > /dev/null << 'EOF'
-[Unit]
-Description=Проверять обновления Astra USB Monitor
-
-[Timer]
-OnBootSec=10min
-OnUnitActiveSec=6h
-
-[Install]
-WantedBy=timers.target
-EOF
+if [ -e "/etc/systemd/system/astra-usb-update.timer" ] || [ -L "/etc/systemd/system/astra-usb-update.timer" ]; then
+    $SUDO systemctl disable --now astra-usb-update.timer
+    $SUDO rm -f "/etc/systemd/system/astra-usb-update.timer"
+fi
 $SUDO systemctl daemon-reload
-$SUDO systemctl enable --now astra-usb-update.timer
 
 # --- 7. Ярлык на рабочем столе ------------------------------------------------
 echo "--- Ярлык на рабочем столе..."
@@ -331,10 +323,8 @@ echo "диск назначения, сначала смонтируйте ег�
 echo ""
 if [ "$FROM_RELEASE" -ne 1 ]; then
     echo "ВНИМАНИЕ: установка не из релизного архива GitHub (файла VERSION в"
-    echo "исходниках не было). Таймер автообновления включён и первый раз"
-    echo "сработает уже через 10 минут после загрузки — он заменит эту сборку"
-    echo "последним релизом с GitHub. Если сейчас это не нужно, отключите таймер:"
-    echo "  systemctl disable --now astra-usb-update.timer"
+    echo "исходниках не было). Версия может не отображаться. Обновление"
+    echo "запускается только вручную или с флешки через «Настройки»."
     echo ""
 fi
 echo "Удаление: systemctl disable --now $SERVICE_NAME"
