@@ -65,6 +65,47 @@ def extract_named_function(name):
 
 
 @unittest.skipUnless(BASH, "нужен работающий bash")
+class ManualUpdatesTest(unittest.TestCase):
+    def test_install_keeps_manual_service_without_scheduled_updates(self):
+        for existing_timer in (False, True):
+            with self.subTest(existing_timer=existing_timer), tempfile.TemporaryDirectory() as root:
+                units = pathlib.Path(root, "units")
+                units.mkdir()
+                timer = units / "astra-usb-update.timer"
+                active = pathlib.Path(root, "timer-active")
+                if existing_timer:
+                    timer.write_text("[Timer]\nOnBootSec=10min\n")
+                    active.touch()
+                binaries = pathlib.Path(root, "bin")
+                binaries.mkdir()
+                systemctl = binaries / "systemctl"
+                systemctl.write_text(
+                    '#!/bin/sh\n'
+                    'case "$*" in\n'
+                    '  "disable --now astra-usb-update.timer") rm -f "$PWD/timer-active" ;;\n'
+                    '  "enable --now astra-usb-update.timer") touch "$PWD/timer-active" ;;\n'
+                    '  "daemon-reload") ;;\n'
+                    '  *) exit 1 ;;\n'
+                    'esac\n', encoding="utf-8", newline="\n")
+                systemctl.chmod(0o755)
+                installer = pathlib.Path(INSTALLER).read_text(encoding="utf-8")
+                block = installer.split("# --- 6.", 1)[1].split("# --- 7.", 1)[0].split("\n", 1)[1]
+                block = block.replace("/etc/systemd/system/", "$PWD/units/")
+                script = pathlib.Path(root, "updates.sh")
+                script.write_text('set -e\nPATH="$PWD/bin:$PATH"\n' + block,
+                                  encoding="utf-8", newline="\n")
+                result = subprocess.run(
+                    [BASH, "updates.sh"], cwd=root, capture_output=True, text=True,
+                    env={**os.environ, "SUDO": "", "APP_DIR": "/opt/astra-usb-monitor"})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(active.exists(), "таймер обновлений остался активным")
+                self.assertFalse(timer.exists(), "установщик оставил таймер обновлений")
+                service = (units / "astra-usb-update.service").read_text(encoding="utf-8")
+                self.assertIn("Type=oneshot\n", service)
+                self.assertIn("ExecStart=/usr/bin/python3 /opt/astra-usb-monitor/updater.py\n", service)
+
+
+@unittest.skipUnless(BASH, "нужен работающий bash")
 class PreserveStationTest(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()

@@ -62,7 +62,7 @@ Four top-level modules:
 
 **`main.py`** — entry point; launches GUI if `$DISPLAY` is set or on Windows, otherwise falls back to headless `monitor_usb()`.
 
-**`updater.py`** — auto-update, run by a systemd timer (`astra-usb-update.timer`), not from inside the GUI service (so the installer's final `systemctl restart` of the GUI service can't kill an update mid-file-swap)
+**`updater.py`**: обновление вручную или с флешки через отдельную службу `astra-usb-update.service`. Автоматический запуск отключён. Отдельная служба позволяет завершить установку при перезапуске GUI.
 - `run()` включает общий `astra-usb-monitor.log` до проверки релиза. Вывод установщика, проверки импорта и отката записывается туда напрямую. После попытки добавляется диагностический снимок. При запуске GUI и экспорте также собираются версии, сбойный тег, состояния и последние сообщения служб и относящиеся к станции сообщения ядра. `export_logs()` возвращает один `.log` прямо в выбранном каталоге, без подпапки. Запасные записи при возвращении диска добавляются в основной журнал без удаления исходника.
 - `main()`: reads `VERSION`, polls `releases/latest` of the public `h1nigami/AstraUsbInstaller` repo, compares tags by numeric ordering via `_version_key()` (only upgrades, never downgrades — a retracted release is fixed by publishing a new tag, not by re-marking an old one as latest), skips while `usb_monitor.is_copying()` or while the latest tag is the one already recorded as failed, downloads the release asset + `.sha256` and refuses to install on a mismatch, then hands off to `_apply()`.
 - Offline stations: the Настройки tab has an "Обновление с флешки" button that locks the GUI into a wait mode (`set_offline_hold(True)` stops the monitor from claiming new sticks) and watches for `astra-usb-monitor-vX.tar.gz` + `.sha256` in the stick root (`find_offline_archives` picks newest, `check_offline_package` enforces the checksum). The archive is staged to `APP_DIR.offline` and installed by kicking the same external `astra-usb-update.service` — `main(spool_dir)` applies the spool first with the same busy/failed-tag guards and clears it afterwards. The GUI never installs from inside its own process.
@@ -103,21 +103,20 @@ Python устанавливается через `install_native.sh`, C# чер�
   `VERSION` file (best-effort — a tagless clone installs with no version, not
   an error). Shown in Настройки via `usb_monitor.read_version()`; the GUI
   never fails over a missing/malformed version.
-- `install_native.sh` also installs `astra-usb-update.{service,timer}`, a
-  systemd timer that runs `updater.py` 10 minutes after boot and every 6h
-  after that, `enable --now`, plus a `BestCam-USB.desktop` shortcut on the
-  invoking user's desktop (`install_desktop_shortcut`, honouring `ASTRA_ROOT` /
-  `ASTRA_DESKTOP_DIR` in tests) that brings the GUI back after a password exit
-  via `pkexec systemctl start` — never `restart`, which would kill a copy.
-  Installing from a git clone with no tags means
-  no `VERSION`, so the very first tick treats the point as needing an update
-  and replaces the local build with whatever is latest on GitHub — the
-  installer prints a warning about this when it detects a non-release install.
-- A bad release cannot be fixed by re-publishing the same tag: the failed tag
-  is remembered (`APP_DIR.failed`) and skipped on every later tick. Publish a
-  new tag instead. See `README.md`'s "Обновления" section and
-  `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md` for
-  the full design.
+- `install_native.sh` устанавливает `astra-usb-update.service` для ручного
+  обновления и обновления с флешки. Старый `astra-usb-update.timer`
+  останавливается, отключается и удаляется; новый таймер не создаётся.
+  Установщик также создаёт ярлык `BestCam-USB.desktop` на рабочем столе
+  пользователя (`install_desktop_shortcut` учитывает `ASTRA_ROOT` и
+  `ASTRA_DESKTOP_DIR` в тестах). Ярлык запускает GUI после парольного выхода
+  через `pkexec systemctl start`, не прерывая уже идущее копирование.
+  Если git-клон не содержит тегов, `VERSION` отсутствует. Ручная проверка
+  обновления может заменить такую сборку последним стабильным Python-релизом.
+- Сбойный релиз нельзя исправить повторной публикацией того же тега:
+  он сохраняется в `APP_DIR.failed` и пропускается при следующих попытках.
+  Для исправления выпустите новый тег. Подробнее в разделе «Обновления»
+  файла `README.md` и в
+  `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md`.
 
 ## Разделение релизов и автообновлений Python и C#
 
