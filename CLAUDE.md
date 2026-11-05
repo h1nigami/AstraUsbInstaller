@@ -20,11 +20,6 @@ python3 -m unittest discover -s tests -v
 # Windows launcher
 run_gui.bat
 
-# Веб-панель C#: сервер и API (живая панель во временном каталоге, нужен Windows)
-dotnet test avalonia/AstraUsb.Tests --filter "FullyQualifiedName~WebPanelTests|FullyQualifiedName~WebApiEndpointTests"
-
-# Веб-панель C#: страница (jsdom, порог покрытия строк 90%)
-cd avalonia/AstraUsb.Tests/web && npm ci && npm test
 ```
 
 Run `py_compile` and the unittest suite before committing Python changes. The
@@ -89,13 +84,12 @@ Four top-level modules:
 
 ## Установка и проверки
 
-Python устанавливается через `install_native.sh`, C# через установщики
-в `avalonia/`. Docker больше не используется для установки станции.
+Python устанавливается через `install_native.sh`. Docker больше не используется для установки станции.
 Контейнеры допустимы только как изолированная среда тестов.
 
 `tests.yml` проверяет Python и синтаксис shell-скриптов на pull request
 и при изменении master. `release.yml` собирает Python-архив и SHA256;
-`release-station.yml` собирает отдельные релизы C# по правилам ниже.
+C# выпускается из отдельного приватного репозитория.
 В нативном установщике сохраняется остановка старого контейнера
 `astra-usb-monitor` для безопасного перехода прежних установок.
 
@@ -119,83 +113,16 @@ Python устанавливается через `install_native.sh`, C# чер�
   файла `README.md` и в
   `docs/superpowers/specs/2026-09-01-version-and-auto-update-design.md`.
 
-## Разделение релизов и автообновлений Python и C#
+## Выпуск Python
 
-Python и C#/Avalonia являются отдельными продуктами с независимыми обновлениями.
-Станция должна обновляться только в пределах установленного продукта. Переход
-между ними разрешён только по явному запросу пользователя на миграцию.
-
-- Python использует теги `v1.*` и архивы `astra-usb-monitor-<tag>.tar.gz`.
-  C#/Avalonia использует теги `v2.*`, архивы `bestcam-station-<tag>-<rid>.*`,
-  пакеты `bestcam-station_*.deb` и установщики `BestCamStationSetup-*.exe`.
-- В одном релизе запрещено размещать сборки обоих продуктов. Выпуск Python
-  не должен запускать сборку или публикацию C#, и наоборот.
-- Перед выпуском проверь ограничения всех заданий в `release.yml` и
-  `release-station.yml`, включая `windows-setup`, ручной запуск и повторный
-  запуск. Проверка только `prerelease` недостаточна: нужна проверка семейства
-  тега. Если workflow публикует чужой продукт, сначала исправь workflow.
-- Каждый апдейтер должен проверять семейство релиза, префикс имени архива,
-  платформу и соответствующую контрольную сумму. Чужой релиз или отсутствие
-  своего архива означают пропуск обновления, а не выбор другого установщика.
-- Python читает стабильный `releases/latest`; C# выбирает последний готовый
-  релиз `v2.*` для своей платформы из списка релизов, включая prerelease.
-  Проверяются семейство тега, точное имя архива и его сумма. Старые
-  апдейтеры продолжают читать общий latest, поэтому смешанные архивы
-  запрещены и после разделения каналов в коде.
-- Пока обновлённые апдейтеры не установлены на всех действующих
-  станциях, `latest` предназначен только для Python. C# может публиковаться
-  как стабильный или предварительный релиз без Python-архивов. При создании
-  релиза и каждом обновлении его метаданных обязательно `make_latest=false`.
-- Релиз выпускается только из коммита, который уже в `master`. Ветку
-  релиза не отводят и не публикуют из неё: v1.15 и v1.16 собрали из ветки,
-  отведённой от v1.13, и станции потеряли всё, что вошло в v1.14. Задания
-  `release.yml` и `release-station.yml` проверяют это шагом «Тег должен
-  быть в master» и без него ничего не прикрепляют к релизу.
-- Перед публикацией проверь целевой коммит, семейство тега и состав файлов.
-  После публикации проверь фактические вложения через GitHub API и выбор
-  архива обоими апдейтерами. Ошибочно опубликованные чужие файлы удали сразу;
-  факт установки на станции подтверждай отдельно, по её версии или журналу.
-
-Это обязательные правила выпуска. Перед каждым релизом проверяй фактические
-условия GitHub Actions и состав архивов, включая повторный запуск старых workflow.
-
-## Cross-platform version: versioning, release and self-update
-
-- **Version.** `<Version>` in `AstraUsb.csproj` is compiled into the assembly;
-  `Services/VersionInfo` prefers the `VERSION` file written by the release
-  workflow (`<tag> <date>`) and falls back to the assembly version, so the
-  Настройки → О программе screen always shows a version, offline included.
-- **Сборки.** `.github/workflows/release-station.yml` собирает C# только для
-  релизов `v2.*` или ручного запуска с тегом `v2.*`. Оба задания берут
-  исходники указанного тега. Платформы: `linux-x64`, `linux-arm64`, `win-x64`.
-  Python workflow собирает только stable `v1.*`. Сборки macOS приостановлены,
-  пока защита доступа к архиву не поддерживает эту платформу.
-- **Обновление C#.** `AstraUsb --update` запускается отдельной службой
-  `astra-usb-avalonia-update.service` по таймеру. Из списка релизов выбирается
-  последний по дате публикации готовый `v2.*` с архивом своей платформы и
-  соответствующей суммой. Проверка занятости выполняется до загрузки и перед
-  установкой. После проверки архива и запуска `--version` создаётся резервная
-  копия, запускается установщик и проверяются служба, перезапуски и `VERSION`.
-  Ошибка установки или неверная версия вызывают откат с сохранением сбойного тега.
-- **Ручная проверка и флешка (C#).** «Настройки → О программе»: «Проверить
-  обновления» только запускает `astra-usb-avalonia-update.service`
-  (`systemctl start --no-block`), без сети сразу пишет «Нет подключения к
-  интернету». «С флешки» ждёт носитель с `bestcam-station-<tag>-<rid>.tar.gz`
-  и `.sha256` в корне; новые носители в это время не выгружаются как камеры.
-  Архив проверяется и кладётся в спул `<APP_DIR>.offline`, а `--update`
-  ставит его первым делом, без сети, с теми же проверками и откатом.
-- `ASTRA_UPDATE_API` заменяет источник релизов для закрытых сетей; зеркало
-  может вернуть список или один релиз. Windows и macOS обновляются вручную.
-- **Install paths.** Linux: `avalonia/install.sh` (one-liner that picks the
-  `.deb` for the machine's architecture, verifies the checksum and installs it
-  via apt) or the `.deb` directly; the package is built by
-  `avalonia/packaging/build_deb.sh`, whose `postinst` calls
-  `install_native.sh --units-only` so the systemd units and the udev rule are
-  described in exactly one place. Windows: `BestCamStationSetup-<tag>.exe`,
-  built by the `windows-setup` job from `avalonia/windows/setup.iss` (Inno
-  Setup, PowerShell step — bash mangles ISCC's `/D` and `/O` switches).
-  `install_native.sh` guards every `systemctl` call behind
-  `/run/systemd/system` so the package installs cleanly in containers.
+В этом репозитории выпускается только Python, теги v1.* и архивы
+astra-usb-monitor-<tag>.tar.gz с SHA-256. latest предназначен для Python.
+Тег должен указывать на коммит, уже включённый в master. Перед коммитом
+запускай py_compile и unittest. VERSION вручную не редактируется.
+Avalonia перенесена в приватный h1nigami/BestCamStation.
+Исторические ветки, теги и релизы сохраняются; историю не переписываем.
+Код установщика Python, сохраняющий чужую установленную станцию,
+не удалять: это защита от случайной миграции между продуктами.
 
 ## Development branch
 
