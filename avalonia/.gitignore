@@ -1,5 +1,0 @@
-# Артефакты сборки .NET: восстанавливаются командой dotnet build
-bin/
-obj/
-node_modules/
-TestResults/
